@@ -159,6 +159,31 @@ const IDB = {
     }
   },
 
+  async removeNovelFromMirror(userId, novelId) {
+    if (!userId || !novelId) return false;
+    try {
+      const currentBackup = await this.getLibraryMirror(userId);
+      if (!currentBackup || !currentBackup.novels) return true;
+
+      currentBackup.novels = currentBackup.novels.filter(n => n.id !== novelId);
+      if (currentBackup.volumes) {
+        currentBackup.volumes = currentBackup.volumes.filter(v => v.novel_id !== novelId);
+      }
+      if (currentBackup.chapters) {
+        currentBackup.chapters = currentBackup.chapters.filter(c => c.novel_id !== novelId);
+      }
+      if (currentBackup.progress) {
+        currentBackup.progress = currentBackup.progress.filter(p => p.novel_id !== novelId);
+      }
+
+      await this.saveLibraryMirror(userId, currentBackup);
+      return true;
+    } catch (e) {
+      console.warn('IDB remove error:', e);
+      return false;
+    }
+  },
+
   async getMirroredCount(userId) {
     if (!userId) return 0;
     try {

@@ -748,16 +748,27 @@ const App = {
     if (!confirm(`Delete "${title}" from your library?`)) return;
     try {
       this.showLoading('Deleting...');
+
+      // 1. Remove from local device mirror first so it NEVER auto-restores
+      const userId = SyncService.currentUserId;
+      if (typeof IDB !== 'undefined') {
+        await IDB.removeNovelFromMirror(userId, novelId);
+      }
+
+      // 2. Delete from server
       await fetch('/api/novels/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           novel_id: novelId,
-          user_id: SyncService.currentUserId
+          user_id: userId
         })
       });
-      await this.loadLibrary();
+
+      // 3. Reload library WITHOUT auto-restore so it stays deleted
+      await this.loadLibrary(false);
       this.hideLoading();
+      this.showToast(`Deleted "${title}"`);
     } catch (e) {
       this.hideLoading();
       alert('Delete failed: ' + e.message);

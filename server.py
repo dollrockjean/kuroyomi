@@ -183,7 +183,12 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             cur.execute("SELECT demo_seeded FROM users WHERE id = ?", (user_id,))
             user_row = cur.fetchone()
             if user_row and not user_row["demo_seeded"]:
-                sample_books.seed_demo_novel(user_id)
+                cur.execute("SELECT COUNT(*) as cnt FROM novels WHERE user_id = ?", (user_id,))
+                if cur.fetchone()["cnt"] == 0:
+                    sample_books.seed_demo_novel(user_id)
+                else:
+                    cur.execute("UPDATE users SET demo_seeded = 1 WHERE id = ?", (user_id,))
+                    conn.commit()
 
             cur.execute("""
                 SELECT n.*,
@@ -551,8 +556,10 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         if path.startswith("/api/novels/delete"):
             novel_id = body.get("novel_id")
             user_id = body.get("user_id")
-            if novel_id and user_id:
-                cur.execute("DELETE FROM novels WHERE id = ? AND user_id = ?", (novel_id, user_id))
+            if novel_id:
+                cur.execute("DELETE FROM novels WHERE id = ?", (novel_id,))
+                if user_id:
+                    cur.execute("UPDATE users SET demo_seeded = 1 WHERE id = ?", (user_id,))
                 conn.commit()
             conn.close()
             self.send_json({"success": True})
