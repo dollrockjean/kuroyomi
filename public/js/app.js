@@ -1,4 +1,16 @@
 // KuroYomi Main Application Controller
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+const FALLBACK_COVER = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 260 180'%3E%3Crect width='100%25' height='100%25' fill='%23141414'/%3E%3Crect x='10' y='10' width='240' height='160' rx='4' fill='none' stroke='%23333333' stroke-dasharray='4'/%3E%3Ctext x='50%25' y='50%25' fill='%23888888' font-family='sans-serif' font-size='13' font-weight='600' text-anchor='middle' dy='.3em'%3ENo Cover%3C/text%3E%3C/svg%3E";
+
 window.ReaderSettings = {
   theme: 'monochrome-dark',
   font_family: 'times',
@@ -16,6 +28,7 @@ const App = {
   novels: [],
   selectedUploadFiles: [],
   targetUploadNovelId: null,
+  targetCoverNovelId: null,
 
   async init() {
     this.showLoading('Connecting...');
@@ -137,6 +150,62 @@ const App = {
     });
 
     document.getElementById('startUploadBtn').addEventListener('click', () => this.performUpload());
+
+    // Custom Cover Image Upload Handler
+    const coverInput = document.getElementById('novelCoverInput');
+    if (coverInput) {
+      coverInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file || !this.targetCoverNovelId) return;
+
+        this.showLoading('Updating cover...');
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          const img = new Image();
+          img.onload = async () => {
+            try {
+              const maxW = 600;
+              let w = img.width;
+              let h = img.height;
+              if (w > maxW) {
+                h = Math.round((h * maxW) / w);
+                w = maxW;
+              }
+              const canvas = document.createElement('canvas');
+              canvas.width = w;
+              canvas.height = h;
+              const ctx = canvas.getContext('2d');
+              ctx.drawImage(img, 0, 0, w, h);
+              const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+
+              const res = await fetch('/api/novels/cover', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  novel_id: this.targetCoverNovelId,
+                  user_id: SyncService.currentUserId,
+                  cover_data: dataUrl
+                })
+              });
+              const resData = await res.json();
+              this.hideLoading();
+              if (resData.success) {
+                this.showToast('Cover updated');
+                await this.loadLibrary();
+              } else {
+                alert('Could not update cover: ' + (resData.error || 'Unknown error'));
+              }
+            } catch (err) {
+              this.hideLoading();
+              alert('Cover upload failed: ' + err.message);
+            }
+            coverInput.value = '';
+          };
+          img.src = ev.target.result;
+        };
+        reader.readAsDataURL(file);
+      });
+    }
   },
 
   bindMasterPanelEvents() {
@@ -399,6 +468,20 @@ const App = {
         this.showToast('Sync Key copied');
       }
     });
+
+    const copyLinkBtn = document.getElementById('copyPairingLinkBtn');
+    if (copyLinkBtn) {
+      copyLinkBtn.addEventListener('click', () => {
+        const key = SyncService.currentSyncKey;
+        if (!key) return;
+        const link = `${window.location.origin}/?pair=${encodeURIComponent(key)}`;
+        navigator.clipboard.writeText(link).then(() => {
+          this.showToast('1-Click Pairing Link copied!');
+        }).catch(() => {
+          prompt('Copy this link and open it in Safari on your iPhone:', link);
+        });
+      });
+    }
   },
 
   bindBackupRestoreEvents() {
@@ -512,7 +595,7 @@ const App = {
     }
 
     hero.style.display = 'grid';
-    document.getElementById('resumeCover').src = lastRead.cover_data || 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="85" height="120"><rect width="100%" height="100%" fill="%231a1a1a"/><text x="50%" y="50%" fill="%23888" font-family="sans-serif" font-size="12" text-anchor="middle">COVER</text></svg>';
+    document.getElementById('resumeCover').src = lastRead.cover_data || FALLBACK_COVER;
     document.getElementById('resumeNovelTitle').textContent = lastRead.novel_title;
     document.getElementById('resumeChapterTag').textContent = `${lastRead.volume_title} · ${lastRead.chapter_title}`;
     
@@ -532,9 +615,15 @@ const App = {
 
     if (this.novels.length === 0) {
       grid.innerHTML = `
-        <div style="grid-column: 1 / -1; padding: 40px; text-align: center; border: 1px dashed var(--border-color); border-radius: 8px;">
-          <p style="font-size: 14px; color: var(--text-secondary); margin-bottom: 12px;">No novels in library</p>
-          <button class="btn-brutal btn-brutal-accent" onclick="App.openUploadModal()">+ Upload Novel .EPUB</button>
+        <div style="grid-column: 1 / -1; padding: 36px 20px; text-align: center; border: 1px dashed var(--border-color); border-radius: 8px;">
+          <p style="font-size: 15px; font-weight: 600; margin-bottom: 6px;">Your Library is Empty</p>
+          <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 18px; max-width: 440px; margin-left: auto; margin-right: auto; line-height: 1.5;">
+            If you uploaded novels on another device (like your Mac), pair your sync key from that device or restore a backup.
+          </p>
+          <div style="display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;">
+            <button class="btn-brutal btn-brutal-accent" onclick="App.openUploadModal()">+ Upload Novel .EPUB</button>
+            <button class="btn-brutal" onclick="App.openMasterPanel('tabSync')">Pair Devices</button>
+          </div>
         </div>
       `;
       return;
@@ -544,22 +633,27 @@ const App = {
       const card = document.createElement('div');
       card.className = 'novel-card';
 
-      const coverSrc = n.cover_data || 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="260" height="180"><rect width="100%" height="100%" fill="%231a1a1a"/><text x="50%" y="50%" fill="%23888" font-family="sans-serif" text-anchor="middle">No Cover</text></svg>';
+      const coverSrc = n.cover_data || FALLBACK_COVER;
       const lastReadTag = n.last_chapter_title ? `Last: ${n.last_chapter_title}` : 'Not started';
       const readPercent = Math.round(n.progress_scroll || 0);
 
       card.innerHTML = `
-        <img src="${coverSrc}" class="novel-card-cover" alt="${n.title}" loading="lazy" />
+        <div class="novel-card-cover-wrap" style="position: relative; cursor: pointer;" title="Click to change cover image">
+          <img src="${coverSrc}" class="novel-card-cover" alt="${escapeHtml(n.title)}" loading="lazy" />
+          <div class="cover-overlay-badge" style="position: absolute; bottom: 8px; right: 8px; background: rgba(0,0,0,0.75); border: 1px solid var(--border-color); border-radius: 4px; padding: 2px 6px; font-size: 10px; color: var(--text-secondary); backdrop-filter: blur(4px);">
+            Change Cover
+          </div>
+        </div>
         <div class="novel-card-body">
-          <h3 class="novel-card-title">${n.title}</h3>
-          <p class="novel-card-author">${n.author}</p>
+          <h3 class="novel-card-title">${escapeHtml(n.title)}</h3>
+          <p class="novel-card-author">${escapeHtml(n.author || 'Unknown')}</p>
           <div class="novel-card-meta">
             <span class="badge-brutal accent">${n.volume_count || 1} Volumes</span>
             <span class="badge-brutal">${n.total_chapters || 0} Chapters</span>
           </div>
           <div style="margin-bottom: 14px;">
             <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">
-              <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 170px;">${lastReadTag}</span>
+              <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 170px;">${escapeHtml(lastReadTag)}</span>
               <span>${readPercent}%</span>
             </div>
             <div class="progress-bar-container" style="max-width: 100%;">
@@ -569,7 +663,8 @@ const App = {
           <div class="novel-card-actions">
             <button class="btn-brutal btn-brutal-accent read-novel-btn" data-id="${n.id}">Read</button>
             <button class="btn-brutal add-vol-btn" data-id="${n.id}" title="Add another .epub volume">+ Vol</button>
-            <button class="btn-brutal delete-novel-btn" data-id="${n.id}" title="Delete novel" style="color: #ef4444;">Delete</button>
+            <button class="btn-brutal cover-novel-btn" data-id="${n.id}" title="Upload custom cover">Cover</button>
+            <button class="btn-brutal delete-novel-btn" data-id="${n.id}" title="Delete novel" style="color: #ef4444;">Del</button>
           </div>
         </div>
       `;
@@ -577,6 +672,14 @@ const App = {
       card.querySelector('.read-novel-btn').onclick = () => Reader.openNovel(n.id, true);
       card.querySelector('.add-vol-btn').onclick = () => this.openUploadModal(n.id, n.title);
       card.querySelector('.delete-novel-btn').onclick = () => this.deleteNovel(n.id, n.title);
+
+      const triggerCover = () => {
+        this.targetCoverNovelId = n.id;
+        const input = document.getElementById('novelCoverInput');
+        if (input) input.click();
+      };
+      card.querySelector('.novel-card-cover-wrap').onclick = triggerCover;
+      card.querySelector('.cover-novel-btn').onclick = triggerCover;
 
       grid.appendChild(card);
     });

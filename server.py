@@ -572,6 +572,19 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_json({"error": f"Restore failed: {str(e)}"}, status=500)
             return
 
+        # 7. Update Novel Cover Image
+        if path == "/api/novels/cover":
+            novel_id = body.get("novel_id")
+            user_id = body.get("user_id")
+            cover_data = body.get("cover_data")
+            conn.close()
+            if not novel_id or not user_id or not cover_data:
+                self.send_json({"error": "novel_id, user_id, and cover_data are required"}, status=400)
+                return
+            database.update_novel_cover(novel_id, user_id, cover_data)
+            self.send_json({"success": True})
+            return
+
         conn.close()
         self.send_json({"error": "Endpoint not found"}, status=404)
 

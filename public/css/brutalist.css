@@ -529,15 +529,19 @@ body {
   transition: background 0.12s ease;
 }
 
-.reader-paragraph:hover {
-  background: rgba(255, 255, 255, 0.03);
+/* TTS Speaking Focus & Highlight */
+.reader-paragraph.speaking-active,
+.reader-heading.speaking-active {
+  background: rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-sm);
+  transition: all 0.2s ease;
 }
 
-/* TTS Speaking Highlight */
-.reader-paragraph.speaking-active {
-  background: var(--highlight-bg) !important;
-  outline: 1px solid var(--highlight-border);
-  border-radius: var(--radius-sm);
+[data-theme="monochrome-light"] .reader-paragraph.speaking-active,
+[data-theme="monochrome-light"] .reader-heading.speaking-active {
+  background: rgba(0, 0, 0, 0.08) !important;
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.08);
 }
 
 .reader-image {

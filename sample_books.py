@@ -213,6 +213,7 @@ def seed_demo_novel(user_id: str):
     conn.commit()
     conn.close()
     print("Demo novel successfully seeded!")
+    return novel_id
 
 if __name__ == "__main__":
     database.init_db()

@@ -150,27 +150,49 @@ def clean_html_content(raw_html, zf, base_dir):
         return match.group(0)
 
     content = re.sub(r'<img\s+([^>]*?)>', replace_img, content, flags=re.I)
-    
-    blocks = re.findall(r'<(p|div|h[1-6]|blockquote)[^>]*>(.*?)</\1>', content, re.I | re.S)
-    
-    pid = 0
+    content = re.sub(r'<hr[^>]*>', '<br/><br/>', content, flags=re.I)
+
+    # Strategy: Find all leaf text blocks and split into distinct paragraphs
+    raw_blocks = re.findall(r'<(p|h[1-6]|blockquote)[^>]*>(.*?)</\1>', content, re.I | re.S)
+
     clean_blocks = []
-    if blocks:
-        for tag, inner in blocks:
-            plain = re.sub(r'<[^>]+>', '', inner).strip()
-            plain = html.unescape(plain)
-            if not plain and not ('<img' in inner.lower()):
+    pid = 0
+
+    if raw_blocks:
+        for tag, inner in raw_blocks:
+            # If inner contains nested paragraph/heading tags, extract leaf children
+            if re.search(r'<(p|h[1-6])[^>]*>', inner, re.I):
+                nested = re.findall(r'<(p|h[1-6])[^>]*>(.*?)</\1>', inner, re.I | re.S)
+                for n_tag, n_inner in nested:
+                    sub_parts = re.split(r'(?:<br\s*/?>\s*){2,}|\n\s*\n', n_inner, flags=re.I)
+                    for sub in sub_parts:
+                        plain = re.sub(r'<[^>]+>', '', sub).strip()
+                        plain = html.unescape(plain)
+                        if plain or ('<img' in sub.lower()):
+                            is_heading = n_tag.lower().startswith('h')
+                            p_class = "reader-heading" if is_heading else "reader-paragraph"
+                            clean_blocks.append(f'<{n_tag} class="{p_class}" data-pid="{pid}" id="p-{pid}">{sub.strip()}</{n_tag}>')
+                            pid += 1
                 continue
-            is_heading = tag.lower().startswith('h')
-            p_class = "reader-heading" if is_heading else "reader-paragraph"
-            clean_blocks.append(f'<{tag} class="{p_class}" data-pid="{pid}" id="p-{pid}">{inner.strip()}</{tag}>')
-            pid += 1
+
+            # Check if this block contains multiple visual paragraphs separated by <br><br>
+            sub_parts = re.split(r'(?:<br\s*/?>\s*){2,}|\n\s*\n', inner, flags=re.I)
+            for sub in sub_parts:
+                plain = re.sub(r'<[^>]+>', '', sub).strip()
+                plain = html.unescape(plain)
+                if plain or ('<img' in sub.lower()):
+                    is_heading = tag.lower().startswith('h')
+                    p_class = "reader-heading" if is_heading else "reader-paragraph"
+                    clean_blocks.append(f'<{tag} class="{p_class}" data-pid="{pid}" id="p-{pid}">{sub.strip()}</{tag}>')
+                    pid += 1
     else:
-        raw_paras = [p.strip() for p in re.split(r'\n\s*\n|<br\s*/?>', content) if p.strip()]
-        for p_text in raw_paras:
-            plain = re.sub(r'<[^>]+>', '', p_text).strip()
-            if plain:
-                clean_blocks.append(f'<p class="reader-paragraph" data-pid="{pid}" id="p-{pid}">{p_text}</p>')
+        # Fallback for EPUBs with only <div> or pure <br> text
+        sub_parts = re.split(r'</?(?:div|section|article)[^>]*>|(?:<br\s*/?>\s*){1,}|\n\s*\n', content, flags=re.I)
+        for sub in sub_parts:
+            plain = re.sub(r'<[^>]+>', '', sub).strip()
+            plain = html.unescape(plain)
+            if plain or ('<img' in sub.lower()):
+                clean_blocks.append(f'<p class="reader-paragraph" data-pid="{pid}" id="p-{pid}">{sub.strip()}</p>')
                 pid += 1
 
     formatted_html = sanitize_html("\n".join(clean_blocks))

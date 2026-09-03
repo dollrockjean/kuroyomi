@@ -339,5 +339,30 @@ class ApiDirectTests(unittest.TestCase):
         self.assertTrue(restore_res["success"])
         self.assertTrue(restore_res["novels_restored"] > 0)
 
+    def test_09_cover_update(self):
+        user_id = database.get_or_create_user("COVER_TEST_USER")
+        import sample_books
+        novel_id = sample_books.seed_demo_novel(user_id)
+
+        custom_cover = "data:image/jpeg;base64,mockcoverdata123"
+        cover_body = json.dumps({
+            "novel_id": novel_id,
+            "user_id": user_id,
+            "cover_data": custom_cover
+        }).encode('utf-8')
+
+        h_cover = create_mock_handler("/api/novels/cover", "POST", cover_body)
+        h_cover.do_POST()
+        cover_res = json.loads(h_cover.wfile.getvalue().decode('utf-8'))
+        self.assertTrue(cover_res["success"])
+
+        # Verify cover updated in novel query
+        h_novels = create_mock_handler(f"/api/novels?user_id={user_id}", "GET")
+        h_novels.do_GET()
+        novels = json.loads(h_novels.wfile.getvalue().decode('utf-8'))["novels"]
+        matched = [n for n in novels if n["id"] == novel_id]
+        self.assertEqual(len(matched), 1)
+        self.assertEqual(matched[0]["cover_data"], custom_cover)
+
 if __name__ == "__main__":
     unittest.main()

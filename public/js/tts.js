@@ -249,11 +249,8 @@ const TTSEngine = {
     this.clearHighlight();
     el.classList.add('speaking-active');
 
-    // Smooth scroll into reading view if offscreen
-    const rect = el.getBoundingClientRect();
-    if (rect.top < 90 || rect.bottom > window.innerHeight - 90) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
+    // Keep reading view smoothly focused on the active spoken text
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
     // Silently save progress at current spot
     if (window.Reader) {

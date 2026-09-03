@@ -305,3 +305,11 @@ def import_backup_data(data: dict, user_id: str):
         "volumes_restored": len(volumes),
         "chapters_restored": len(chapters)
     }
+
+def update_novel_cover(novel_id: str, user_id: str, cover_data: str):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("UPDATE novels SET cover_data = ?, updated_at = ? WHERE id = ? AND user_id = ?", (cover_data, time.time(), novel_id, user_id))
+    conn.commit()
+    conn.close()
+    return True

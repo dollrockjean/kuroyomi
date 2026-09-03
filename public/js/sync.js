@@ -7,12 +7,23 @@ const SyncService = {
 
   async init() {
     this.updateStatus('syncing', 'CONNECTING...');
+
+    // 0. Detect 1-Click Pairing Link (?pair=READER-XXXXX)
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const pairParam = urlParams.get('pair') || urlParams.get('key');
+      if (pairParam) {
+        Storage.setSyncKey(pairParam.trim().toUpperCase());
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    } catch (e) {}
+
     const deviceToken = Storage.getDeviceToken();
     const isRemembered = Storage.isRemembered();
 
     try {
       // 1. Try to restore session via device token ("Remember This Device")
-      if (isRemembered) {
+      if (isRemembered && !new URLSearchParams(window.location.search).get('pair')) {
         const res = await fetch(`/api/auth/device-session?device_token=${encodeURIComponent(deviceToken)}`);
         const data = await res.json();
         if (data.authenticated) {
