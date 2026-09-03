@@ -490,6 +490,7 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 conn.close()
                 return
 
+            database.ensure_user_exists(user_id)
             now = time.time()
             prog_id = f"prog_{uuid.uuid4().hex[:12]}"
             cur.execute("""
@@ -607,6 +608,8 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         if not user_id:
             self.send_json({"error": "user_id is required"}, status=400)
             return
+
+        database.ensure_user_exists(user_id)
 
         novel_id = fs.getvalue("novel_id")  # Optional: add to existing novel series
         custom_series_title = fs.getvalue("series_title")

@@ -159,6 +159,27 @@ def get_or_create_user(sync_key: str, display_name: str = None):
     conn.close()
     return user_id
 
+def ensure_user_exists(user_id: str, sync_key: str = None):
+    """Guarantees a valid user row exists to prevent any FOREIGN KEY failures."""
+    if not user_id:
+        return
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM users WHERE id = ?", (user_id,))
+    if not cur.fetchone():
+        now = time.time()
+        key = sync_key or f"READER-{uuid.uuid4().hex[:8].upper()}"
+        cur.execute("""
+            INSERT OR IGNORE INTO users (id, sync_key, display_name, demo_seeded, created_at, last_active)
+            VALUES (?, ?, ?, 1, ?, ?)
+        """, (user_id, key, "Reader", now, now))
+        cur.execute("""
+            INSERT OR IGNORE INTO user_settings (user_id, updated_at)
+            VALUES (?, ?)
+        """, (user_id, now))
+        conn.commit()
+    conn.close()
+
 def register_device(user_id: str, device_token: str, device_name: str, user_agent: str, remember: bool = True):
     conn = get_db()
     cur = conn.cursor()
@@ -246,6 +267,7 @@ def export_backup_data(user_id: str):
     }
 
 def import_backup_data(data: dict, user_id: str):
+    ensure_user_exists(user_id)
     conn = get_db()
     cur = conn.cursor()
     now = time.time()
