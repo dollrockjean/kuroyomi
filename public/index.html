@@ -319,11 +319,23 @@
           </div>
         </div>
 
-        <!-- Cloud Hosting Safeguard: Full Backup & Restore -->
-        <div style="margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--border-color);">
-          <label class="form-label">Cloud Hosting Safeguards</label>
+        <!-- Device Auto-Shield Mirror Protection -->
+        <div style="border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-surface); padding: 14px; margin-bottom: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase;">Device Auto-Shield</div>
+            <span class="badge-brutal accent" style="font-size: 10px;">Safe</span>
+          </div>
+          <div style="font-size: 12px; font-weight: 600; margin-top: 4px;" id="mirrorStatusText">Active · Mirrored locally on this device</div>
+          <p style="font-size: 11px; color: var(--text-muted); margin-top: 4px; margin-bottom: 0; line-height: 1.4;">
+            Your library is automatically mirrored into this device's permanent storage. If your free cloud server ever updates or restarts, your books will restore automatically.
+          </p>
+        </div>
+
+        <!-- Cloud Hosting Safeguard: Manual Full Backup & Restore -->
+        <div style="margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border-color);">
+          <label class="form-label">Manual Backup &amp; Restore</label>
           <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 10px; line-height: 1.4;">
-            Safeguard for free hosting (Render, Railway, Fly.io): Download a backup to keep your novels and reading spots safe on your device at all times.
+            Download a portable JSON backup anytime to transfer your library across servers or keep an offline copy.
           </p>
           <div style="display: flex; gap: 8px; margin-bottom: 8px;">
             <button class="btn-brutal" id="exportBackupBtn" style="flex: 1; font-size: 12px;">Export Backup</button>

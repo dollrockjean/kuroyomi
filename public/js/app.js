@@ -566,7 +566,7 @@ const App = {
     if (toggle) toggle.checked = Storage.isRemembered();
   },
 
-  async loadLibrary() {
+  async loadLibrary(allowAutoRestore = true) {
     try {
       const userId = SyncService.currentUserId;
       if (!userId) return;
@@ -580,10 +580,69 @@ const App = {
       const lastReadData = await lastReadRes.json();
 
       this.novels = novelsData.novels || [];
+
+      // Auto-Shield: If server restarted/rebuilt and has 0 novels, check device mirror in IndexedDB
+      if (this.novels.length === 0 && allowAutoRestore && typeof IDB !== 'undefined') {
+        const mirroredBackup = await IDB.getLibraryMirror(userId);
+        if (mirroredBackup && mirroredBackup.novels && mirroredBackup.novels.length > 0) {
+          console.log('Server reset detected after update. Auto-restoring library mirror from device...');
+          this.showToast('Restoring library from device mirror...');
+          try {
+            const restoreRes = await fetch('/api/restore', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                user_id: userId,
+                backup_data: mirroredBackup
+              })
+            });
+            const restoreData = await restoreRes.json();
+            if (restoreData.success) {
+              this.showToast(`Auto-restored ${restoreData.novels_restored || 0} novel(s) from device!`);
+              return this.loadLibrary(false);
+            }
+          } catch (e) {
+            console.warn('Auto-restore failed:', e);
+          }
+        }
+      }
+
+      // If server has novels, update our local device mirror in the background
+      if (this.novels.length > 0) {
+        this.updateDeviceMirror();
+      }
+
       this.renderResumeHero(lastReadData.last_read);
       this.renderLibraryGrid();
+      this.updateMirrorStatus();
     } catch (e) {
       console.warn('Error loading library:', e);
+    }
+  },
+
+  async updateDeviceMirror() {
+    try {
+      const userId = SyncService.currentUserId;
+      if (!userId || typeof IDB === 'undefined') return;
+      const res = await fetch(`/api/backup?user_id=${encodeURIComponent(userId)}`);
+      const backupData = await res.json();
+      if (backupData && backupData.novels && backupData.novels.length > 0) {
+        await IDB.saveLibraryMirror(userId, backupData);
+        this.updateMirrorStatus();
+      }
+    } catch (e) {
+      console.warn('Could not update device mirror:', e);
+    }
+  },
+
+  async updateMirrorStatus() {
+    const statusEl = document.getElementById('mirrorStatusText');
+    if (!statusEl || typeof IDB === 'undefined') return;
+    const count = await IDB.getMirroredCount(SyncService.currentUserId);
+    if (count > 0) {
+      statusEl.textContent = `Active · ${count} novel(s) mirrored locally on this device`;
+    } else {
+      statusEl.textContent = 'Active · Mirrored locally';
     }
   },
 

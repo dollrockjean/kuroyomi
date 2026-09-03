@@ -95,3 +95,85 @@ const Storage = {
     localStorage.removeItem(this.USER_ID_KEY);
   }
 };
+
+// IndexedDB Persistent Device Storage (Survives server redeploys and cloud restarts)
+const IDB = {
+  dbName: 'kuroyomi_cache_v1',
+  storeName: 'library_mirror',
+
+  open() {
+    return new Promise((resolve, reject) => {
+      if (!window.indexedDB) {
+        return reject(new Error('IndexedDB not supported'));
+      }
+      const req = indexedDB.open(this.dbName, 1);
+      req.onupgradeneeded = (e) => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains(this.storeName)) {
+          db.createObjectStore(this.storeName, { keyPath: 'user_id' });
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  },
+
+  async saveLibraryMirror(userId, backupData) {
+    if (!userId || !backupData || !backupData.novels) return false;
+    try {
+      const db = await this.open();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(this.storeName, 'readwrite');
+        const store = tx.objectStore(this.storeName);
+        store.put({
+          user_id: userId,
+          backup_data: backupData,
+          novel_count: backupData.novels.length,
+          saved_at: Date.now()
+        });
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => reject(tx.error);
+      });
+    } catch (e) {
+      console.warn('IDB save error:', e);
+      return false;
+    }
+  },
+
+  async getLibraryMirror(userId) {
+    if (!userId) return null;
+    try {
+      const db = await this.open();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(this.storeName, 'readonly');
+        const store = tx.objectStore(this.storeName);
+        const req = store.get(userId);
+        req.onsuccess = () => {
+          resolve(req.result ? req.result.backup_data : null);
+        };
+        req.onerror = () => reject(req.error);
+      });
+    } catch (e) {
+      console.warn('IDB get error:', e);
+      return null;
+    }
+  },
+
+  async getMirroredCount(userId) {
+    if (!userId) return 0;
+    try {
+      const db = await this.open();
+      return new Promise((resolve) => {
+        const tx = db.transaction(this.storeName, 'readonly');
+        const store = tx.objectStore(this.storeName);
+        const req = store.get(userId);
+        req.onsuccess = () => {
+          resolve(req.result ? (req.result.novel_count || 0) : 0);
+        };
+        req.onerror = () => resolve(0);
+      });
+    } catch {
+      return 0;
+    }
+  }
+};

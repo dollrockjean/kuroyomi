@@ -5,9 +5,11 @@ __pycache__/
 *.so
 .Python
 
-# SQLite WAL and temp files
+# SQLite databases & temp files
+*.db
 *.db-wal
 *.db-shm
+/reader.db
 /reader.db-wal
 /reader.db-shm
 
