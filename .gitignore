@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# SQLite WAL and temp files
+*.db-wal
+*.db-shm
+/reader.db-wal
+/reader.db-shm
+
+# TTS cache
+/tmp/kuroyomi_tts_cache/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Environments
+.env
+.venv
+env/
+venv/

@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="monochrome-dark" data-font="times" data-width="normal">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
+  <title>KuroYomi · Web Novel Reader</title>
+  
+  <!-- Apple iOS Web App Meta Tags -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="KuroYomi">
+  <meta name="theme-color" content="#0a0a0a">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
+
+  <!-- Styles -->
+  <link rel="stylesheet" href="/css/brutalist.css">
+</head>
+<body>
+
+  <!-- Top App Header -->
+  <header class="app-header">
+    <div class="logo-area" id="logoBtn">
+      <div class="logo-icon">K</div>
+      <div>
+        <div class="logo-title">KUROYOMI</div>
+        <div class="logo-sub">Web Novel Reader</div>
+      </div>
+    </div>
+
+    <div class="header-controls">
+      <button class="btn-brutal" id="headerMenuBtn">Menu</button>
+      <button class="btn-brutal btn-brutal-accent" id="uploadNovelBtn">+ Upload</button>
+    </div>
+  </header>
+
+  <!-- Main View Area -->
+  <main class="main-content">
+    
+    <!-- 1. Library View -->
+    <div id="libraryView">
+      
+      <!-- Resume Hero Card -->
+      <section class="resume-hero" id="resumeHero" style="display: none;">
+        <img src="" id="resumeCover" class="resume-cover" alt="Cover" />
+        <div class="resume-info">
+          <h3>Continue Reading</h3>
+          <h2 id="resumeNovelTitle">Novel Title</h2>
+          <div class="resume-chapter-tag" id="resumeChapterTag">Volume 1 · Chapter 1</div>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <div class="progress-bar-container">
+              <div class="progress-bar-fill" id="resumeProgressBar"></div>
+            </div>
+            <span class="badge-brutal" id="resumeProgressPercent">0% Read</span>
+          </div>
+        </div>
+        <div>
+          <button class="btn-brutal btn-brutal-accent" id="resumeReadBtn" style="font-size: 13px; padding: 10px 18px;">
+            Resume Novel
+          </button>
+        </div>
+      </section>
+
+      <!-- Library Grid Header -->
+      <div class="section-header">
+        <h2 class="section-title">Library</h2>
+        <span class="badge-brutal">Multi-Volume Ready</span>
+      </div>
+
+      <!-- Novels Grid -->
+      <div class="novel-grid" id="novelGrid">
+        <!-- Novel cards inserted dynamically -->
+      </div>
+    </div>
+
+    <!-- 2. WebNovel Reader View -->
+    <div id="readerView" class="reader-container">
+      
+      <!-- Sticky Auto-Hiding Reading Header -->
+      <div class="reader-top-bar" id="readerTopBar">
+        <button class="btn-brutal" id="backToLibraryBtn">Library</button>
+        <div class="reader-ch-info" id="readerChapterTitle">
+          <strong>Novel</strong> · Chapter
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span class="reader-progress-pill" id="readerProgressPill">0%</span>
+          <button class="btn-brutal" id="readerMenuBtn">Menu</button>
+        </div>
+      </div>
+
+      <!-- Main Reader Content Wrapper (Times New Roman by default) -->
+      <article class="reader-body-wrapper" id="readerBodyWrapper">
+        <div id="readerContent">
+          <!-- Chapter HTML rendered with paragraphs -->
+        </div>
+
+        <!-- Chapter Bottom Navigation -->
+        <nav class="reader-footer-nav" id="readerFooterNav">
+          <button class="btn-brutal" id="footerPrevBtn">Previous Chapter</button>
+          <button class="btn-brutal" id="footerMenuBtn">Menu</button>
+          <button class="btn-brutal btn-brutal-accent" id="footerNextBtn">Next Chapter</button>
+        </nav>
+      </article>
+
+      <!-- Floating Reader Action Bar (Auto-hides on scroll down) -->
+      <div class="reader-floating-bar" id="readerFloatingBar">
+        <button class="btn-brutal" id="prevChapterBtn" title="Previous Chapter">Prev</button>
+        <button class="btn-brutal" id="readerAutoScrollBtn">Auto-Scroll</button>
+        <button class="btn-brutal" id="readerTTSBtn">Read Aloud</button>
+        <button class="btn-brutal" id="nextChapterBtn" title="Next Chapter">Next</button>
+      </div>
+
+      <!-- Floating Discreet Quick Menu Toggle Button (Always accessible) -->
+      <button class="floating-quick-menu-btn" id="floatingQuickMenuBtn" title="Open Menu">Menu</button>
+
+      <!-- Floating Active Auto-Scroll Pill -->
+      <div class="autoscroll-pill" id="autoscrollPill">
+        <button class="btn-brutal" id="autoscrollPauseBtn" style="min-height: 28px; padding: 4px 8px; font-size: 11px;">Pause</button>
+        <span id="autoscrollSpeedLabel">35 px/s</span>
+        <button class="btn-brutal" id="autoscrollSpeedDown" style="min-height: 28px; padding: 4px 8px; font-size: 11px;">-</button>
+        <button class="btn-brutal" id="autoscrollSpeedUp" style="min-height: 28px; padding: 4px 8px; font-size: 11px;">+</button>
+        <button class="btn-brutal" id="autoscrollCloseBtn" style="min-height: 28px; padding: 4px 8px; font-size: 11px; color: #ef4444;">Close</button>
+      </div>
+
+      <!-- Floating Active TTS Read Aloud Pill -->
+      <div class="tts-pill" id="ttsPill">
+        <button class="btn-brutal" id="ttsPauseBtn" style="min-height: 28px; padding: 4px 8px; font-size: 11px;">Pause</button>
+        <button class="btn-brutal" id="ttsPrevBtn" style="min-height: 28px; padding: 4px 6px; font-size: 11px;">Prev</button>
+        <button class="btn-brutal" id="ttsNextBtn" style="min-height: 28px; padding: 4px 6px; font-size: 11px;">Next</button>
+        <span id="ttsRateLabel">1.0x</span>
+        <span class="badge-brutal sleep-timer-badge" style="display: none;">15:00</span>
+        <button class="btn-brutal" id="ttsCloseBtn" style="min-height: 28px; padding: 4px 8px; font-size: 11px; color: #ef4444;">Close</button>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- Drawer Backdrop -->
+  <div class="drawer-backdrop" id="drawerBackdrop"></div>
+
+  <!-- Master Side Panel (Context-Aware: Library Mode vs Active Book Mode) -->
+  <aside class="drawer master-panel" id="masterSidePanel">
+    <div class="drawer-header">
+      <div>
+        <h3 class="master-panel-title" id="masterPanelTitle">Menu</h3>
+        <div class="master-panel-subtitle" id="masterPanelSubtitle" style="font-size: 11px; color: var(--text-muted); margin-top: 2px;"></div>
+      </div>
+      <button class="btn-brutal" id="closeMasterPanelBtn" style="min-height: 30px; padding: 3px 10px;">Close</button>
+    </div>
+
+    <!-- Navigation Tabs inside Master Side Panel -->
+    <div class="master-nav-tabs" id="masterNavTabs">
+      <!-- Book specific tabs (only shown when reading a book) -->
+      <button class="master-tab-btn book-tab" data-tab="tabChapters">Chapters</button>
+      <button class="master-tab-btn book-tab" data-tab="tabTTS">Audio</button>
+      <button class="master-tab-btn book-tab" data-tab="tabScroll">Scroll</button>
+      <!-- General tabs (always available) -->
+      <button class="master-tab-btn" data-tab="tabPrefs">Display</button>
+      <button class="master-tab-btn" data-tab="tabSync">Sync &amp; Backup</button>
+    </div>
+
+    <div class="master-panel-body">
+      
+      <!-- Tab 1: Chapters & Table of Contents (Strictly for Current Book) -->
+      <div class="master-tab-content" id="tabChapters">
+        <input type="text" id="tocSearchInput" class="drawer-search-input" placeholder="Search chapters in this novel..." />
+        <ul class="toc-list" id="tocList">
+          <!-- Dynamically populated for the active book only -->
+        </ul>
+      </div>
+
+      <!-- Tab 2: Audio / Read Aloud (Strictly for Current Book) -->
+      <div class="master-tab-content" id="tabTTS">
+        <div style="margin-bottom: 20px;">
+          <button class="btn-brutal btn-brutal-accent" id="ttsPlayToggleBtn" style="width: 100%; font-size: 14px; padding: 12px;">
+            Start Read Aloud
+          </button>
+          <p style="font-size: 11px; color: var(--text-muted); margin-top: 6px; text-align: center;">
+            Reads aloud starting directly from the paragraph on your screen.
+          </p>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Realistic Neural Voice</label>
+          <div style="display: flex; gap: 8px;">
+            <select id="ttsVoiceSelect" class="form-select" style="flex: 1;"></select>
+            <button class="btn-brutal" id="testVoiceBtn" style="white-space: nowrap;">Test Voice</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <div style="display: flex; justify-content: space-between;">
+            <label class="form-label">Narrator Speed</label>
+            <span id="ttsRateVal" style="font-size: 12px; font-weight: 600; color: var(--text-secondary);">1.0x</span>
+          </div>
+          <input type="range" id="ttsRateSlider" class="range-slider" min="0.6" max="1.8" step="0.05" value="1.0" />
+        </div>
+
+        <div class="form-group" style="margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--border-color);">
+          <label class="form-label">Sleep Timer</label>
+          <div class="grid-choices">
+            <button class="choice-btn sleep-btn selected" data-sleep="off">Off</button>
+            <button class="choice-btn sleep-btn" data-sleep="10">10 min</button>
+            <button class="choice-btn sleep-btn" data-sleep="15">15 min</button>
+            <button class="choice-btn sleep-btn" data-sleep="30">30 min</button>
+            <button class="choice-btn sleep-btn" data-sleep="45">45 min</button>
+            <button class="choice-btn sleep-btn" data-sleep="60">60 min</button>
+            <button class="choice-btn sleep-btn" data-sleep="chapter_end">End of Ch</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 3: Auto-Scroll (Strictly for Current Book) -->
+      <div class="master-tab-content" id="tabScroll">
+        <div style="margin-bottom: 20px;">
+          <button class="btn-brutal btn-brutal-accent" id="panelAutoScrollToggleBtn" style="width: 100%; font-size: 14px; padding: 12px;">
+            Start Auto-Scroll
+          </button>
+        </div>
+
+        <div class="form-group">
+          <div style="display: flex; justify-content: space-between;">
+            <label class="form-label">Scroll Speed</label>
+            <span id="panelScrollSpeedVal" style="font-size: 12px; font-weight: 600; color: var(--text-secondary);">35 px/s</span>
+          </div>
+          <input type="range" id="panelScrollSpeedSlider" class="range-slider" min="10" max="100" step="5" value="35" />
+        </div>
+
+        <p style="font-size: 12px; color: var(--text-muted); line-height: 1.5; margin-top: 12px;">
+          Auto-scroll automatically pauses when you touch or scroll the screen, resuming smoothly after 2 seconds.
+        </p>
+      </div>
+
+      <!-- Tab 4: Display & Preferences (Times New Roman & Monochrome) -->
+      <div class="master-tab-content" id="tabPrefs">
+        <div class="form-group">
+          <label class="form-label">Theme</label>
+          <div class="grid-choices">
+            <button class="choice-btn theme-btn selected" data-theme="monochrome-dark">Monochrome Dark</button>
+            <button class="choice-btn theme-btn" data-theme="monochrome-light">Monochrome Light</button>
+            <button class="choice-btn theme-btn" data-theme="sepia-parchment">Warm Sepia</button>
+            <button class="choice-btn theme-btn" data-theme="oled-blackout">OLED Blackout</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Font Family</label>
+          <div class="grid-choices">
+            <button class="choice-btn font-btn selected" data-font="times">Times New Roman</button>
+            <button class="choice-btn font-btn" data-font="sans">Clean Sans</button>
+            <button class="choice-btn font-btn" data-font="mono">Monospace</button>
+            <button class="choice-btn font-btn" data-font="dyslexic">Dyslexic</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <div style="display: flex; justify-content: space-between;">
+            <label class="form-label">Font Size</label>
+            <span id="fontSizeVal" style="font-size: 12px; font-weight: 600; color: var(--text-secondary);">19px</span>
+          </div>
+          <input type="range" id="fontSizeSlider" class="range-slider" min="14" max="32" step="1" value="19" />
+        </div>
+
+        <div class="form-group">
+          <div style="display: flex; justify-content: space-between;">
+            <label class="form-label">Line Spacing</label>
+            <span id="lineHeightVal" style="font-size: 12px; font-weight: 600; color: var(--text-secondary);">1.85</span>
+          </div>
+          <input type="range" id="lineHeightSlider" class="range-slider" min="1.3" max="2.4" step="0.05" value="1.85" />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Reading Width</label>
+          <div class="grid-choices">
+            <button class="choice-btn width-btn" data-width="narrow">Narrow</button>
+            <button class="choice-btn width-btn selected" data-width="normal">Normal</button>
+            <button class="choice-btn width-btn" data-width="wide">Wide</button>
+            <button class="choice-btn width-btn" data-width="full">Full</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 5: Sync, Devices & Cloud Safeguard Backup -->
+      <div class="master-tab-content" id="tabSync">
+        <div style="border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-surface); padding: 14px; margin-bottom: 16px;">
+          <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase;">Your Sync Key</div>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">
+            <span id="syncKeyDisplay" style="font-size: 18px; font-weight: 700; color: var(--text-primary);">---</span>
+            <button class="btn-brutal" id="copySyncKeyBtn" style="min-height: 30px; padding: 4px 10px; font-size: 11px;">Copy Key</button>
+          </div>
+        </div>
+
+        <div style="border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-surface); padding: 14px; margin-bottom: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <div style="font-size: 13px; font-weight: 600;">Remember this device</div>
+              <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;" id="deviceNameDisplay">iPhone / Web Browser</div>
+            </div>
+            <input type="checkbox" id="rememberDeviceToggle" style="width: 20px; height: 20px; accent-color: var(--accent); cursor: pointer;" checked />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Pair Another Device Key</label>
+          <div style="display: flex; gap: 8px;">
+            <input type="text" id="pairKeyInput" class="form-input" placeholder="Enter Sync Key" />
+            <button class="btn-brutal btn-brutal-accent" id="pairKeyBtn">Pair</button>
+          </div>
+        </div>
+
+        <!-- Cloud Hosting Safeguard: Full Backup & Restore -->
+        <div style="margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--border-color);">
+          <label class="form-label">Cloud Hosting Safeguards</label>
+          <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 10px; line-height: 1.4;">
+            Safeguard for free hosting (Render, Railway, Fly.io): Download a backup to keep your novels and reading spots safe on your device at all times.
+          </p>
+          <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+            <button class="btn-brutal" id="exportBackupBtn" style="flex: 1; font-size: 12px;">Export Backup</button>
+            <button class="btn-brutal" id="importBackupBtn" style="flex: 1; font-size: 12px;">Restore Backup</button>
+            <input type="file" id="backupFileInput" accept=".json" style="display: none;" />
+          </div>
+        </div>
+
+        <div style="margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border-color);">
+          <button class="btn-brutal" id="panelUploadBtn" style="width: 100%;">+ Upload Novel Files</button>
+        </div>
+      </div>
+
+    </div>
+  </aside>
+
+  <!-- Upload Modal -->
+  <div class="modal-overlay" id="uploadModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">Upload Novel Files</h3>
+        <button class="btn-brutal" id="closeUploadModalBtn" style="min-height: 28px; padding: 2px 8px;">Close</button>
+      </div>
+      <div class="modal-body">
+        
+        <div id="uploadTargetNotice" class="badge-brutal accent" style="display: none; width: 100%; padding: 8px; margin-bottom: 12px;"></div>
+
+        <div class="form-group" id="customTitleGroup">
+          <label class="form-label">Series Title (Optional)</label>
+          <input type="text" id="seriesTitleInput" class="form-input" placeholder="Leave blank to auto-detect base title" />
+        </div>
+
+        <div id="epubDropzone" style="border: 1px dashed var(--border-color); border-radius: 8px; background: var(--bg-surface); padding: 32px; text-align: center; cursor: pointer; margin-bottom: 14px;">
+          <div style="font-size: 14px; font-weight: 600;">Drag and drop .epub files here or click to browse</div>
+          <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Supports multiple volume files at once</div>
+          <input type="file" id="epubFileInput" accept=".epub" multiple style="display: none;" />
+        </div>
+
+        <div id="uploadFileList"></div>
+
+        <div id="uploadProgress" style="display: none; margin-top: 14px;">
+          <div style="font-size: 11px; color: var(--text-secondary); margin-bottom: 4px;" id="uploadProgressText">Processing...</div>
+          <div class="progress-bar-container" style="max-width: 100%; height: 6px;">
+            <div class="progress-bar-fill" id="uploadProgressFill" style="width: 0%;"></div>
+          </div>
+        </div>
+
+      </div>
+      <div class="modal-footer">
+        <button class="btn-brutal" id="cancelUploadBtn">Cancel</button>
+        <button class="btn-brutal btn-brutal-accent" id="startUploadBtn">Start Upload</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Loading Overlay -->
+  <div class="modal-overlay" id="loadingOverlay" style="background: rgba(0, 0, 0, 0.8);">
+    <div style="text-align: center; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-surface); padding: 24px 36px; box-shadow: var(--shadow-card);">
+      <div id="loadingText" style="font-family: var(--font-sans); font-size: 13px; font-weight: 600;">Loading...</div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <!-- Application Scripts -->
+  <script src="/js/storage.js"></script>
+  <script src="/js/sync.js"></script>
+  <script src="/js/autoscroll.js"></script>
+  <script src="/js/tts.js"></script>
+  <script src="/js/reader.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,200 @@
+// Cloud Sync & Device Management Service
+const SyncService = {
+  currentUserId: null,
+  currentSyncKey: null,
+  syncTimeout: null,
+  isOnline: true,
+
+  async init() {
+    this.updateStatus('syncing', 'CONNECTING...');
+    const deviceToken = Storage.getDeviceToken();
+    const isRemembered = Storage.isRemembered();
+
+    try {
+      // 1. Try to restore session via device token ("Remember This Device")
+      if (isRemembered) {
+        const res = await fetch(`/api/auth/device-session?device_token=${encodeURIComponent(deviceToken)}`);
+        const data = await res.json();
+        if (data.authenticated) {
+          this.currentUserId = data.user_id;
+          this.currentSyncKey = data.sync_key;
+          Storage.setUserId(data.user_id);
+          Storage.setSyncKey(data.sync_key);
+          this.updateStatus('synced', 'SYNCED');
+          return { userId: data.user_id, syncKey: data.sync_key, settings: data.settings };
+        }
+      }
+
+      // 2. Fallback to existing local sync key or create new one
+      let syncKey = Storage.getSyncKey();
+      const deviceName = Storage.getDeviceName();
+
+      const regRes = await fetch('/api/auth/register-device', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sync_key: syncKey,
+          device_token: deviceToken,
+          device_name: deviceName,
+          remember: isRemembered
+        })
+      });
+
+      const regData = await regRes.json();
+      if (regData.success) {
+        this.currentUserId = regData.user_id;
+        this.currentSyncKey = regData.sync_key;
+        Storage.setUserId(regData.user_id);
+        Storage.setSyncKey(regData.sync_key);
+        this.updateStatus('synced', 'SYNCED');
+        return { userId: regData.user_id, syncKey: regData.sync_key, settings: regData.settings };
+      }
+    } catch (e) {
+      console.warn('Sync connection error, operating in offline fallback:', e);
+      this.isOnline = false;
+      this.updateStatus('offline', 'OFFLINE');
+      this.currentUserId = Storage.getUserId() || 'offline_user';
+      this.currentSyncKey = Storage.getSyncKey() || 'OFFLINE';
+      return { userId: this.currentUserId, syncKey: this.currentSyncKey, settings: Storage.getLocalSettings() || {} };
+    }
+  },
+
+  updateStatus(state, text) {
+    const badge = document.getElementById('syncStatusBadge');
+    const dot = document.getElementById('syncDot');
+    const label = document.getElementById('syncStatusText');
+    if (!badge || !dot || !label) return;
+
+    dot.className = 'sync-dot';
+    if (state === 'syncing') {
+      dot.classList.add('syncing');
+      label.textContent = text || 'SYNCING...';
+    } else if (state === 'synced') {
+      label.textContent = text || 'SYNCED';
+    } else {
+      dot.style.background = '#ef4444';
+      label.textContent = text || 'OFFLINE';
+    }
+  },
+
+  async pairDeviceWithKey(syncKey, remember = true) {
+    this.updateStatus('syncing', 'PAIRING...');
+    const deviceToken = Storage.getDeviceToken();
+    const deviceName = Storage.getDeviceName();
+
+    try {
+      const res = await fetch('/api/auth/register-device', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sync_key: syncKey.trim().toUpperCase(),
+          device_token: deviceToken,
+          device_name: deviceName,
+          remember: remember
+        })
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        this.currentUserId = data.user_id;
+        this.currentSyncKey = data.sync_key;
+        Storage.setUserId(data.user_id);
+        Storage.setSyncKey(data.sync_key);
+        Storage.setRemembered(remember);
+        this.updateStatus('synced', 'SYNCED');
+        return data;
+      } else {
+        throw new Error(data.error || 'Pairing failed');
+      }
+    } catch (e) {
+      this.updateStatus('offline', 'PAIR FAILED');
+      throw e;
+    }
+  },
+
+  async getPairedDevices() {
+    if (!this.currentUserId) return [];
+    try {
+      const res = await fetch(`/api/devices?user_id=${encodeURIComponent(this.currentUserId)}`);
+      const data = await res.json();
+      return data.devices || [];
+    } catch {
+      return [];
+    }
+  },
+
+  async unlinkDevice(deviceToken) {
+    try {
+      await fetch('/api/devices/unlink', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: this.currentUserId,
+          device_token: deviceToken
+        })
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  syncReadingProgress(novelId, volumeId, chapterId, paragraphIndex, scrollPercent) {
+    if (!novelId || !chapterId) return;
+
+    // 1. Immediately cache locally
+    Storage.saveLocalProgress(novelId, {
+      volumeId,
+      chapterId,
+      paragraphIndex,
+      scrollPercent
+    });
+
+    // 2. Debounce cloud sync
+    if (this.syncTimeout) clearTimeout(this.syncTimeout);
+    this.updateStatus('syncing', 'SAVING...');
+
+    this.syncTimeout = setTimeout(async () => {
+      if (!this.currentUserId) return;
+      try {
+        const res = await fetch('/api/progress', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user_id: this.currentUserId,
+            novel_id: novelId,
+            volume_id: volumeId,
+            chapter_id: chapterId,
+            paragraph_index: paragraphIndex,
+            scroll_percent: scrollPercent
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          this.updateStatus('synced', 'SAVED');
+        }
+      } catch (e) {
+        console.warn('Progress cloud sync error:', e);
+        this.updateStatus('offline', 'LOCAL ONLY');
+      }
+    }, 1500);
+  },
+
+  async syncSettings(settings) {
+    Storage.setLocalSettings(settings);
+    if (!this.currentUserId) return;
+
+    try {
+      await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: this.currentUserId,
+          ...settings
+        })
+      });
+    } catch (e) {
+      console.warn('Settings cloud sync error:', e);
+    }
+  }
+};

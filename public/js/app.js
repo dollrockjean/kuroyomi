@@ -1,0 +1,760 @@
+// KuroYomi Main Application Controller
+window.ReaderSettings = {
+  theme: 'monochrome-dark',
+  font_family: 'times',
+  font_size: 19,
+  line_height: 1.85,
+  content_width: 'normal',
+  auto_scroll_speed: 35,
+  tts_voice: 'en-US-JennyNeural',
+  tts_rate: 1.0,
+  tts_pitch: 1.0
+};
+
+const App = {
+  currentView: 'library',
+  novels: [],
+  selectedUploadFiles: [],
+  targetUploadNovelId: null,
+
+  async init() {
+    this.showLoading('Connecting...');
+    const session = await SyncService.init();
+    if (session && session.settings && Object.keys(session.settings).length > 0) {
+      this.applySettings({ ...window.ReaderSettings, ...session.settings }, false);
+    } else {
+      this.applySettings(window.ReaderSettings, false);
+    }
+
+    AutoScroll.init(() => Reader.loadNextChapter());
+    TTSEngine.init(() => Reader.loadNextChapter());
+    Reader.init();
+
+    this.bindGlobalEvents();
+    this.bindMasterPanelEvents();
+    this.bindSettingsEvents();
+    this.bindSyncEvents();
+    this.bindBackupRestoreEvents();
+
+    await this.loadLibrary();
+    this.hideLoading();
+  },
+
+  bindGlobalEvents() {
+    document.getElementById('logoBtn').addEventListener('click', () => {
+      AutoScroll.stop();
+      TTSEngine.stop();
+      this.switchView('library');
+    });
+
+    document.getElementById('backToLibraryBtn').addEventListener('click', () => {
+      AutoScroll.stop();
+      TTSEngine.stop();
+      this.switchView('library');
+      this.loadLibrary();
+    });
+
+    // Master Panel Triggers
+    document.getElementById('headerMenuBtn').addEventListener('click', () => this.openMasterPanel('tabSync'));
+    document.getElementById('readerMenuBtn').addEventListener('click', () => this.openMasterPanel('tabChapters'));
+    document.getElementById('footerMenuBtn').addEventListener('click', () => this.openMasterPanel('tabChapters'));
+    document.getElementById('floatingQuickMenuBtn').addEventListener('click', () => this.toggleMasterPanel());
+
+    document.getElementById('readerAutoScrollBtn').addEventListener('click', () => {
+      if (AutoScroll.isActive) {
+        AutoScroll.stop();
+      } else {
+        this.openMasterPanel('tabScroll');
+      }
+    });
+
+    document.getElementById('readerTTSBtn').addEventListener('click', () => {
+      if (TTSEngine.isPlaying) {
+        TTSEngine.stop();
+      } else {
+        this.openMasterPanel('tabTTS');
+      }
+    });
+
+    document.getElementById('drawerBackdrop').addEventListener('click', () => {
+      this.closeMasterPanel();
+    });
+
+    // Auto-Scroll Pill Controls
+    document.getElementById('autoscrollPauseBtn').addEventListener('click', () => {
+      if (AutoScroll.isPaused) {
+        AutoScroll.isPaused = false;
+        AutoScroll.lastFrameTime = performance.now();
+        AutoScroll.updatePillUI();
+        AutoScroll.loop();
+      } else {
+        AutoScroll.isPaused = true;
+        AutoScroll.updatePillUI();
+      }
+    });
+    document.getElementById('autoscrollSpeedDown').addEventListener('click', () => AutoScroll.changeSpeed(-5));
+    document.getElementById('autoscrollSpeedUp').addEventListener('click', () => AutoScroll.changeSpeed(5));
+    document.getElementById('autoscrollCloseBtn').addEventListener('click', () => AutoScroll.stop());
+
+    // TTS Pill Controls
+    document.getElementById('ttsPauseBtn').addEventListener('click', () => {
+      if (TTSEngine.isPaused) TTSEngine.resume();
+      else TTSEngine.pause();
+    });
+    document.getElementById('ttsCloseBtn').addEventListener('click', () => TTSEngine.stop());
+    document.getElementById('ttsPrevBtn').addEventListener('click', () => TTSEngine.prevParagraph());
+    document.getElementById('ttsNextBtn').addEventListener('click', () => TTSEngine.nextParagraph());
+
+    // Upload Modal Trigger
+    document.getElementById('uploadNovelBtn').addEventListener('click', () => this.openUploadModal());
+    document.getElementById('closeUploadModalBtn').addEventListener('click', () => this.closeUploadModal());
+    document.getElementById('cancelUploadBtn').addEventListener('click', () => this.closeUploadModal());
+
+    // Upload Dropzone
+    const dropzone = document.getElementById('epubDropzone');
+    const fileInput = document.getElementById('epubFileInput');
+
+    dropzone.addEventListener('click', () => fileInput.click());
+    dropzone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropzone.style.borderColor = 'var(--accent)';
+    });
+    dropzone.addEventListener('dragleave', () => {
+      dropzone.style.borderColor = 'var(--border-color)';
+    });
+    dropzone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropzone.style.borderColor = 'var(--border-color)';
+      if (e.dataTransfer.files && e.dataTransfer.files.length) {
+        this.handleSelectedFiles(e.dataTransfer.files);
+      }
+    });
+
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files && e.target.files.length) {
+        this.handleSelectedFiles(e.target.files);
+      }
+    });
+
+    document.getElementById('startUploadBtn').addEventListener('click', () => this.performUpload());
+  },
+
+  bindMasterPanelEvents() {
+    document.getElementById('closeMasterPanelBtn').addEventListener('click', () => this.closeMasterPanel());
+
+    // Tab buttons
+    document.querySelectorAll('.master-tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const targetTab = btn.getAttribute('data-tab');
+        this.switchMasterTab(targetTab);
+      });
+    });
+
+    // Tab 2: Audio / TTS
+    document.getElementById('ttsPlayToggleBtn').addEventListener('click', () => {
+      if (TTSEngine.isPlaying) {
+        TTSEngine.pause();
+        document.getElementById('ttsPlayToggleBtn').textContent = 'Start Read Aloud';
+      } else {
+        TTSEngine.start();
+        document.getElementById('ttsPlayToggleBtn').textContent = 'Pause Read Aloud';
+        this.closeMasterPanel();
+      }
+    });
+
+    document.getElementById('testVoiceBtn').addEventListener('click', () => {
+      TTSEngine.testVoice();
+    });
+
+    const rateSlider = document.getElementById('ttsRateSlider');
+    if (rateSlider) {
+      rateSlider.addEventListener('input', (e) => {
+        TTSEngine.setRate(e.target.value);
+        document.getElementById('ttsRateVal').textContent = `${e.target.value}x`;
+      });
+    }
+
+    document.querySelectorAll('.sleep-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.sleep-btn').forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+        const mode = btn.getAttribute('data-sleep');
+        TTSEngine.setSleepTimer(mode);
+      });
+    });
+
+    // Tab 3: Auto-Scroll
+    const panelScrollBtn = document.getElementById('panelAutoScrollToggleBtn');
+    if (panelScrollBtn) {
+      panelScrollBtn.addEventListener('click', () => {
+        AutoScroll.toggle();
+        this.closeMasterPanel();
+      });
+    }
+
+    const scrollSlider = document.getElementById('panelScrollSpeedSlider');
+    if (scrollSlider) {
+      scrollSlider.addEventListener('input', (e) => {
+        const speed = parseInt(e.target.value);
+        AutoScroll.setSpeed(speed);
+        document.getElementById('panelScrollSpeedVal').textContent = `${speed} px/s`;
+      });
+    }
+
+    // Tab 1: Chapters TOC Search
+    const tocSearch = document.getElementById('tocSearchInput');
+    if (tocSearch) {
+      tocSearch.addEventListener('input', (e) => Reader.filterTOC(e.target.value));
+    }
+
+    // Tab 5: Panel Upload Button
+    const panelUpload = document.getElementById('panelUploadBtn');
+    if (panelUpload) {
+      panelUpload.addEventListener('click', () => {
+        this.closeMasterPanel();
+        this.openUploadModal();
+      });
+    }
+  },
+
+  openMasterPanel(tabName = null) {
+    const isReading = this.currentView === 'reader' && Reader.currentNovel;
+    const titleEl = document.getElementById('masterPanelTitle');
+    const subtitleEl = document.getElementById('masterPanelSubtitle');
+    const bookTabs = document.querySelectorAll('.master-tab-btn.book-tab');
+
+    if (isReading) {
+      // In-Book Context
+      titleEl.textContent = Reader.currentNovel.title;
+      if (Reader.currentChapter) {
+        subtitleEl.style.display = 'block';
+        subtitleEl.textContent = `${Reader.currentChapter.volume_title} · ${Reader.currentChapter.title}`;
+      } else {
+        subtitleEl.style.display = 'none';
+      }
+      bookTabs.forEach(t => t.style.display = 'block');
+      if (!tabName) tabName = 'tabChapters';
+    } else {
+      // Library / Main Menu Context: Hide book options
+      titleEl.textContent = 'Library Menu';
+      subtitleEl.style.display = 'none';
+      bookTabs.forEach(t => t.style.display = 'none');
+      if (!tabName || tabName === 'tabChapters' || tabName === 'tabTTS' || tabName === 'tabScroll') {
+        tabName = 'tabSync';
+      }
+    }
+
+    this.switchMasterTab(tabName);
+
+    const ttsBtn = document.getElementById('ttsPlayToggleBtn');
+    if (ttsBtn) {
+      ttsBtn.textContent = (TTSEngine.isPlaying && !TTSEngine.isPaused) ? 'Pause Read Aloud' : 'Start Read Aloud';
+    }
+
+    document.getElementById('masterSidePanel').classList.add('open');
+    document.getElementById('drawerBackdrop').classList.add('open');
+    this.updateSyncDisplay();
+  },
+
+  closeMasterPanel() {
+    document.getElementById('masterSidePanel').classList.remove('open');
+    document.getElementById('drawerBackdrop').classList.remove('open');
+  },
+
+  toggleMasterPanel(tabName = null) {
+    const panel = document.getElementById('masterSidePanel');
+    if (panel.classList.contains('open')) {
+      this.closeMasterPanel();
+    } else {
+      this.openMasterPanel(tabName);
+    }
+  },
+
+  switchMasterTab(tabId) {
+    document.querySelectorAll('.master-tab-btn').forEach(b => {
+      b.classList.toggle('active', b.getAttribute('data-tab') === tabId);
+    });
+    document.querySelectorAll('.master-tab-content').forEach(c => {
+      c.classList.toggle('active', c.id === tabId);
+    });
+  },
+
+  bindSettingsEvents() {
+    document.querySelectorAll('.theme-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.theme-btn').forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+        const theme = btn.getAttribute('data-theme');
+        this.applySettings({ ...window.ReaderSettings, theme });
+      });
+    });
+
+    document.querySelectorAll('.font-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.font-btn').forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+        const font = btn.getAttribute('data-font');
+        this.applySettings({ ...window.ReaderSettings, font_family: font });
+      });
+    });
+
+    const fontSizeSlider = document.getElementById('fontSizeSlider');
+    if (fontSizeSlider) {
+      fontSizeSlider.addEventListener('input', (e) => {
+        const size = parseInt(e.target.value);
+        document.getElementById('fontSizeVal').textContent = `${size}px`;
+        this.applySettings({ ...window.ReaderSettings, font_size: size });
+      });
+    }
+
+    const lineHeightSlider = document.getElementById('lineHeightSlider');
+    if (lineHeightSlider) {
+      lineHeightSlider.addEventListener('input', (e) => {
+        const lh = parseFloat(e.target.value);
+        document.getElementById('lineHeightVal').textContent = lh.toFixed(2);
+        this.applySettings({ ...window.ReaderSettings, line_height: lh });
+      });
+    }
+
+    document.querySelectorAll('.width-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.width-btn').forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+        const width = btn.getAttribute('data-width');
+        this.applySettings({ ...window.ReaderSettings, content_width: width });
+      });
+    });
+  },
+
+  applySettings(s, syncToCloud = true) {
+    window.ReaderSettings = { ...window.ReaderSettings, ...s };
+    const doc = document.documentElement;
+
+    doc.setAttribute('data-theme', s.theme || 'monochrome-dark');
+    doc.setAttribute('data-font', s.font_family || 'times');
+    doc.setAttribute('data-width', s.content_width || 'normal');
+
+    doc.style.setProperty('--reader-font-size', `${s.font_size || 19}px`);
+    doc.style.setProperty('--reader-line-height', `${s.line_height || 1.85}`);
+
+    document.querySelectorAll('.theme-btn').forEach(b => {
+      b.classList.toggle('selected', b.getAttribute('data-theme') === s.theme);
+    });
+    document.querySelectorAll('.font-btn').forEach(b => {
+      b.classList.toggle('selected', b.getAttribute('data-font') === s.font_family);
+    });
+    document.querySelectorAll('.width-btn').forEach(b => {
+      b.classList.toggle('selected', b.getAttribute('data-width') === s.content_width);
+    });
+
+    const fsSlider = document.getElementById('fontSizeSlider');
+    if (fsSlider) {
+      fsSlider.value = s.font_size || 19;
+      document.getElementById('fontSizeVal').textContent = `${s.font_size || 19}px`;
+    }
+
+    const lhSlider = document.getElementById('lineHeightSlider');
+    if (lhSlider) {
+      lhSlider.value = s.line_height || 1.85;
+      document.getElementById('lineHeightVal').textContent = (s.line_height || 1.85).toFixed(2);
+    }
+
+    if (syncToCloud) {
+      SyncService.syncSettings(window.ReaderSettings);
+    }
+  },
+
+  bindSyncEvents() {
+    const rememberToggle = document.getElementById('rememberDeviceToggle');
+    if (rememberToggle) {
+      rememberToggle.checked = Storage.isRemembered();
+      rememberToggle.addEventListener('change', (e) => {
+        Storage.setRemembered(e.target.checked);
+        SyncService.pairDeviceWithKey(SyncService.currentSyncKey, e.target.checked);
+      });
+    }
+
+    document.getElementById('pairKeyBtn').addEventListener('click', async () => {
+      const input = document.getElementById('pairKeyInput');
+      const key = input.value.trim().toUpperCase();
+      if (!key) return;
+
+      try {
+        this.showLoading('Pairing device...');
+        const remember = document.getElementById('rememberDeviceToggle').checked;
+        await SyncService.pairDeviceWithKey(key, remember);
+        await this.loadLibrary();
+        this.hideLoading();
+        this.closeMasterPanel();
+      } catch (e) {
+        this.hideLoading();
+        alert('Could not pair device: ' + e.message);
+      }
+    });
+
+    document.getElementById('copySyncKeyBtn').addEventListener('click', () => {
+      const key = SyncService.currentSyncKey;
+      if (key) {
+        navigator.clipboard.writeText(key);
+        this.showToast('Sync Key copied');
+      }
+    });
+  },
+
+  bindBackupRestoreEvents() {
+    // 1. Export Backup (Download JSON)
+    const exportBtn = document.getElementById('exportBackupBtn');
+    if (exportBtn) {
+      exportBtn.addEventListener('click', async () => {
+        try {
+          this.showLoading('Exporting backup...');
+          const res = await fetch(`/api/backup?user_id=${encodeURIComponent(SyncService.currentUserId)}`);
+          const backupData = await res.json();
+          this.hideLoading();
+
+          const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          const dateStr = new Date().toISOString().slice(0, 10);
+          a.href = url;
+          a.download = `kuroyomi_backup_${dateStr}.json`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+          this.showToast('Backup downloaded');
+        } catch (err) {
+          this.hideLoading();
+          alert('Backup failed: ' + err.message);
+        }
+      });
+    }
+
+    // 2. Import Restore (Upload JSON)
+    const importBtn = document.getElementById('importBackupBtn');
+    const fileInput = document.getElementById('backupFileInput');
+
+    if (importBtn && fileInput) {
+      importBtn.addEventListener('click', () => fileInput.click());
+
+      fileInput.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        try {
+          this.showLoading('Restoring library...');
+          const text = await file.text();
+          const backupData = JSON.parse(text);
+
+          const res = await fetch('/api/restore', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              user_id: SyncService.currentUserId,
+              backup_data: backupData
+            })
+          });
+
+          const data = await res.json();
+          this.hideLoading();
+          if (data.success) {
+            this.showToast(`Restored ${data.novels_restored || 0} novel(s), ${data.chapters_restored || 0} chapters`);
+            await this.loadLibrary();
+            fileInput.value = '';
+          } else {
+            alert('Restore failed: ' + (data.error || 'Unknown error'));
+          }
+        } catch (err) {
+          this.hideLoading();
+          alert('Could not parse backup file: ' + err.message);
+        }
+      });
+    }
+  },
+
+  updateSyncDisplay() {
+    const keyEl = document.getElementById('syncKeyDisplay');
+    if (keyEl) keyEl.textContent = SyncService.currentSyncKey || '---';
+
+    const nameEl = document.getElementById('deviceNameDisplay');
+    if (nameEl) nameEl.textContent = Storage.getDeviceName();
+
+    const toggle = document.getElementById('rememberDeviceToggle');
+    if (toggle) toggle.checked = Storage.isRemembered();
+  },
+
+  async loadLibrary() {
+    try {
+      const userId = SyncService.currentUserId;
+      if (!userId) return;
+
+      const [novelsRes, lastReadRes] = await Promise.all([
+        fetch(`/api/novels?user_id=${encodeURIComponent(userId)}`),
+        fetch(`/api/last-read?user_id=${encodeURIComponent(userId)}`)
+      ]);
+
+      const novelsData = await novelsRes.json();
+      const lastReadData = await lastReadRes.json();
+
+      this.novels = novelsData.novels || [];
+      this.renderResumeHero(lastReadData.last_read);
+      this.renderLibraryGrid();
+    } catch (e) {
+      console.warn('Error loading library:', e);
+    }
+  },
+
+  renderResumeHero(lastRead) {
+    const hero = document.getElementById('resumeHero');
+    if (!lastRead) {
+      hero.style.display = 'none';
+      return;
+    }
+
+    hero.style.display = 'grid';
+    document.getElementById('resumeCover').src = lastRead.cover_data || 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="85" height="120"><rect width="100%" height="100%" fill="%231a1a1a"/><text x="50%" y="50%" fill="%23888" font-family="sans-serif" font-size="12" text-anchor="middle">COVER</text></svg>';
+    document.getElementById('resumeNovelTitle').textContent = lastRead.novel_title;
+    document.getElementById('resumeChapterTag').textContent = `${lastRead.volume_title} · ${lastRead.chapter_title}`;
+    
+    const pct = Math.round(lastRead.scroll_percent || 0);
+    document.getElementById('resumeProgressBar').style.width = `${pct}%`;
+    document.getElementById('resumeProgressPercent').textContent = `${pct}% Read`;
+
+    const resumeBtn = document.getElementById('resumeReadBtn');
+    resumeBtn.onclick = () => {
+      Reader.openNovel(lastRead.novel_id, true);
+    };
+  },
+
+  renderLibraryGrid() {
+    const grid = document.getElementById('novelGrid');
+    grid.innerHTML = '';
+
+    if (this.novels.length === 0) {
+      grid.innerHTML = `
+        <div style="grid-column: 1 / -1; padding: 40px; text-align: center; border: 1px dashed var(--border-color); border-radius: 8px;">
+          <p style="font-size: 14px; color: var(--text-secondary); margin-bottom: 12px;">No novels in library</p>
+          <button class="btn-brutal btn-brutal-accent" onclick="App.openUploadModal()">+ Upload Novel .EPUB</button>
+        </div>
+      `;
+      return;
+    }
+
+    this.novels.forEach(n => {
+      const card = document.createElement('div');
+      card.className = 'novel-card';
+
+      const coverSrc = n.cover_data || 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="260" height="180"><rect width="100%" height="100%" fill="%231a1a1a"/><text x="50%" y="50%" fill="%23888" font-family="sans-serif" text-anchor="middle">No Cover</text></svg>';
+      const lastReadTag = n.last_chapter_title ? `Last: ${n.last_chapter_title}` : 'Not started';
+      const readPercent = Math.round(n.progress_scroll || 0);
+
+      card.innerHTML = `
+        <img src="${coverSrc}" class="novel-card-cover" alt="${n.title}" loading="lazy" />
+        <div class="novel-card-body">
+          <h3 class="novel-card-title">${n.title}</h3>
+          <p class="novel-card-author">${n.author}</p>
+          <div class="novel-card-meta">
+            <span class="badge-brutal accent">${n.volume_count || 1} Volumes</span>
+            <span class="badge-brutal">${n.total_chapters || 0} Chapters</span>
+          </div>
+          <div style="margin-bottom: 14px;">
+            <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">
+              <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 170px;">${lastReadTag}</span>
+              <span>${readPercent}%</span>
+            </div>
+            <div class="progress-bar-container" style="max-width: 100%;">
+              <div class="progress-bar-fill" style="width: ${readPercent}%;"></div>
+            </div>
+          </div>
+          <div class="novel-card-actions">
+            <button class="btn-brutal btn-brutal-accent read-novel-btn" data-id="${n.id}">Read</button>
+            <button class="btn-brutal add-vol-btn" data-id="${n.id}" title="Add another .epub volume">+ Vol</button>
+            <button class="btn-brutal delete-novel-btn" data-id="${n.id}" title="Delete novel" style="color: #ef4444;">Delete</button>
+          </div>
+        </div>
+      `;
+
+      card.querySelector('.read-novel-btn').onclick = () => Reader.openNovel(n.id, true);
+      card.querySelector('.add-vol-btn').onclick = () => this.openUploadModal(n.id, n.title);
+      card.querySelector('.delete-novel-btn').onclick = () => this.deleteNovel(n.id, n.title);
+
+      grid.appendChild(card);
+    });
+  },
+
+  async deleteNovel(novelId, title) {
+    if (!confirm(`Delete "${title}" from your library?`)) return;
+    try {
+      this.showLoading('Deleting...');
+      await fetch('/api/novels/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          novel_id: novelId,
+          user_id: SyncService.currentUserId
+        })
+      });
+      await this.loadLibrary();
+      this.hideLoading();
+    } catch (e) {
+      this.hideLoading();
+      alert('Delete failed: ' + e.message);
+    }
+  },
+
+  openUploadModal(targetNovelId = null, targetNovelTitle = null) {
+    this.targetUploadNovelId = targetNovelId;
+    this.selectedUploadFiles = [];
+    document.getElementById('uploadModal').style.display = 'flex';
+    document.getElementById('epubFileInput').value = '';
+    document.getElementById('uploadFileList').innerHTML = '';
+    document.getElementById('uploadProgress').style.display = 'none';
+
+    const targetNotice = document.getElementById('uploadTargetNotice');
+    if (targetNovelId && targetNovelTitle) {
+      targetNotice.style.display = 'block';
+      targetNotice.innerHTML = `Adding volumes to existing novel: <strong>${targetNovelTitle}</strong>`;
+      document.getElementById('customTitleGroup').style.display = 'none';
+    } else {
+      targetNotice.style.display = 'none';
+      document.getElementById('customTitleGroup').style.display = 'block';
+      document.getElementById('seriesTitleInput').value = '';
+    }
+  },
+
+  closeUploadModal() {
+    document.getElementById('uploadModal').style.display = 'none';
+  },
+
+  handleSelectedFiles(fileList) {
+    this.selectedUploadFiles = Array.from(fileList).filter(f => f.name.toLowerCase().endsWith('.epub'));
+    if (!this.selectedUploadFiles.length) {
+      alert('Please select .epub files.');
+      return;
+    }
+
+    const listEl = document.getElementById('uploadFileList');
+    listEl.innerHTML = '';
+    this.selectedUploadFiles.forEach((file, idx) => {
+      const item = document.createElement('div');
+      item.style.padding = '8px 12px';
+      item.style.borderRadius = '4px';
+      item.style.border = '1px solid var(--border-color)';
+      item.style.marginBottom = '6px';
+      item.style.background = 'var(--bg-surface)';
+      item.style.fontSize = '12px';
+      item.style.display = 'flex';
+      item.style.justifyContent = 'space-between';
+      item.innerHTML = `
+        <span style="font-weight: 600;">Volume ${idx + 1}: ${file.name}</span>
+        <span style="color: var(--text-muted);">${(file.size / 1024 / 1024).toFixed(2)} MB</span>
+      `;
+      listEl.appendChild(item);
+    });
+  },
+
+  async performUpload() {
+    if (!this.selectedUploadFiles.length) {
+      alert('Please select at least one .epub file.');
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('user_id', SyncService.currentUserId);
+    if (this.targetUploadNovelId) {
+      formData.append('novel_id', this.targetUploadNovelId);
+    }
+    const seriesTitle = document.getElementById('seriesTitleInput').value.trim();
+    if (seriesTitle) {
+      formData.append('series_title', seriesTitle);
+    }
+
+    this.selectedUploadFiles.forEach(file => {
+      formData.append('files', file);
+    });
+
+    const progressDiv = document.getElementById('uploadProgress');
+    const progressFill = document.getElementById('uploadProgressFill');
+    const progressText = document.getElementById('uploadProgressText');
+    progressDiv.style.display = 'block';
+    progressFill.style.width = '40%';
+    progressText.textContent = 'Processing files...';
+
+    try {
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      if (!data.success) {
+        throw new Error(data.error || 'Upload failed');
+      }
+
+      progressFill.style.width = '100%';
+      progressText.textContent = 'Complete';
+
+      setTimeout(async () => {
+        this.closeUploadModal();
+        await this.loadLibrary();
+        Reader.openNovel(data.novel_id, false);
+      }, 500);
+    } catch (e) {
+      progressDiv.style.display = 'none';
+      alert('Upload error: ' + e.message);
+    }
+  },
+
+  switchView(view) {
+    this.currentView = view;
+    const libView = document.getElementById('libraryView');
+    const readerView = document.getElementById('readerView');
+
+    if (view === 'reader') {
+      libView.style.display = 'none';
+      readerView.style.display = 'flex';
+    } else {
+      libView.style.display = 'block';
+      readerView.style.display = 'none';
+      window.scrollTo(0, 0);
+    }
+  },
+
+  showLoading(text) {
+    const overlay = document.getElementById('loadingOverlay');
+    const label = document.getElementById('loadingText');
+    if (overlay && label) {
+      label.textContent = text || 'Loading...';
+      overlay.style.display = 'flex';
+    }
+  },
+
+  hideLoading() {
+    const overlay = document.getElementById('loadingOverlay');
+    if (overlay) overlay.style.display = 'none';
+  },
+
+  showToast(msg) {
+    const container = document.getElementById('toastContainer');
+    if (!container) return;
+    const toast = document.createElement('div');
+    toast.className = 'toast';
+    toast.textContent = msg;
+    container.appendChild(toast);
+    setTimeout(() => {
+      toast.style.opacity = '0';
+      toast.style.transition = 'opacity 0.3s ease';
+      setTimeout(() => toast.remove(), 300);
+    }, 2000);
+  }
+};
+
+window.App = App;
+window.Reader = Reader;
+window.AutoScroll = AutoScroll;
+window.TTSEngine = TTSEngine;
+window.SyncService = SyncService;
+window.Storage = Storage;
+
+document.addEventListener('DOMContentLoaded', () => {
+  App.init();
+});

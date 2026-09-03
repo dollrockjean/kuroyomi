@@ -1,0 +1,13 @@
+# Render.com Free Web Service Blueprint
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: kuroyomi-webnovel-reader
+    env: docker
+    plan: free
+    region: oregon
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: 8000
