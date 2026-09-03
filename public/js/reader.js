@@ -75,11 +75,14 @@ const Reader = {
   },
 
   bindCenterScreenTap() {
-    // Tapping the reading text or screen center opens/toggles the master panel
+    // Tapping the reading text or screen center opens/toggles the master panel (TOUCH devices only)
     const wrapper = document.getElementById('readerBodyWrapper');
     if (!wrapper) return;
 
-    wrapper.addEventListener('click', (e) => {
+    wrapper.addEventListener('pointerup', (e) => {
+      // On PC with a mouse / trackpad click: do NOTHING
+      if (e.pointerType === 'mouse') return;
+
       // Don't trigger on buttons, links, or inputs
       if (e.target.closest('button, a, input, select')) return;
 
@@ -87,7 +90,7 @@ const Reader = {
       const selection = window.getSelection();
       if (selection && selection.toString().length > 0) return;
 
-      // Toggle the master panel
+      // Toggle the master panel on touch screens
       App.toggleMasterPanel();
     });
   },
@@ -174,13 +177,29 @@ const Reader = {
         titleEl.innerHTML = `<strong>${ch.novel_title}</strong> · ${ch.title}`;
       }
 
+      // Check if content already starts with the chapter title or heading
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = (ch.content_html || '').slice(0, 800);
+      const firstHeading = tempDiv.querySelector('.reader-heading, h1, h2, h3, .reader-paragraph');
+      const firstText = firstHeading ? firstHeading.textContent.trim().toLowerCase() : '';
+      const cleanTitle = (ch.title || '').trim().toLowerCase();
+
+      const titleAlreadyInContent = firstText && (
+        firstText === cleanTitle ||
+        firstText.includes(cleanTitle) ||
+        cleanTitle.includes(firstText) ||
+        firstText.replace(/[^a-z0-9]/g, '') === cleanTitle.replace(/[^a-z0-9]/g, '')
+      );
+
+      const headingHtml = titleAlreadyInContent ? '' : `<h1 class="reader-heading">${ch.title}</h1>`;
+
       // Render Content
       const contentEl = document.getElementById('readerContent');
       contentEl.innerHTML = `
         <div class="chapter-separator-banner">
-          ${ch.volume_title} · Chapter ${ch.chapter_index}
+          ${ch.volume_title || ch.novel_title}
         </div>
-        <h1 class="reader-heading">${ch.title}</h1>
+        ${headingHtml}
         ${ch.content_html}
       `;
 

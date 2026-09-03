@@ -809,13 +809,17 @@ const App = {
 
   switchView(view) {
     this.currentView = view;
+    const appHeader = document.querySelector('.app-header');
     const libView = document.getElementById('libraryView');
     const readerView = document.getElementById('readerView');
 
     if (view === 'reader') {
+      if (appHeader) appHeader.style.display = 'none';
       libView.style.display = 'none';
       readerView.style.display = 'flex';
+      window.scrollTo(0, 0);
     } else {
+      if (appHeader) appHeader.style.display = 'flex';
       libView.style.display = 'block';
       readerView.style.display = 'none';
       window.scrollTo(0, 0);

@@ -288,11 +288,15 @@ def parse_single_epub(file_bytes, file_name=""):
                     ch_title = re.sub(r'<[^>]+>', '', title_m.group(1)).strip()
         if not ch_title or len(ch_title) > 120:
             ch_title = f"Chapter {ch_idx}"
-            
+
+        # Extract explicit chapter number if present in title (e.g. "Chapter 201: Pain")
+        ch_num_match = re.search(r'(?:chapter|ch|c)[\s._-]*(\d+)', ch_title, re.I)
+        assigned_index = int(ch_num_match.group(1)) if ch_num_match else ch_idx
+
         formatted_html, word_count = clean_html_content(raw_html, zf, base_dir)
         if word_count > 0 or '<img' in formatted_html:
             chapters.append({
-                'chapter_index': ch_idx,
+                'chapter_index': assigned_index,
                 'title': ch_title,
                 'content_html': formatted_html,
                 'word_count': word_count
