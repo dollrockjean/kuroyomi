@@ -1161,7 +1161,11 @@ const App = {
 
     hero.style.display = 'grid';
     document.getElementById('resumeCover').src = lastRead.cover_data || FALLBACK_COVER;
-    document.getElementById('resumeNovelTitle').textContent = lastRead.novel_title;
+    const resumeTitle = document.getElementById('resumeNovelTitle');
+    resumeTitle.textContent = lastRead.novel_title;
+    resumeTitle.onclick = () => {
+      Reader.openNovel(lastRead.novel_id, true);
+    };
     document.getElementById('resumeChapterTag').textContent = `${lastRead.volume_title} · ${lastRead.chapter_title}`;
     
     const pct = Math.round(lastRead.scroll_percent || 0);
@@ -1313,6 +1317,8 @@ const App = {
         `;
 
         card.querySelector('.read-novel-btn').onclick = () => Reader.openNovel(n.id, true);
+        const listTitle = card.querySelector('.novel-list-title');
+        if (listTitle) listTitle.onclick = () => Reader.openNovel(n.id, true);
         card.querySelector('.add-vol-btn').onclick = () => this.openUploadModal(n.id, n.title);
         card.querySelector('.delete-novel-btn').onclick = () => this.deleteNovel(n.id, n.title);
         card.querySelector('.novel-list-cover-wrap').onclick = triggerCover;
@@ -1359,6 +1365,8 @@ const App = {
         `;
 
         card.querySelector('.read-novel-btn').onclick = () => Reader.openNovel(n.id, true);
+        const cardTitle = card.querySelector('.novel-card-title');
+        if (cardTitle) cardTitle.onclick = () => Reader.openNovel(n.id, true);
         card.querySelector('.add-vol-btn').onclick = () => this.openUploadModal(n.id, n.title);
         card.querySelector('.delete-novel-btn').onclick = () => this.deleteNovel(n.id, n.title);
         card.querySelector('.novel-card-cover-wrap').onclick = triggerCover;
@@ -1493,6 +1501,10 @@ const App = {
 
       // Immediately mirror to IndexedDB so novel is bulletproof against any reload/restart
       await this.updateDeviceMirror();
+
+      if (data.duplicates_skipped && data.duplicates_skipped > 0) {
+        this.showToast(`Uploaded ${data.chapters_added} chapters (${data.duplicates_skipped} duplicates skipped)`);
+      }
 
       setTimeout(async () => {
         this.closeUploadModal();

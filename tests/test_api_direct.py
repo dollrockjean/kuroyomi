@@ -276,6 +276,83 @@ class ApiDirectTests(unittest.TestCase):
         self.assertEqual(final_data["chapters"][2]["global_index"], 3)
         self.assertEqual(final_data["chapters"][2]["title"], "Chapter 3: The Void God")
 
+    def test_05b_duplicate_chapter_deduplication(self):
+        user_id = database.get_or_create_user("DEDUP_USER")
+        # Vol 1 has chapters 1, 2, 3
+        v1 = create_sample_epub(
+            "Star Chronicles Vol 1",
+            "Astral Author",
+            [
+                ("Chapter 1: The Departure", "<p>We left the station behind.</p>"),
+                ("Chapter 2: Deep Void", "<p>Silence in the deep void.</p>"),
+                ("Chapter 3: Encounter", "<p>A strange signal appeared.</p>")
+            ]
+        )
+        boundary = "---------------------------12345678901234567890"
+        body1 = bytearray()
+        def add_f(b, name, val):
+            b.extend(f"--{boundary}\r\n".encode('utf-8'))
+            b.extend(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode('utf-8'))
+            b.extend(f"{val}\r\n".encode('utf-8'))
+        def add_fl(b, name, fname, data):
+            b.extend(f"--{boundary}\r\n".encode('utf-8'))
+            b.extend(f'Content-Disposition: form-data; name="{name}"; filename="{fname}"\r\n'.encode('utf-8'))
+            b.extend(b"Content-Type: application/epub+zip\r\n\r\n")
+            b.extend(data)
+            b.extend(b"\r\n")
+
+        add_f(body1, "user_id", user_id)
+        add_f(body1, "series_title", "Star Chronicles")
+        add_fl(body1, "files", "Star_Vol1.epub", v1)
+        body1.extend(f"--{boundary}--\r\n".encode('utf-8'))
+
+        h1 = create_mock_handler("/api/upload", "POST", bytes(body1), {
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "Content-Length": str(len(body1))
+        })
+        h1.do_POST()
+        r1 = json.loads(h1.wfile.getvalue().decode('utf-8'))
+        self.assertTrue(r1["success"])
+        self.assertEqual(r1["chapters_added"], 3)
+        novel_id = r1["novel_id"]
+
+        # Vol 2 has chapters 2, 3 (duplicates!), and 4, 5 (new!)
+        v2 = create_sample_epub(
+            "Star Chronicles Vol 2",
+            "Astral Author",
+            [
+                ("Chapter 2: Deep Void", "<p>Silence in the deep void.</p>"),
+                ("Chapter 3: Encounter", "<p>A strange signal appeared.</p>"),
+                ("Chapter 4: The Artifact", "<p>The artifact began glowing.</p>"),
+                ("Chapter 5: Breakthrough", "<p>Hyperjump successful.</p>")
+            ]
+        )
+        body2 = bytearray()
+        add_f(body2, "user_id", user_id)
+        add_f(body2, "target_novel_id", novel_id)
+        add_fl(body2, "files", "Star_Vol2.epub", v2)
+        body2.extend(f"--{boundary}--\r\n".encode('utf-8'))
+
+        h2 = create_mock_handler("/api/upload", "POST", bytes(body2), {
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "Content-Length": str(len(body2))
+        })
+        h2.do_POST()
+        r2 = json.loads(h2.wfile.getvalue().decode('utf-8'))
+        self.assertTrue(r2["success"])
+        self.assertEqual(r2["duplicates_skipped"], 2)
+        self.assertEqual(r2["chapters_added"], 2)
+        self.assertEqual(r2["total_chapters"], 5)
+
+        # Verify database chapters are exactly 5, numbered 1 through 5
+        h_chk = create_mock_handler(f"/api/novels/{novel_id}?user_id={user_id}", "GET")
+        h_chk.do_GET()
+        chk_data = json.loads(h_chk.wfile.getvalue().decode('utf-8'))
+        self.assertEqual(len(chk_data["chapters"]), 5)
+        for expected_idx, ch in enumerate(chk_data["chapters"], start=1):
+            self.assertEqual(ch["global_index"], expected_idx)
+            self.assertTrue(ch["title"].startswith(f"Chapter {expected_idx}"))
+
     def test_06_delete_novel_endpoint(self):
         user_id = database.get_or_create_user("DELETE_USER")
         import sample_books

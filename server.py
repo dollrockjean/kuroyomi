@@ -676,7 +676,7 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
 
         database.ensure_user_exists(user_id)
 
-        novel_id = fs.getvalue("novel_id")  # Optional: add to existing novel series
+        novel_id = fs.getvalue("novel_id") or fs.getvalue("target_novel_id")  # Optional: add to existing novel series
         custom_series_title = fs.getvalue("series_title")
 
         # Collect files
@@ -759,15 +759,32 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 now
             ))
 
-        # Check existing volumes and chapters count for global indexing
+        # Check existing volumes and chapters count for deduplication and indexing
         cur.execute("SELECT COUNT(*) as v_count FROM volumes WHERE novel_id = ?", (novel_id,))
         existing_vol_count = cur.fetchone()["v_count"]
 
-        cur.execute("SELECT COALESCE(MAX(global_index), 0) as max_g FROM chapters WHERE novel_id = ?", (novel_id,))
-        global_idx = cur.fetchone()["max_g"] + 1
+        cur.execute("SELECT id, volume_id, chapter_index, global_index, title, content_html FROM chapters WHERE novel_id = ?", (novel_id,))
+        existing_chapters = [dict(r) for r in cur.fetchall()]
+
+        # Build deduplication lookup maps
+        existing_ch_nums = {}
+        existing_norm_titles = {}
+        existing_fingerprints = {}
+
+        for ech in existing_chapters:
+            c_num = epub_parser.extract_chapter_number(ech["title"])
+            if c_num is not None:
+                existing_ch_nums[c_num] = ech
+            n_title = epub_parser.normalize_title(ech["title"])
+            if n_title:
+                existing_norm_titles[n_title] = ech
+            fp = epub_parser.compute_chapter_fingerprint(ech["content_html"])
+            if fp and len(fp) >= 30:
+                existing_fingerprints[fp] = ech
 
         volumes_added = 0
         chapters_added = 0
+        duplicates_skipped = 0
 
         for pf in parsed_files:
             v_num = existing_vol_count + volumes_added + 1
@@ -777,12 +794,32 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             v_title = f"Volume {v_num}: {raw_title}" if "volume" not in raw_title.lower() else raw_title
 
             ch_list = pf['data']['chapters']
+            vol_ch_count = 0
+
+            # Insert volume row first
             cur.execute("""
                 INSERT INTO volumes (id, novel_id, volume_number, title, file_name, total_chapters, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (vol_id, novel_id, v_num, v_title, pf['filename'], len(ch_list), now))
 
             for ch in ch_list:
+                ch_num = epub_parser.extract_chapter_number(ch["title"])
+                ch_norm_title = epub_parser.normalize_title(ch["title"])
+                ch_fp = epub_parser.compute_chapter_fingerprint(ch["content_html"])
+
+                # Check if chapter is already in this novel
+                is_duplicate = False
+                if ch_num is not None and ch_num in existing_ch_nums:
+                    is_duplicate = True
+                elif ch_norm_title and ch_norm_title in existing_norm_titles:
+                    is_duplicate = True
+                elif ch_fp and len(ch_fp) >= 30 and ch_fp in existing_fingerprints:
+                    is_duplicate = True
+
+                if is_duplicate:
+                    duplicates_skipped += 1
+                    continue
+
                 ch_id = f"ch_{uuid.uuid4().hex[:12]}"
                 cur.execute("""
                     INSERT INTO chapters (id, novel_id, volume_id, chapter_index, global_index, title, content_html, word_count)
@@ -792,15 +829,52 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                     novel_id,
                     vol_id,
                     ch['chapter_index'],
-                    global_idx,
+                    999999,
                     ch['title'],
                     ch['content_html'],
                     ch['word_count']
                 ))
-                global_idx += 1
+                new_ech = {"id": ch_id, "title": ch["title"], "content_html": ch["content_html"]}
+                if ch_num is not None:
+                    existing_ch_nums[ch_num] = new_ech
+                if ch_norm_title:
+                    existing_norm_titles[ch_norm_title] = new_ech
+                if ch_fp and len(ch_fp) >= 30:
+                    existing_fingerprints[ch_fp] = new_ech
+
                 chapters_added += 1
+                vol_ch_count += 1
 
             volumes_added += 1
+
+        # Re-sequence all chapters for this novel to ensure clean, strictly continuous global_index 1..N
+        cur.execute("""
+            SELECT c.id, c.title, c.chapter_index, c.volume_id, v.volume_number
+            FROM chapters c
+            LEFT JOIN volumes v ON c.volume_id = v.id
+            WHERE c.novel_id = ?
+        """, (novel_id,))
+        all_novel_chapters = [dict(r) for r in cur.fetchall()]
+
+        def chapter_sort_key(item):
+            c_num = epub_parser.extract_chapter_number(item["title"])
+            if c_num is not None:
+                return (0, c_num)
+            v_num = item.get("volume_number") or 1
+            c_idx = item.get("chapter_index") or 1
+            return (1, v_num, c_idx)
+
+        all_novel_chapters.sort(key=chapter_sort_key)
+
+        for new_global_idx, ch_row in enumerate(all_novel_chapters, start=1):
+            cur.execute("UPDATE chapters SET global_index = ? WHERE id = ?", (new_global_idx, ch_row["id"]))
+
+        # Update each volume's total_chapters to match non-duplicate count
+        cur.execute("""
+            UPDATE volumes
+            SET total_chapters = (SELECT COUNT(*) FROM chapters WHERE volume_id = volumes.id)
+            WHERE novel_id = ?
+        """, (novel_id,))
 
         # Initialize progress if novel has none
         cur.execute("SELECT id FROM reading_progress WHERE novel_id = ? AND user_id = ?", (novel_id, user_id))
@@ -821,7 +895,9 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             "novel_id": novel_id,
             "novel_title": novel_title,
             "volumes_added": volumes_added,
-            "chapters_added": chapters_added
+            "chapters_added": chapters_added,
+            "duplicates_skipped": duplicates_skipped,
+            "total_chapters": len(all_novel_chapters)
         })
 
 class ThreadedHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):

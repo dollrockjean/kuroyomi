@@ -26,6 +26,38 @@ def sanitize_html(raw_html):
     cleaned = re.sub(r'href\s*=\s*["\']\s*javascript:[^"\']*["\']', 'href="#"', cleaned, flags=re.I)
     return cleaned
 
+def extract_chapter_number(title):
+    """Extract numeric chapter identifier if present (e.g. 'Chapter 42' -> 42.0)."""
+    if not title:
+        return None
+    m = re.search(r'\b(?:chapter|ch|ep|episode|act)\b\.?\s*([0-9]+(?:\.[0-9]+)?)', title, re.I)
+    if m:
+        try:
+            return float(m.group(1))
+        except ValueError:
+            pass
+    m = re.search(r'^\s*([0-9]+(?:\.[0-9]+)?)\s*[:\.\-\s]', title)
+    if m:
+        try:
+            return float(m.group(1))
+        except ValueError:
+            pass
+    return None
+
+def normalize_title(title):
+    """Normalize title for duplicate matching: lowercase, strip punctuation & prefixes."""
+    if not title:
+        return ""
+    t = re.sub(r'^(?:vol(?:ume)?\.?\s*[0-9]+[:\s\-]*)', '', title.strip(), flags=re.I)
+    return re.sub(r'[^a-z0-9]', '', t.lower())
+
+def compute_chapter_fingerprint(content_html):
+    """Generate normalized text fingerprint (first 140 alphanumeric chars) for duplicate detection."""
+    if not content_html:
+        return ""
+    plain = re.sub(r'<[^>]+>', '', content_html).strip().lower()
+    return re.sub(r'[^a-z0-9]', '', plain)[:140]
+
 def get_opf_path(zf):
     try:
         container = zf.read('META-INF/container.xml')
@@ -122,6 +154,10 @@ def clean_html_content(raw_html, zf, base_dir):
     
     content = re.sub(r'<script[^>]*>.*?</script>', '', content, flags=re.I | re.S)
     content = re.sub(r'<style[^>]*>.*?</style>', '', content, flags=re.I | re.S)
+    # Strip hardcoded white/light colors that cause white-on-white text issues
+    content = re.sub(r'color\s*:\s*(?:white|#fff(?:fff)?|rgba?\([^)]+\))\s*;?', '', content, flags=re.I)
+    content = re.sub(r'background(?:-color)?\s*:\s*(?:white|#fff(?:fff)?|rgba?\([^)]+\))\s*;?', '', content, flags=re.I)
+    content = re.sub(r'\s+(?:bgcolor|text|color)=["\'][^"\']*["\']', '', content, flags=re.I)
 
     def replace_img(match):
         attrs = match.group(1)

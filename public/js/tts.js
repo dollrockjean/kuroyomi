@@ -29,6 +29,11 @@ const TTSEngine = {
   paragraphs: [],
   currentIndex: 0,
   onChapterEndCallback: null,
+
+  // Real-time word-by-word highlight tracking
+  currentWordList: [],
+  currentSpokenLength: 0,
+  activeWordIndex: -1,
   
   // Sleep Timer
   sleepTimerDuration: 0,
@@ -73,6 +78,11 @@ const TTSEngine = {
       if (this.isPlaying && !this.isPaused) {
         this.speakParagraph(this.currentIndex + 1);
       }
+    });
+
+    // Real-time word-by-word highlight synchronization
+    this.audioElement.addEventListener('timeupdate', () => {
+      this.syncWordHighlight();
     });
 
     this.audioElement.addEventListener('error', (e) => {
@@ -208,6 +218,7 @@ const TTSEngine = {
   },
 
   setVoice(voiceId) {
+    if (this.selectedVoice === voiceId) return;
     this.selectedVoice = voiceId;
     this.blobCache.clear(); // Clear cache when voice changes
     if (window.ReaderSettings) {
@@ -222,6 +233,11 @@ const TTSEngine = {
     if (s2 && s2.value !== voiceId) s2.value = voiceId;
 
     if (this.isPlaying && !this.isPaused) {
+      // Immediately stop existing playback so old voice stops instantly without collision
+      this.audioElement.pause();
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
       this.speakParagraph(this.currentIndex);
     }
   },
@@ -288,9 +304,20 @@ const TTSEngine = {
     const rateVal = document.getElementById('ttsRateVal');
     if (rateVal) rateVal.textContent = `${this.rate}x`;
 
+    // Update speed chips UI
+    document.querySelectorAll('.speed-chip').forEach(chip => {
+      const s = parseFloat(chip.getAttribute('data-speed'));
+      chip.classList.toggle('selected', Math.abs(s - this.rate) < 0.05);
+    });
+
     this.updateAudioUI();
     if (this.isPlaying && !this.isPaused) {
-      this.speakParagraph(this.currentIndex);
+      // If audio is actively playing, immediately adjust playback tempo in real-time
+      if (this.audioElement && !this.audioElement.paused) {
+        this.audioElement.playbackRate = this.rate;
+      } else if (this.isUsingDeviceVoice) {
+        this.speakParagraph(this.currentIndex);
+      }
     }
   },
 
@@ -378,6 +405,23 @@ const TTSEngine = {
       if (best) utterance.voice = best;
     }
 
+    utterance.onboundary = (event) => {
+      if (event.name === 'word' || event.charIndex !== undefined) {
+        const charIdx = event.charIndex;
+        if (this.currentWordList && this.currentWordList.length > 0) {
+          let activeIdx = 0;
+          for (let i = 0; i < this.currentWordList.length; i++) {
+            if (this.currentWordList[i].start <= charIdx) {
+              activeIdx = i;
+            } else {
+              break;
+            }
+          }
+          this.highlightWordAtIndex(activeIdx);
+        }
+      }
+    };
+
     utterance.onend = () => {
       if (this.isPlaying && !this.isPaused) {
         this.speakParagraph(index + 1);
@@ -453,6 +497,11 @@ const TTSEngine = {
   clearHighlight() {
     document.querySelectorAll('.reader-paragraph.speaking-active, .reader-heading.speaking-active')
       .forEach(el => el.classList.remove('speaking-active'));
+    document.querySelectorAll('#audiobookSpokenText .tts-word-active')
+      .forEach(el => el.classList.remove('tts-word-active'));
+    document.querySelectorAll('#audiobookSpokenText .tts-word-spoken')
+      .forEach(el => el.classList.remove('tts-word-spoken'));
+    this.activeWordIndex = -1;
   },
 
   async speakParagraph(index) {
@@ -698,6 +747,93 @@ const TTSEngine = {
     }
   },
 
+  escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/[&<>"']/g, m => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[m]));
+  },
+
+  tokenizeSpokenText(text) {
+    if (!text) return { html: 'Reading novel...', words: [] };
+    const regex = /\S+/g;
+    let match;
+    const words = [];
+    let lastIndex = 0;
+    let html = '';
+    let wordIdx = 0;
+
+    while ((match = regex.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        html += this.escapeHtml(text.substring(lastIndex, match.index));
+      }
+      const word = match[0];
+      const startChar = match.index;
+      const endChar = match.index + word.length;
+      words.push({ index: wordIdx, word: word, start: startChar, end: endChar });
+      html += `<span class="tts-word" id="ttsWord-${wordIdx}" data-word-idx="${wordIdx}">${this.escapeHtml(word)}</span>`;
+      wordIdx++;
+      lastIndex = endChar;
+    }
+    if (lastIndex < text.length) {
+      html += this.escapeHtml(text.substring(lastIndex));
+    }
+    return { html, words };
+  },
+
+  highlightWordAtIndex(idx) {
+    if (idx === this.activeWordIndex) return;
+    this.activeWordIndex = idx;
+
+    const words = document.querySelectorAll('#audiobookSpokenText .tts-word');
+    if (!words || words.length === 0) return;
+
+    words.forEach((el, i) => {
+      if (i < idx) {
+        el.classList.remove('tts-word-active');
+        el.classList.add('tts-word-spoken');
+      } else if (i === idx) {
+        el.classList.add('tts-word-active');
+        el.classList.remove('tts-word-spoken');
+      } else {
+        el.classList.remove('tts-word-active');
+        el.classList.remove('tts-word-spoken');
+      }
+    });
+
+    const activeEl = document.getElementById(`ttsWord-${idx}`);
+    if (activeEl) {
+      const container = document.querySelector('.audiobook-spoken-card') || activeEl.parentElement;
+      if (container && container.scrollHeight > container.clientHeight) {
+        const wordOffset = activeEl.offsetTop - container.offsetTop;
+        const targetScroll = wordOffset - (container.clientHeight / 2) + (activeEl.clientHeight / 2);
+        container.scrollTo({ top: Math.max(0, targetScroll), behavior: 'smooth' });
+      }
+    }
+  },
+
+  syncWordHighlight() {
+    if (!this.currentWordList || this.currentWordList.length === 0) return;
+    if (!this.audioElement || !this.audioElement.duration || isNaN(this.audioElement.duration)) return;
+
+    const progress = Math.min(1.0, Math.max(0, this.audioElement.currentTime / this.audioElement.duration));
+    const targetChar = Math.floor(progress * (this.currentSpokenLength || 1));
+
+    let activeIdx = 0;
+    for (let i = 0; i < this.currentWordList.length; i++) {
+      if (this.currentWordList[i].start <= targetChar) {
+        activeIdx = i;
+      } else {
+        break;
+      }
+    }
+    this.highlightWordAtIndex(activeIdx);
+  },
+
   updateAudiobookModalContent() {
     const titleEl = document.getElementById('audiobookHeaderTitle');
     const chEl = document.getElementById('audiobookHeaderChapter');
@@ -713,7 +849,13 @@ const TTSEngine = {
 
     if (this.paragraphs && this.paragraphs[this.currentIndex]) {
       const activeText = this.paragraphs[this.currentIndex].innerText.trim();
-      if (spokenEl) spokenEl.textContent = activeText || 'Reading novel...';
+      if (spokenEl) {
+        const tokenized = this.tokenizeSpokenText(activeText);
+        spokenEl.innerHTML = tokenized.html;
+        this.currentWordList = tokenized.words;
+        this.currentSpokenLength = activeText.length;
+        this.activeWordIndex = -1;
+      }
       const pct = this.paragraphs.length > 0
         ? Math.round(((this.currentIndex + 1) / this.paragraphs.length) * 100)
         : 0;

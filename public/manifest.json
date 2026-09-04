@@ -4,8 +4,8 @@
   "description": "Minimalist web novel reader with cloud sync, auto-scroll, realistic neural audio, and multi-volume EPUB support",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0a0a0a",
-  "theme_color": "#0a0a0a",
+  "background_color": "#141518",
+  "theme_color": "#141518",
   "orientation": "portrait-primary",
   "icons": [
     {
