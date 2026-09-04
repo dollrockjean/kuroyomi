@@ -183,6 +183,20 @@ const TTSEngine = {
       });
     });
 
+    // Wire retry on offline badge tap
+    const offlineStatusBadge = document.getElementById('audiobookOfflineStatus');
+    if (offlineStatusBadge) {
+      offlineStatusBadge.style.cursor = 'pointer';
+      offlineStatusBadge.title = 'Click to switch back to cloud voice';
+      offlineStatusBadge.addEventListener('click', () => {
+        if (window.App && typeof window.App.showToast === 'function') {
+          window.App.showToast('Reconnecting to main cloud voice...');
+        }
+        this.setDeviceVoiceMode(false);
+        this.speakParagraph(this.currentIndex);
+      });
+    }
+
     // Initialize draggable mobile corner badge
     this.initDraggableBadge();
 
@@ -218,9 +232,10 @@ const TTSEngine = {
   },
 
   setVoice(voiceId) {
-    if (this.selectedVoice === voiceId) return;
     this.selectedVoice = voiceId;
     this.blobCache.clear(); // Clear cache when voice changes
+    this.setDeviceVoiceMode(false); // ALWAYS prioritize selected cloud voice
+
     if (window.ReaderSettings) {
       window.ReaderSettings.tts_voice = voiceId;
       if (window.SyncService) {
@@ -257,15 +272,22 @@ const TTSEngine = {
     const rateParam = this.getRateParam(rateVal);
     const url = `/api/tts/speak?text=${encodeURIComponent(text)}&voice=${encodeURIComponent(voiceId)}&rate=${encodeURIComponent(rateParam)}`;
     
-    const res = await fetch(url);
-    if (!res.ok) {
-      throw new Error(`Speech synthesis returned status ${res.status}`);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 14000);
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      clearTimeout(timer);
+      if (!res.ok) {
+        throw new Error(`Speech synthesis returned status ${res.status}`);
+      }
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      this.blobCache.set(cacheKey, blobUrl);
+      return blobUrl;
+    } catch (err) {
+      clearTimeout(timer);
+      throw err;
     }
-
-    const blob = await res.blob();
-    const blobUrl = URL.createObjectURL(blob);
-    this.blobCache.set(cacheKey, blobUrl);
-    return blobUrl;
   },
 
   async testVoice() {
@@ -330,6 +352,9 @@ const TTSEngine = {
   start(fromIndex = null) {
     this.refreshParagraphs();
     if (!this.paragraphs.length) return;
+
+    // Always prioritize the main voice selected
+    this.setDeviceVoiceMode(false);
 
     if (fromIndex === null || fromIndex === undefined) {
       if (window.Reader && typeof window.Reader.getVisibleParagraphIndex === 'function') {
@@ -454,12 +479,10 @@ const TTSEngine = {
   resume() {
     if (this.isPlaying && this.isPaused) {
       this.isPaused = false;
-      if (this.isUsingDeviceVoice && 'speechSynthesis' in window) {
-        if (window.speechSynthesis.paused) {
-          window.speechSynthesis.resume();
-        } else {
-          this.speakParagraph(this.currentIndex);
-        }
+      if (this.isUsingDeviceVoice) {
+        // Attempt recovery to selected cloud voice on resume
+        this.setDeviceVoiceMode(false);
+        this.speakParagraph(this.currentIndex);
       } else {
         this.audioElement.play().catch(() => this.speakParagraph(this.currentIndex));
       }
@@ -551,19 +574,19 @@ const TTSEngine = {
       return;
     }
 
-    // 1. If device is currently offline, immediately use device native voice
+    // 1. If device is explicitly reported offline by browser
     if (!navigator.onLine) {
       this.setDeviceVoiceMode(true);
       this.speakWithDeviceVoice(textToSpeak, index);
       return;
     }
 
-    // 2. Otherwise try realistic cloud neural TTS
+    // 2. ALWAYS prioritize the main voice selected (realistic cloud neural TTS)
     try {
       const blobUrl = await this.getAudioBlobUrl(textToSpeak, this.selectedVoice, this.rate);
       if (!this.isPlaying || this.isPaused) return;
 
-      // If we were in device voice mode, return to cloud neural voice
+      // Cloud synthesis succeeded! If previously fallen back to device voice, restore main cloud voice immediately
       if (this.isUsingDeviceVoice) {
         this.setDeviceVoiceMode(false);
       }
@@ -575,10 +598,10 @@ const TTSEngine = {
       // Pre-fetch next paragraph into memory for seamless instant playback
       this.prefetchNext(index + 1);
     } catch (err) {
-      console.warn('Speech playback network error, switching to device voice:', err);
+      console.warn('Cloud TTS synthesis failed, using device voice fallback for this paragraph:', err);
       if (!this.isPlaying || this.isPaused) return;
 
-      // Automatically engage offline native voice fallback
+      // Automatically engage offline native voice fallback for this paragraph only
       this.setDeviceVoiceMode(true);
       this.speakWithDeviceVoice(textToSpeak, index);
     }

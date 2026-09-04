@@ -58,12 +58,50 @@ def normalize_text_for_narration(text: str) -> str:
     clean = re.sub(r"\s+", " ", clean).strip()
     return clean
 
+def normalize_rate(rate_str):
+    if not rate_str:
+        return "+0%"
+    rate_str = str(rate_str).strip()
+    try:
+        val = float(rate_str.replace('%', '').replace('+', ''))
+        if 0.1 <= val <= 3.0 and '%' not in rate_str:
+            pct = int(round((val - 1.0) * 100))
+            return f"+{pct}%" if pct >= 0 else f"{pct}%"
+    except ValueError:
+        pass
+
+    m = re.match(r'^[+\-]?\s*(\d+)\s*%?$', rate_str)
+    if m:
+        val = int(m.group(1))
+        if rate_str.strip().startswith('-'):
+            return f"-{val}%"
+        else:
+            return f"+{val}%"
+    return "+0%"
+
+VALID_VOICES = {
+    "en-US-BrianNeural",
+    "en-US-AvaNeural",
+    "en-US-AndrewNeural",
+    "en-US-EmmaNeural",
+    "en-US-ChristopherNeural",
+    "en-GB-RyanNeural",
+    "en-GB-SoniaNeural",
+    "en-AU-WilliamMultilingualNeural"
+}
+
 def synthesize_speech(text, voice="en-US-BrianNeural", rate="+0%"):
     clean_text = normalize_text_for_narration(text)
     if not clean_text:
         return None
 
-    cache_key = hashlib.sha256(f"{voice}_{rate}_{clean_text}".encode('utf-8')).hexdigest()
+    if voice not in VALID_VOICES:
+        print(f"[TTS] Voice '{voice}' not in whitelist, falling back to en-US-BrianNeural")
+        voice = "en-US-BrianNeural"
+
+    norm_rate = normalize_rate(rate)
+
+    cache_key = hashlib.sha256(f"{voice}_{norm_rate}_{clean_text}".encode('utf-8')).hexdigest()
     cache_file = os.path.join(TTS_CACHE_DIR, f"{cache_key}.mp3")
     if os.path.exists(cache_file) and os.path.getsize(cache_file) > 0:
         with open(cache_file, "rb") as f:
@@ -72,7 +110,7 @@ def synthesize_speech(text, voice="en-US-BrianNeural", rate="+0%"):
     try:
         import edge_tts
         async def _run():
-            comm = edge_tts.Communicate(clean_text, voice, rate=rate)
+            comm = edge_tts.Communicate(clean_text, voice, rate=norm_rate)
             buf = io.BytesIO()
             async for chunk in comm.stream():
                 if chunk['type'] == 'audio':
@@ -80,12 +118,34 @@ def synthesize_speech(text, voice="en-US-BrianNeural", rate="+0%"):
             return buf.getvalue()
 
         data = asyncio.run(_run())
-        if data:
+        if data and len(data) > 100:
             with open(cache_file, "wb") as f:
                 f.write(data)
             return data
     except Exception as e:
-        print("Neural TTS synthesis error:", e)
+        import traceback
+        print(f"[TTS] Neural TTS synthesis error for voice='{voice}' rate='{norm_rate}': {e}")
+        traceback.print_exc()
+
+        # Resilient fallback retry with default Brian voice if custom voice/rate had an edge error
+        if voice != "en-US-BrianNeural" or norm_rate != "+0%":
+            try:
+                print("[TTS] Retrying synthesis with default Brian voice...")
+                async def _fallback_run():
+                    comm = edge_tts.Communicate(clean_text, "en-US-BrianNeural", rate="+0%")
+                    buf = io.BytesIO()
+                    async for chunk in comm.stream():
+                        if chunk['type'] == 'audio':
+                            buf.write(chunk['data'])
+                    return buf.getvalue()
+                data = asyncio.run(_fallback_run())
+                if data and len(data) > 100:
+                    with open(cache_file, "wb") as f:
+                        f.write(data)
+                    return data
+            except Exception as fb_err:
+                print(f"[TTS] Fallback retry failed: {fb_err}")
+
     return None
 
 class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
@@ -385,7 +445,7 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         # 8. Realistic Neural TTS Audio Stream with HTTP Range Support (Required for Safari & iOS)
         if path == "/api/tts/speak":
             text = query.get("text", [""])[0]
-            voice = query.get("voice", ["en-US-JennyNeural"])[0]
+            voice = query.get("voice", ["en-US-BrianNeural"])[0]
             rate = query.get("rate", ["+0%"])[0]
 
             if not text:

@@ -1,17 +1,17 @@
-// KuroYomi Service Worker v9
+// KuroYomi Service Worker v10
 // High-performance offline caching with instant WebKit/Safari PWA launch
-const CACHE_NAME = 'kuroyomi-v9';
+const CACHE_NAME = 'kuroyomi-v10';
 
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
-  '/css/brutalist.css?v=9.0',
-  '/js/app.js?v=9.0',
-  '/js/reader.js?v=9.0',
-  '/js/tts.js?v=9.0',
-  '/js/storage.js?v=9.0',
-  '/js/sync.js?v=9.0',
-  '/js/autoscroll.js?v=9.0',
+  '/css/brutalist.css?v=10.0',
+  '/js/app.js?v=10.0',
+  '/js/reader.js?v=10.0',
+  '/js/tts.js?v=10.0',
+  '/js/storage.js?v=10.0',
+  '/js/sync.js?v=10.0',
+  '/js/autoscroll.js?v=10.0',
   '/manifest.json',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
@@ -131,7 +131,20 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 3. API requests: instant 503 fallback when offline or slow
+  // 3. TTS Audio Generation Requests: Allow full network streaming without short timeout
+  if (url.pathname.startsWith('/api/tts/')) {
+    event.respondWith(
+      fetch(request).catch(() => {
+        return new Response(
+          JSON.stringify({ error: 'offline', offline: true, message: 'TTS server unreachable' }),
+          { status: 503, headers: { 'Content-Type': 'application/json' } }
+        );
+      })
+    );
+    return;
+  }
+
+  // 4. General API requests: fast response or offline fallback
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(
       (async () => {
