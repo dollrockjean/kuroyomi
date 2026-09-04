@@ -26,6 +26,56 @@ window.ReaderSettings = {
   library_sort_by: 'last_read'
 };
 
+const SplashScreen = {
+  element: null,
+  statusText: null,
+  hintText: null,
+  bypassBtn: null,
+  wakeTimer: null,
+  isDismissed: false,
+
+  init(onBypass) {
+    this.element = document.getElementById('appSplashScreen');
+    this.statusText = document.getElementById('splashStatusText');
+    this.hintText = document.getElementById('splashServerHint');
+    this.bypassBtn = document.getElementById('splashBypassBtn');
+
+    if (this.bypassBtn) {
+      this.bypassBtn.addEventListener('click', () => {
+        if (onBypass) onBypass();
+        this.dismiss();
+      });
+    }
+
+    // After 2.4s, if still showing, detect cold start & offer offline library bypass
+    this.wakeTimer = setTimeout(() => {
+      if (!this.isDismissed && this.element) {
+        if (this.statusText) this.statusText.textContent = 'Connecting to server...';
+        if (this.hintText) this.hintText.style.display = 'block';
+        if (this.bypassBtn) this.bypassBtn.style.display = 'inline-block';
+      }
+    }, 2400);
+  },
+
+  setStatus(text) {
+    if (this.statusText) this.statusText.textContent = text;
+  },
+
+  dismiss() {
+    if (this.isDismissed) return;
+    this.isDismissed = true;
+    if (this.wakeTimer) clearTimeout(this.wakeTimer);
+    if (this.element) {
+      this.element.classList.add('splash-hidden');
+      setTimeout(() => {
+        if (this.element && this.element.parentElement) {
+          this.element.style.display = 'none';
+        }
+      }, 400);
+    }
+  }
+};
+
 const App = {
   currentView: 'library',
   novels: [],
@@ -34,6 +84,7 @@ const App = {
   targetUploadNovelId: null,
   targetCoverNovelId: null,
   debounceSyncTimeout: null,
+  _wakePoller: null,
 
   debounceSyncSettings() {
     if (this.debounceSyncTimeout) clearTimeout(this.debounceSyncTimeout);
@@ -42,7 +93,40 @@ const App = {
     }, 350);
   },
 
+  pollServerWakeUp() {
+    if (this._wakePoller) return;
+    let attempts = 0;
+    this._wakePoller = setInterval(async () => {
+      attempts++;
+      if (attempts > 30) {
+        clearInterval(this._wakePoller);
+        this._wakePoller = null;
+        return;
+      }
+      try {
+        const res = await fetch('/api/health', { cache: 'no-store' });
+        if (res.ok) {
+          clearInterval(this._wakePoller);
+          this._wakePoller = null;
+          console.log('[WakeUp] Backend server is now online!');
+          SyncService.isOnline = true;
+          SyncService.updateStatus('synced', 'ONLINE');
+          await this.loadLibrary(false);
+          SyncService.flushOfflineQueue();
+        }
+      } catch (e) {}
+    }, 4000);
+  },
+
   async init() {
+    SplashScreen.init(async () => {
+      console.log('[Splash] User tapped Continue Reading Offline');
+      try {
+        await this.loadLibrary(false);
+      } catch (e) {}
+      this.pollServerWakeUp();
+    });
+
     try {
       // 1. Initialize reading engines first
       AutoScroll.init(() => Reader.loadNextChapter());
@@ -111,13 +195,20 @@ const App = {
 
       // 4. Render library from local storage or cloud
       await this.loadLibrary();
+
+      // If server was offline or timed out, background poll for Render wake-up
+      if (!SyncService.isOnline || SyncService.currentSyncKey === 'OFFLINE') {
+        this.pollServerWakeUp();
+      }
     } catch (err) {
       console.warn('App init exception, falling back to local library:', err);
       try {
         await this.loadLibrary();
       } catch {}
+      this.pollServerWakeUp();
     } finally {
       this.hideLoading();
+      SplashScreen.dismiss();
     }
   },
 

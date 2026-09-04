@@ -2277,3 +2277,149 @@ body {
     display: none !important;
   }
 }
+
+/* ==========================================================================
+   Custom In-App Splash & Server Wake-Up Screen
+   ========================================================================== */
+.app-splash-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 999999;
+  background-color: var(--bg-primary, #141518);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 0.35s cubic-bezier(0.2, 0.8, 0.2, 1), visibility 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+  padding: calc(20px + var(--safe-top)) 20px calc(20px + var(--safe-bottom)) 20px;
+  box-sizing: border-box;
+}
+
+.app-splash-screen.splash-hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.splash-container {
+  max-width: 360px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.splash-logo-wrap {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 32px;
+}
+
+.splash-logo-icon {
+  width: 48px;
+  height: 48px;
+  background: var(--accent, #ffffff);
+  color: var(--accent-text, #000000);
+  font-family: var(--font-times);
+  font-weight: 700;
+  font-size: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm, 4px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.45);
+}
+
+.splash-brand-text {
+  text-align: left;
+}
+
+.splash-brand-title {
+  font-family: var(--font-sans);
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: var(--text-primary);
+  margin: 0;
+  line-height: 1.15;
+}
+
+.splash-brand-sub {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: var(--text-secondary);
+  display: block;
+  margin-top: 3px;
+}
+
+.splash-status-area {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.splash-progress-track {
+  width: 100%;
+  max-width: 280px;
+  height: 4px;
+  background: var(--bg-card);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  position: relative;
+  margin-bottom: 16px;
+  border: 1px solid var(--border-color);
+}
+
+.splash-progress-bar {
+  height: 100%;
+  width: 35%;
+  background: var(--accent);
+  border-radius: var(--radius-pill);
+  position: absolute;
+  left: -35%;
+  animation: splash-indeterminate 1.5s infinite cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes splash-indeterminate {
+  0% { left: -35%; width: 25%; }
+  50% { left: 35%; width: 45%; }
+  100% { left: 100%; width: 25%; }
+}
+
+.splash-status-text {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  letter-spacing: 0.3px;
+  min-height: 20px;
+  transition: color 0.2s ease;
+}
+
+.splash-server-hint {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  margin-top: 12px;
+  line-height: 1.5;
+  padding: 8px 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  max-width: 300px;
+  animation: fadeIn 0.3s ease;
+}
+
+.splash-bypass-btn {
+  margin-top: 16px;
+  padding: 8px 18px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  animation: fadeIn 0.3s ease;
+}
