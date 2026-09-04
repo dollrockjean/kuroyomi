@@ -1609,9 +1609,9 @@ body {
     bottom: calc(18px + var(--safe-bottom));
   }
 
+  /* Hide floating menu badge on mobile (access via center-tap quick sheet or auto-revealing top bar) */
   .floating-quick-menu-btn {
-    bottom: calc(75px + var(--safe-bottom));
-    right: 14px;
+    display: none !important;
   }
 
   .overscroll-indicator {
