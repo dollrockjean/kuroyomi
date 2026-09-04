@@ -1,3 +1,16 @@
+async function fetchWithTimeout(url, options = {}, timeoutMs = 2500) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(timer);
+    return res;
+  } catch (err) {
+    clearTimeout(timer);
+    throw err;
+  }
+}
+
 // Cloud Sync & Device Management Service
 const SyncService = {
   currentUserId: null,
@@ -6,8 +19,6 @@ const SyncService = {
   isOnline: true,
 
   async init() {
-    this.updateStatus('syncing', 'CONNECTING...');
-
     // Register online/offline status listeners once
     if (!this._listenersBound) {
       this._listenersBound = true;
@@ -22,7 +33,22 @@ const SyncService = {
       });
     }
 
-    // 0. Detect 1-Click Pairing Link (?pair=READER-XXXXX)
+    // 0. If browser is offline, exit IMMEDIATELY with local credentials (0ms delay)
+    if (!navigator.onLine) {
+      this.isOnline = false;
+      this.updateStatus('offline', 'OFFLINE');
+      this.currentUserId = Storage.getUserId() || 'universal_device_mirror';
+      this.currentSyncKey = Storage.getSyncKey() || 'OFFLINE';
+      return {
+        userId: this.currentUserId,
+        syncKey: this.currentSyncKey,
+        settings: Storage.getLocalSettings() || {}
+      };
+    }
+
+    this.updateStatus('syncing', 'CONNECTING...');
+
+    // 1. Detect 1-Click Pairing Link (?pair=READER-XXXXX)
     let pairKeyDetected = null;
     try {
       const urlParams = new URLSearchParams(window.location.search);
@@ -38,34 +64,39 @@ const SyncService = {
     const isRemembered = Storage.isRemembered();
 
     try {
-      // 1. If explicit pairing link was opened, pair immediately with it!
+      // 2. If explicit pairing link was opened, pair immediately with it!
       if (pairKeyDetected) {
         console.log('Pairing device via 1-Click link:', pairKeyDetected);
         const pairData = await this.pairDeviceWithKey(pairKeyDetected, isRemembered);
         return { userId: pairData.user_id, syncKey: pairData.sync_key, settings: pairData.settings };
       }
 
-      // 2. Try to restore session via device token ("Remember This Device")
-      if (isRemembered) {
-        const res = await fetch(`/api/auth/device-session?device_token=${encodeURIComponent(deviceToken)}`);
-        const data = await res.json();
-        if (data.authenticated) {
-          this.currentUserId = data.user_id;
-          this.currentSyncKey = data.sync_key;
-          Storage.setUserId(data.user_id);
-          Storage.setSyncKey(data.sync_key);
-          this.updateStatus('synced', 'SYNCED');
-          return { userId: data.user_id, syncKey: data.sync_key, settings: data.settings };
+      // 3. Try to restore session via device token ("Remember This Device")
+      if (isRemembered && deviceToken) {
+        try {
+          const res = await fetchWithTimeout(`/api/auth/device-session?device_token=${encodeURIComponent(deviceToken)}`, {}, 2500);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.authenticated) {
+              this.currentUserId = data.user_id;
+              this.currentSyncKey = data.sync_key;
+              Storage.setUserId(data.user_id);
+              Storage.setSyncKey(data.sync_key);
+              this.updateStatus('synced', 'SYNCED');
+              return { userId: data.user_id, syncKey: data.sync_key, settings: data.settings };
+            }
+          }
+        } catch (netErr) {
+          console.warn('Device session restore network timeout, proceeding to register/offline:', netErr);
         }
       }
 
-      // 2. Fallback to existing local sync key or create new one
+      // 4. Fallback to existing local sync key or create new one
       let syncKey = Storage.getSyncKey();
       const deviceName = Storage.getDeviceName();
-
       const existingUserId = Storage.getUserId();
 
-      const regRes = await fetch('/api/auth/register-device', {
+      const regRes = await fetchWithTimeout('/api/auth/register-device', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -75,22 +106,26 @@ const SyncService = {
           device_name: deviceName,
           remember: isRemembered
         })
-      });
+      }, 2500);
 
-      const regData = await regRes.json();
-      if (regData.success) {
-        this.currentUserId = regData.user_id;
-        this.currentSyncKey = regData.sync_key;
-        Storage.setUserId(regData.user_id);
-        Storage.setSyncKey(regData.sync_key);
-        this.updateStatus('synced', 'SYNCED');
-        return { userId: regData.user_id, syncKey: regData.sync_key, settings: regData.settings };
+      if (regRes.ok) {
+        const regData = await regRes.json();
+        if (regData.success) {
+          this.currentUserId = regData.user_id;
+          this.currentSyncKey = regData.sync_key;
+          Storage.setUserId(regData.user_id);
+          Storage.setSyncKey(regData.sync_key);
+          this.updateStatus('synced', 'SYNCED');
+          return { userId: regData.user_id, syncKey: regData.sync_key, settings: regData.settings };
+        }
       }
+
+      throw new Error('Registration failed or offline');
     } catch (e) {
       console.warn('Sync connection error, operating in offline fallback:', e);
       this.isOnline = false;
       this.updateStatus('offline', 'OFFLINE');
-      this.currentUserId = Storage.getUserId() || 'offline_user';
+      this.currentUserId = Storage.getUserId() || 'universal_device_mirror';
       this.currentSyncKey = Storage.getSyncKey() || 'OFFLINE';
       return { userId: this.currentUserId, syncKey: this.currentSyncKey, settings: Storage.getLocalSettings() || {} };
     }

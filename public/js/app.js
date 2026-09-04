@@ -40,52 +40,59 @@ const App = {
   },
 
   async init() {
-    this.showLoading('Connecting...');
+    try {
+      // 1. Initialize reading engines first
+      AutoScroll.init(() => Reader.loadNextChapter());
+      TTSEngine.init(() => Reader.loadNextChapter());
+      Reader.init();
 
-    // 1. Initialize reading engines first
-    AutoScroll.init(() => Reader.loadNextChapter());
-    TTSEngine.init(() => Reader.loadNextChapter());
-    Reader.init();
-
-    // 2. Load locally cached settings first for instant zero-flicker render
-    const localSettings = Storage.getLocalSettings();
-    if (localSettings && Object.keys(localSettings).length > 0) {
-      this.applySettings(localSettings, false);
-    } else {
-      this.applySettings(window.ReaderSettings, false);
-    }
-
-    // 3. Connect to sync service & fetch cloud account settings
-    const session = await SyncService.init();
-    if (session && session.settings && Object.keys(session.settings).length > 0) {
+      // 2. Load locally cached settings first for instant zero-flicker render
+      const localSettings = Storage.getLocalSettings();
       if (localSettings && Object.keys(localSettings).length > 0) {
-        const merged = { ...session.settings, ...localSettings };
-        this.applySettings(merged, false);
-        SyncService.syncSettings(merged);
+        this.applySettings(localSettings, false);
       } else {
-        this.applySettings(session.settings, false);
+        this.applySettings(window.ReaderSettings, false);
       }
+
+      this.bindGlobalEvents();
+      this.bindMasterPanelEvents();
+      this.bindSettingsEvents();
+      this.bindMobileQuickSheetEvents();
+      this.bindSyncEvents();
+      this.bindBackupRestoreEvents();
+      this.bindNetworkEvents();
+
+      // Register Service Worker for Mobile PWA Offline Reading
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js').then((reg) => {
+          console.log('[SW] ServiceWorker registered with scope:', reg.scope);
+        }).catch((err) => {
+          console.warn('[SW] ServiceWorker registration failed:', err);
+        });
+      }
+
+      // 3. Connect to sync service & fetch cloud account settings (instant local fallback if offline)
+      const session = await SyncService.init();
+      if (session && session.settings && Object.keys(session.settings).length > 0) {
+        if (localSettings && Object.keys(localSettings).length > 0) {
+          const merged = { ...session.settings, ...localSettings };
+          this.applySettings(merged, false);
+          SyncService.syncSettings(merged);
+        } else {
+          this.applySettings(session.settings, false);
+        }
+      }
+
+      // 4. Render library from local storage or cloud
+      await this.loadLibrary();
+    } catch (err) {
+      console.warn('App init exception, falling back to local library:', err);
+      try {
+        await this.loadLibrary();
+      } catch {}
+    } finally {
+      this.hideLoading();
     }
-
-    this.bindGlobalEvents();
-    this.bindMasterPanelEvents();
-    this.bindSettingsEvents();
-    this.bindMobileQuickSheetEvents();
-    this.bindSyncEvents();
-    this.bindBackupRestoreEvents();
-    this.bindNetworkEvents();
-
-    // Register Service Worker for Mobile PWA Offline Reading
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').then((reg) => {
-        console.log('[SW] ServiceWorker registered with scope:', reg.scope);
-      }).catch((err) => {
-        console.warn('[SW] ServiceWorker registration failed:', err);
-      });
-    }
-
-    await this.loadLibrary();
-    this.hideLoading();
   },
 
   bindGlobalEvents() {
@@ -842,19 +849,23 @@ const App = {
 
   async loadLibrary(allowAutoRestore = true) {
     try {
-      const userId = SyncService.currentUserId;
-      if (!userId) return;
+      const userId = SyncService.currentUserId || Storage.getUserId() || 'universal_device_mirror';
 
       let novelsData = null;
       let lastReadData = null;
 
       // 1. Attempt network fetch if online
-      if (navigator.onLine) {
+      if (navigator.onLine && userId && userId !== 'universal_device_mirror' && userId !== 'offline_user') {
         try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 2500);
+
           const [novelsRes, lastReadRes] = await Promise.all([
-            fetch(`/api/novels?user_id=${encodeURIComponent(userId)}`),
-            fetch(`/api/last-read?user_id=${encodeURIComponent(userId)}`)
+            fetch(`/api/novels?user_id=${encodeURIComponent(userId)}`, { signal: controller.signal }),
+            fetch(`/api/last-read?user_id=${encodeURIComponent(userId)}`, { signal: controller.signal })
           ]);
+          clearTimeout(timer);
+
           if (novelsRes.ok) novelsData = await novelsRes.json();
           if (lastReadRes.ok) lastReadData = await lastReadRes.json();
         } catch (netErr) {
@@ -863,7 +874,7 @@ const App = {
       }
 
       // 2. Offline Fallback from IndexedDB
-      if (!novelsData || !novelsData.novels) {
+      if (!novelsData || !novelsData.novels || novelsData.novels.length === 0) {
         if (typeof IDB !== 'undefined') {
           const mirror = await IDB.getLibraryMirror(userId);
           if (mirror && mirror.novels && mirror.novels.length > 0) {

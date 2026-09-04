@@ -1,6 +1,6 @@
-// KuroYomi Service Worker
-// Enables 100% offline reading for mobile devices (iOS Safari / Android Chrome)
-const CACHE_NAME = 'kuroyomi-v2';
+// KuroYomi Service Worker v3
+// High-performance offline caching with instant WebKit/Safari PWA launch
+const CACHE_NAME = 'kuroyomi-v3';
 
 const PRECACHE_ASSETS = [
   '/',
@@ -49,30 +49,45 @@ self.addEventListener('fetch', (event) => {
   const request = event.request;
   const url = new URL(request.url);
 
-  // Ignore non-GET requests (e.g. POST /api/progress handled directly by client)
+  // Ignore non-GET requests (e.g. POST /api/* handled directly by client)
   if (request.method !== 'GET') {
     return;
   }
 
-  // 1. Navigation / HTML requests: Network-first with Cache fallback
+  // 1. Navigation / HTML requests (opening PWA standalone or reloading)
   if (request.mode === 'navigate' || request.destination === 'document') {
     event.respondWith(
-      fetch(request)
-        .then((networkResponse) => {
+      (async () => {
+        // Fast path: if browser is offline, serve cached shell instantly (0ms latency)
+        if (!navigator.onLine) {
+          const cached = await caches.match('/index.html') || await caches.match('/');
+          if (cached) return cached;
+        }
+
+        // Online path: fetch network with a strict 1500ms timeout so offline/dead-zone WebKit never stalls
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 1500);
+          const networkResponse = await fetch(request, { signal: controller.signal });
+          clearTimeout(timer);
+
           if (networkResponse && networkResponse.status === 200) {
             const copy = networkResponse.clone();
             caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
           }
           return networkResponse;
-        })
-        .catch(() => {
-          return caches.match('/index.html').then((cached) => cached || caches.match('/'));
-        })
+        } catch (err) {
+          // Network failed or timed out: fall back instantly to cached index.html
+          const cached = await caches.match('/index.html') || await caches.match('/');
+          if (cached) return cached;
+          throw err;
+        }
+      })()
     );
     return;
   }
 
-  // 2. Static Assets (CSS, JS, manifest, icons): Cache-first with Stale-While-Revalidate
+  // 2. Static Assets (CSS, JS, manifest, icons): Cache-First
   const isStaticAsset = (
     url.pathname.startsWith('/css/') ||
     url.pathname.startsWith('/js/') ||
@@ -83,35 +98,56 @@ self.addEventListener('fetch', (event) => {
   if (isStaticAsset) {
     event.respondWith(
       caches.match(request).then((cachedResponse) => {
-        const fetchPromise = fetch(request).then((networkResponse) => {
+        if (cachedResponse) {
+          // Serve from cache immediately
+          if (navigator.onLine) {
+            // Background revalidate if online
+            fetch(request).then((networkResponse) => {
+              if (networkResponse && networkResponse.status === 200) {
+                caches.open(CACHE_NAME).then((cache) => cache.put(request, networkResponse));
+              }
+            }).catch(() => {});
+          }
+          return cachedResponse;
+        }
+
+        // Not in cache: fetch from network
+        return fetch(request).then((networkResponse) => {
           if (networkResponse && networkResponse.status === 200) {
             const copy = networkResponse.clone();
             caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
           }
           return networkResponse;
-        }).catch(() => {
-          // Network failed, cache served if available
         });
-
-        return cachedResponse || fetchPromise;
       })
     );
     return;
   }
 
-  // 3. API requests
+  // 3. API requests: instant 503 fallback when offline or slow
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(
-      fetch(request).catch(() => {
-        // Return 503 JSON so client fetch catches network disconnect gracefully
-        return new Response(
-          JSON.stringify({ error: 'offline', offline: true, message: 'Device is offline' }),
-          {
-            status: 503,
-            headers: { 'Content-Type': 'application/json' }
-          }
-        );
-      })
+      (async () => {
+        if (!navigator.onLine) {
+          return new Response(
+            JSON.stringify({ error: 'offline', offline: true, message: 'Device is offline' }),
+            { status: 503, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 2000);
+          const res = await fetch(request, { signal: controller.signal });
+          clearTimeout(timer);
+          return res;
+        } catch {
+          return new Response(
+            JSON.stringify({ error: 'offline', offline: true, message: 'Device is offline' }),
+            { status: 503, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+      })()
     );
     return;
   }

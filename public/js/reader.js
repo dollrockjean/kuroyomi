@@ -211,13 +211,16 @@ const Reader = {
   async openNovel(novelId, resume = true) {
     App.showLoading('Opening novel...');
     try {
-      const userId = SyncService.currentUserId;
+      const userId = SyncService.currentUserId || Storage.getUserId() || 'universal_device_mirror';
       let data = null;
 
       // 1. Attempt network fetch if online
-      if (navigator.onLine) {
+      if (navigator.onLine && userId !== 'universal_device_mirror' && userId !== 'offline_user') {
         try {
-          const res = await fetch(`/api/novels/${encodeURIComponent(novelId)}?user_id=${encodeURIComponent(userId)}`);
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 2500);
+          const res = await fetch(`/api/novels/${encodeURIComponent(novelId)}?user_id=${encodeURIComponent(userId)}`, { signal: controller.signal });
+          clearTimeout(timer);
           if (res.ok) {
             data = await res.json();
           }
@@ -285,13 +288,16 @@ const Reader = {
   async loadChapter(chapterId, scrollToTarget = false) {
     App.showLoading('Loading chapter...');
     try {
-      const userId = SyncService.currentUserId;
+      const userId = SyncService.currentUserId || Storage.getUserId() || 'universal_device_mirror';
       let ch = null;
 
       // 1. Attempt network fetch if online
-      if (navigator.onLine) {
+      if (navigator.onLine && userId !== 'universal_device_mirror' && userId !== 'offline_user') {
         try {
-          const res = await fetch(`/api/chapters/${encodeURIComponent(chapterId)}`);
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 2500);
+          const res = await fetch(`/api/chapters/${encodeURIComponent(chapterId)}`, { signal: controller.signal });
+          clearTimeout(timer);
           if (res.ok) {
             ch = await res.json();
           }

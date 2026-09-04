@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="monochrome-dark" data-font="times" data-width="normal">
+<html lang="en" data-theme="monochrome-dark" data-font="times" data-width="normal" style="background-color: #0a0a0a; color: #f0f0f0;">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
@@ -14,10 +14,20 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
 
+  <!-- Instant Critical Styles (Zero-flicker dark background) -->
+  <style>
+    html, body {
+      background-color: #0a0a0a !important;
+      color: #f0f0f0;
+      margin: 0;
+      padding: 0;
+    }
+  </style>
+
   <!-- Styles -->
   <link rel="stylesheet" href="/css/brutalist.css">
 </head>
-<body>
+<body style="background-color: #0a0a0a; color: #f0f0f0;">
 
   <!-- Top App Header -->
   <header class="app-header">
