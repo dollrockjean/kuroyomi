@@ -114,6 +114,19 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Access-Control-Max-Age", "86400")
         self.end_headers()
 
+    def do_HEAD(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        if path.startswith("/api/") or path in ("/health", "/ping"):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            return
+        if path in ("", "/"):
+            self.path = "/index.html"
+        return super().do_HEAD()
+
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
