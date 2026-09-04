@@ -307,6 +307,7 @@ const Reader = {
       group.chapters.forEach(c => {
         const item = document.createElement('li');
         item.className = 'toc-item';
+        item.setAttribute('data-id', c.id);
         if (this.currentChapter && this.currentChapter.id === c.id) {
           item.classList.add('active');
         }
@@ -321,6 +322,41 @@ const Reader = {
         listEl.appendChild(item);
       });
     });
+  },
+
+  centerActiveChapterInTOC() {
+    const listEl = document.getElementById('tocList');
+    if (!listEl) return;
+
+    // Reset search query if filtered so full TOC is visible
+    const searchInput = document.getElementById('tocSearchInput');
+    if (searchInput && searchInput.value) {
+      searchInput.value = '';
+      this.filterTOC('');
+    }
+
+    const doCenter = () => {
+      let activeItem = listEl.querySelector('.toc-item.active');
+      if (!activeItem && this.currentChapter) {
+        activeItem = listEl.querySelector(`.toc-item[data-id="${this.currentChapter.id}"]`);
+        if (activeItem) activeItem.classList.add('active');
+      }
+
+      if (activeItem) {
+        const itemTop = activeItem.offsetTop;
+        const itemHeight = activeItem.offsetHeight;
+        const listHeight = listEl.clientHeight;
+        if (listHeight > 0) {
+          listEl.scrollTop = Math.max(0, itemTop - (listHeight / 2) + (itemHeight / 2));
+        } else {
+          activeItem.scrollIntoView({ behavior: 'auto', block: 'center' });
+        }
+      }
+    };
+
+    doCenter();
+    requestAnimationFrame(doCenter);
+    setTimeout(doCenter, 100);
   },
 
   filterTOC(query) {

@@ -29,19 +29,36 @@ const App = {
   selectedUploadFiles: [],
   targetUploadNovelId: null,
   targetCoverNovelId: null,
+  debounceSyncTimeout: null,
+
+  debounceSyncSettings() {
+    if (this.debounceSyncTimeout) clearTimeout(this.debounceSyncTimeout);
+    this.debounceSyncTimeout = setTimeout(() => {
+      SyncService.syncSettings(window.ReaderSettings);
+    }, 350);
+  },
 
   async init() {
     this.showLoading('Connecting...');
-    const session = await SyncService.init();
-    if (session && session.settings && Object.keys(session.settings).length > 0) {
-      this.applySettings({ ...window.ReaderSettings, ...session.settings }, false);
+
+    // 1. Initialize reading engines first
+    AutoScroll.init(() => Reader.loadNextChapter());
+    TTSEngine.init(() => Reader.loadNextChapter());
+    Reader.init();
+
+    // 2. Load locally cached settings first for instant zero-flicker render
+    const localSettings = Storage.getLocalSettings();
+    if (localSettings && Object.keys(localSettings).length > 0) {
+      this.applySettings(localSettings, false);
     } else {
       this.applySettings(window.ReaderSettings, false);
     }
 
-    AutoScroll.init(() => Reader.loadNextChapter());
-    TTSEngine.init(() => Reader.loadNextChapter());
-    Reader.init();
+    // 3. Connect to sync service & fetch cloud account settings
+    const session = await SyncService.init();
+    if (session && session.settings && Object.keys(session.settings).length > 0) {
+      this.applySettings(session.settings, false);
+    }
 
     this.bindGlobalEvents();
     this.bindMasterPanelEvents();
@@ -71,7 +88,14 @@ const App = {
     document.getElementById('headerMenuBtn').addEventListener('click', () => this.openMasterPanel('tabSync'));
     document.getElementById('readerMenuBtn').addEventListener('click', () => this.openMasterPanel('tabChapters'));
     document.getElementById('footerMenuBtn').addEventListener('click', () => this.openMasterPanel('tabChapters'));
-    document.getElementById('floatingQuickMenuBtn').addEventListener('click', () => this.toggleMasterPanel());
+    document.getElementById('floatingQuickMenuBtn').addEventListener('click', () => this.toggleMasterPanel('tabChapters'));
+
+    const chTitleBtn = document.getElementById('readerChapterTitle');
+    if (chTitleBtn) {
+      chTitleBtn.style.cursor = 'pointer';
+      chTitleBtn.title = 'Open Chapters Menu';
+      chTitleBtn.addEventListener('click', () => this.openMasterPanel('tabChapters'));
+    }
 
     document.getElementById('readerAutoScrollBtn').addEventListener('click', () => {
       if (AutoScroll.isActive) {
@@ -238,8 +262,10 @@ const App = {
     const rateSlider = document.getElementById('ttsRateSlider');
     if (rateSlider) {
       rateSlider.addEventListener('input', (e) => {
-        TTSEngine.setRate(e.target.value);
-        document.getElementById('ttsRateVal').textContent = `${e.target.value}x`;
+        const rate = parseFloat(e.target.value);
+        TTSEngine.setRate(rate);
+        document.getElementById('ttsRateVal').textContent = `${rate}x`;
+        this.applySettings({ tts_rate: rate });
       });
     }
 
@@ -267,6 +293,7 @@ const App = {
         const speed = parseInt(e.target.value);
         AutoScroll.setSpeed(speed);
         document.getElementById('panelScrollSpeedVal').textContent = `${speed} px/s`;
+        this.applySettings({ auto_scroll_speed: speed });
       });
     }
 
@@ -323,6 +350,11 @@ const App = {
     document.getElementById('masterSidePanel').classList.add('open');
     document.getElementById('drawerBackdrop').classList.add('open');
     this.updateSyncDisplay();
+
+    // Center on active chapter if opening chapters tab from within a book
+    if (tabName === 'tabChapters' && isReading) {
+      Reader.centerActiveChapterInTOC();
+    }
   },
 
   closeMasterPanel() {
@@ -346,6 +378,11 @@ const App = {
     document.querySelectorAll('.master-tab-content').forEach(c => {
       c.classList.toggle('active', c.id === tabId);
     });
+
+    // Auto-center TOC on active reading chapter whenever the Chapters tab is selected
+    if (tabId === 'tabChapters' && this.currentView === 'reader' && Reader.currentNovel) {
+      Reader.centerActiveChapterInTOC();
+    }
   },
 
   bindSettingsEvents() {
@@ -354,7 +391,7 @@ const App = {
         document.querySelectorAll('.theme-btn').forEach(b => b.classList.remove('selected'));
         btn.classList.add('selected');
         const theme = btn.getAttribute('data-theme');
-        this.applySettings({ ...window.ReaderSettings, theme });
+        this.applySettings({ theme });
       });
     });
 
@@ -363,7 +400,7 @@ const App = {
         document.querySelectorAll('.font-btn').forEach(b => b.classList.remove('selected'));
         btn.classList.add('selected');
         const font = btn.getAttribute('data-font');
-        this.applySettings({ ...window.ReaderSettings, font_family: font });
+        this.applySettings({ font_family: font });
       });
     });
 
@@ -371,8 +408,7 @@ const App = {
     if (fontSizeSlider) {
       fontSizeSlider.addEventListener('input', (e) => {
         const size = parseInt(e.target.value);
-        document.getElementById('fontSizeVal').textContent = `${size}px`;
-        this.applySettings({ ...window.ReaderSettings, font_size: size });
+        this.applySettings({ font_size: size });
       });
     }
 
@@ -380,8 +416,7 @@ const App = {
     if (lineHeightSlider) {
       lineHeightSlider.addEventListener('input', (e) => {
         const lh = parseFloat(e.target.value);
-        document.getElementById('lineHeightVal').textContent = lh.toFixed(2);
-        this.applySettings({ ...window.ReaderSettings, line_height: lh });
+        this.applySettings({ line_height: lh });
       });
     }
 
@@ -390,46 +425,91 @@ const App = {
         document.querySelectorAll('.width-btn').forEach(b => b.classList.remove('selected'));
         btn.classList.add('selected');
         const width = btn.getAttribute('data-width');
-        this.applySettings({ ...window.ReaderSettings, content_width: width });
+        this.applySettings({ content_width: width });
       });
     });
   },
 
   applySettings(s, syncToCloud = true) {
     window.ReaderSettings = { ...window.ReaderSettings, ...s };
+    const cur = window.ReaderSettings;
     const doc = document.documentElement;
 
-    doc.setAttribute('data-theme', s.theme || 'monochrome-dark');
-    doc.setAttribute('data-font', s.font_family || 'times');
-    doc.setAttribute('data-width', s.content_width || 'normal');
+    // 1. Theme
+    doc.setAttribute('data-theme', cur.theme || 'monochrome-dark');
+    // 2. Font family
+    doc.setAttribute('data-font', cur.font_family || 'times');
+    // 3. Content width
+    doc.setAttribute('data-width', cur.content_width || 'normal');
 
-    doc.style.setProperty('--reader-font-size', `${s.font_size || 19}px`);
-    doc.style.setProperty('--reader-line-height', `${s.line_height || 1.85}`);
+    // 4. Font size & Line height
+    doc.style.setProperty('--reader-font-size', `${cur.font_size || 19}px`);
+    doc.style.setProperty('--reader-line-height', `${cur.line_height || 1.85}`);
 
+    // Update Theme buttons
     document.querySelectorAll('.theme-btn').forEach(b => {
-      b.classList.toggle('selected', b.getAttribute('data-theme') === s.theme);
+      b.classList.toggle('selected', b.getAttribute('data-theme') === cur.theme);
     });
+    // Update Font buttons
     document.querySelectorAll('.font-btn').forEach(b => {
-      b.classList.toggle('selected', b.getAttribute('data-font') === s.font_family);
+      b.classList.toggle('selected', b.getAttribute('data-font') === cur.font_family);
     });
+    // Update Width buttons
     document.querySelectorAll('.width-btn').forEach(b => {
-      b.classList.toggle('selected', b.getAttribute('data-width') === s.content_width);
+      b.classList.toggle('selected', b.getAttribute('data-width') === cur.content_width);
     });
 
+    // Update Font Size Slider
     const fsSlider = document.getElementById('fontSizeSlider');
     if (fsSlider) {
-      fsSlider.value = s.font_size || 19;
-      document.getElementById('fontSizeVal').textContent = `${s.font_size || 19}px`;
+      fsSlider.value = cur.font_size || 19;
+      const fsVal = document.getElementById('fontSizeVal');
+      if (fsVal) fsVal.textContent = `${cur.font_size || 19}px`;
     }
 
+    // Update Line Height Slider
     const lhSlider = document.getElementById('lineHeightSlider');
     if (lhSlider) {
-      lhSlider.value = s.line_height || 1.85;
-      document.getElementById('lineHeightVal').textContent = (s.line_height || 1.85).toFixed(2);
+      lhSlider.value = cur.line_height || 1.85;
+      const lhVal = document.getElementById('lineHeightVal');
+      if (lhVal) lhVal.textContent = (cur.line_height || 1.85).toFixed(2);
     }
 
+    // 5. Read Speed (TTS Rate)
+    const ttsRate = parseFloat(cur.tts_rate || 1.0);
+    TTSEngine.rate = ttsRate;
+    const rateSlider = document.getElementById('ttsRateSlider');
+    if (rateSlider) {
+      rateSlider.value = ttsRate;
+      const rateVal = document.getElementById('ttsRateVal');
+      if (rateVal) rateVal.textContent = `${ttsRate}x`;
+    }
+
+    // 6. TTS Voice
+    if (cur.tts_voice) {
+      TTSEngine.selectedVoice = cur.tts_voice;
+      const voiceSelect = document.getElementById('ttsVoiceSelect');
+      if (voiceSelect && voiceSelect.value !== cur.tts_voice) {
+        voiceSelect.value = cur.tts_voice;
+      }
+    }
+
+    // 7. Auto-Scroll Speed
+    const scrollSpeed = parseInt(cur.auto_scroll_speed || 35);
+    AutoScroll.speed = scrollSpeed;
+    const scrollSlider = document.getElementById('panelScrollSpeedSlider');
+    if (scrollSlider) {
+      scrollSlider.value = scrollSpeed;
+      const speedVal = document.getElementById('panelScrollSpeedVal');
+      if (speedVal) speedVal.textContent = `${scrollSpeed} px/s`;
+    }
+
+    // Always persist to local device storage
+    Storage.setLocalSettings(cur);
+
+    // Sync to user account
     if (syncToCloud) {
-      SyncService.syncSettings(window.ReaderSettings);
+      this.debounceSyncSettings();
     }
   },
 

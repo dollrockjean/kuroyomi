@@ -10,6 +10,9 @@ const AutoScroll = {
 
   init(onChapterEnd) {
     this.onChapterEndCallback = onChapterEnd;
+    if (window.ReaderSettings && window.ReaderSettings.auto_scroll_speed) {
+      this.speed = Math.max(5, Math.min(180, window.ReaderSettings.auto_scroll_speed));
+    }
     this.bindEvents();
   },
 

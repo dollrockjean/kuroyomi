@@ -34,6 +34,12 @@ const TTSEngine = {
 
   init(onChapterEnd) {
     this.onChapterEndCallback = onChapterEnd;
+    if (window.ReaderSettings && window.ReaderSettings.tts_rate) {
+      this.rate = parseFloat(window.ReaderSettings.tts_rate);
+    }
+    if (window.ReaderSettings && window.ReaderSettings.tts_voice) {
+      this.selectedVoice = window.ReaderSettings.tts_voice;
+    }
     this.populateVoiceSelect();
 
     // iOS Audio Context Priming on any user touch/click
@@ -148,6 +154,9 @@ const TTSEngine = {
   setRate(val) {
     this.rate = parseFloat(val);
     this.blobCache.clear();
+    if (window.ReaderSettings) {
+      window.ReaderSettings.tts_rate = this.rate;
+    }
     if (this.isPlaying && !this.isPaused) {
       this.speakParagraph(this.currentIndex);
     }

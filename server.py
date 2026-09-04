@@ -521,13 +521,15 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 conn.close()
                 return
 
-            theme = body.get("theme", "brutalist-dark")
-            font_family = body.get("font_family", "sans")
-            font_size = int(body.get("font_size", 18))
-            line_height = float(body.get("line_height", 1.75))
+            database.ensure_user_exists(user_id)
+
+            theme = body.get("theme", "monochrome-dark")
+            font_family = body.get("font_family", "times")
+            font_size = int(body.get("font_size", 19))
+            line_height = float(body.get("line_height", 1.85))
             content_width = body.get("content_width", "normal")
             auto_scroll_speed = int(body.get("auto_scroll_speed", 35))
-            tts_voice = body.get("tts_voice", "")
+            tts_voice = body.get("tts_voice", "en-US-JennyNeural")
             tts_rate = float(body.get("tts_rate", 1.0))
             tts_pitch = float(body.get("tts_pitch", 1.0))
             now = time.time()
