@@ -1,17 +1,17 @@
-// KuroYomi Service Worker v8
+// KuroYomi Service Worker v9
 // High-performance offline caching with instant WebKit/Safari PWA launch
-const CACHE_NAME = 'kuroyomi-v8';
+const CACHE_NAME = 'kuroyomi-v9';
 
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
-  '/css/brutalist.css?v=8.0',
-  '/js/app.js?v=8.0',
-  '/js/reader.js?v=8.0',
-  '/js/tts.js?v=8.0',
-  '/js/storage.js?v=8.0',
-  '/js/sync.js?v=8.0',
-  '/js/autoscroll.js?v=8.0',
+  '/css/brutalist.css?v=9.0',
+  '/js/app.js?v=9.0',
+  '/js/reader.js?v=9.0',
+  '/js/tts.js?v=9.0',
+  '/js/storage.js?v=9.0',
+  '/js/sync.js?v=9.0',
+  '/js/autoscroll.js?v=9.0',
   '/manifest.json',
   '/icons/icon-192.png',
   '/icons/icon-512.png',

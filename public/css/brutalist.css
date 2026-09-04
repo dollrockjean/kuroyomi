@@ -204,17 +204,27 @@ body {
 
 /* Button Color Variants */
 .btn-brutal-accent {
-  background: var(--accent);
-  color: #ffffff;
-  border-color: var(--accent);
-  font-weight: 600;
-  box-shadow: 0 1px 3px rgba(139, 92, 246, 0.25);
+  background: var(--accent) !important;
+  color: var(--accent-text) !important;
+  border-color: var(--accent) !important;
+  font-weight: 700;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.btn-brutal-accent svg {
+  fill: currentColor;
 }
 
 .btn-brutal-accent:hover {
-  filter: brightness(1.08);
-  background: var(--accent-secondary);
-  border-color: var(--accent-secondary);
+  filter: brightness(0.95);
+  background: var(--accent-secondary) !important;
+  color: var(--accent-text) !important;
+  border-color: var(--accent-secondary) !important;
+}
+
+.btn-brutal-accent:active {
+  background: var(--accent-secondary) !important;
+  color: var(--accent-text) !important;
 }
 
 .btn-brutal-danger {
