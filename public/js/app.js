@@ -531,10 +531,14 @@ const App = {
       try {
         this.showLoading('Pairing device...');
         const remember = document.getElementById('rememberDeviceToggle').checked;
-        await SyncService.pairDeviceWithKey(key, remember);
+        const result = await SyncService.pairDeviceWithKey(key, remember);
+        if (result && result.settings && Object.keys(result.settings).length > 0) {
+          this.applySettings(result.settings, false);
+        }
         await this.loadLibrary();
         this.hideLoading();
         this.closeMasterPanel();
+        this.showToast(`Paired successfully! Sync Key: ${key}`);
       } catch (e) {
         this.hideLoading();
         alert('Could not pair device: ' + e.message);
@@ -661,33 +665,38 @@ const App = {
 
       this.novels = novelsData.novels || [];
 
-      // Auto-Shield: If server restarted/rebuilt and has 0 novels, check device mirror in IndexedDB
-      if (this.novels.length === 0 && allowAutoRestore && typeof IDB !== 'undefined') {
+      // Auto-Shield: Check if server is missing any books present in local device mirror
+      if (allowAutoRestore && typeof IDB !== 'undefined') {
         const mirroredBackup = await IDB.getLibraryMirror(userId);
         if (mirroredBackup && mirroredBackup.novels && mirroredBackup.novels.length > 0) {
-          console.log('Server reset detected after update. Auto-restoring library mirror from device...');
-          this.showToast('Restoring library from device mirror...');
-          try {
-            const restoreRes = await fetch('/api/restore', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                user_id: userId,
-                backup_data: mirroredBackup
-              })
-            });
-            const restoreData = await restoreRes.json();
-            if (restoreData.success) {
-              this.showToast(`Auto-restored ${restoreData.novels_restored || 0} novel(s) from device!`);
-              return this.loadLibrary(false);
+          const serverNovelIds = new Set(this.novels.map(n => n.id));
+          const missingNovels = mirroredBackup.novels.filter(n => !serverNovelIds.has(n.id));
+
+          if (missingNovels.length > 0) {
+            console.warn(`Auto-Shield: Server is missing ${missingNovels.length} novel(s) from device mirror. Restoring...`);
+            this.showToast(`Restoring ${missingNovels.length} novel(s) to cloud...`);
+            try {
+              const restoreRes = await fetch('/api/restore', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  user_id: userId,
+                  backup_data: mirroredBackup
+                })
+              });
+              const restoreData = await restoreRes.json();
+              if (restoreData.success) {
+                this.showToast(`Auto-restored ${restoreData.novels_restored || 0} novel(s) from device!`);
+                return this.loadLibrary(false);
+              }
+            } catch (e) {
+              console.warn('Auto-restore failed:', e);
             }
-          } catch (e) {
-            console.warn('Auto-restore failed:', e);
           }
         }
       }
 
-      // If server has novels, update our local device mirror in the background
+      // If server has novels, update our local device mirror safely
       if (this.novels.length > 0) {
         this.updateDeviceMirror();
       }
@@ -704,10 +713,33 @@ const App = {
     try {
       const userId = SyncService.currentUserId;
       if (!userId || typeof IDB === 'undefined') return;
+
       const res = await fetch(`/api/backup?user_id=${encodeURIComponent(userId)}`);
-      const backupData = await res.json();
-      if (backupData && backupData.novels && backupData.novels.length > 0) {
-        await IDB.saveLibraryMirror(userId, backupData);
+      const serverBackup = await res.json();
+      if (!serverBackup || !serverBackup.novels) return;
+
+      const localBackup = await IDB.getLibraryMirror(userId);
+      if (localBackup && localBackup.novels && localBackup.novels.length > 0) {
+        // Safety guard: NEVER overwrite a mirror that has user-uploaded books with a server backup that has FEWER books!
+        const localUserBooks = localBackup.novels.filter(n => !n.id.startsWith('nov_demo') && !n.title.includes('Chronicles of the Aether'));
+        const serverUserBooks = serverBackup.novels.filter(n => !n.id.startsWith('nov_demo') && !n.title.includes('Chronicles of the Aether'));
+
+        if (localUserBooks.length > serverUserBooks.length) {
+          console.warn('Local mirror has more user books than server. Preserving mirror and auto-syncing to server.');
+          await fetch('/api/restore', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              user_id: userId,
+              backup_data: localBackup
+            })
+          });
+          return;
+        }
+      }
+
+      if (serverBackup.novels.length > 0) {
+        await IDB.saveLibraryMirror(userId, serverBackup);
         this.updateMirrorStatus();
       }
     } catch (e) {
@@ -944,13 +976,16 @@ const App = {
       }
 
       progressFill.style.width = '100%';
-      progressText.textContent = 'Complete';
+      progressText.textContent = 'Saving to device storage...';
+
+      // Immediately mirror to IndexedDB so novel is bulletproof against any reload/restart
+      await this.updateDeviceMirror();
 
       setTimeout(async () => {
         this.closeUploadModal();
         await this.loadLibrary();
         Reader.openNovel(data.novel_id, false);
-      }, 500);
+      }, 300);
     } catch (e) {
       progressDiv.style.display = 'none';
       alert('Upload error: ' + e.message);

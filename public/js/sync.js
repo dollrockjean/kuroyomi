@@ -9,11 +9,13 @@ const SyncService = {
     this.updateStatus('syncing', 'CONNECTING...');
 
     // 0. Detect 1-Click Pairing Link (?pair=READER-XXXXX)
+    let pairKeyDetected = null;
     try {
       const urlParams = new URLSearchParams(window.location.search);
       const pairParam = urlParams.get('pair') || urlParams.get('key');
       if (pairParam) {
-        Storage.setSyncKey(pairParam.trim().toUpperCase());
+        pairKeyDetected = pairParam.trim().toUpperCase();
+        Storage.setSyncKey(pairKeyDetected);
         window.history.replaceState({}, document.title, window.location.pathname);
       }
     } catch (e) {}
@@ -22,8 +24,15 @@ const SyncService = {
     const isRemembered = Storage.isRemembered();
 
     try {
-      // 1. Try to restore session via device token ("Remember This Device")
-      if (isRemembered && !new URLSearchParams(window.location.search).get('pair')) {
+      // 1. If explicit pairing link was opened, pair immediately with it!
+      if (pairKeyDetected) {
+        console.log('Pairing device via 1-Click link:', pairKeyDetected);
+        const pairData = await this.pairDeviceWithKey(pairKeyDetected, isRemembered);
+        return { userId: pairData.user_id, syncKey: pairData.sync_key, settings: pairData.settings };
+      }
+
+      // 2. Try to restore session via device token ("Remember This Device")
+      if (isRemembered) {
         const res = await fetch(`/api/auth/device-session?device_token=${encodeURIComponent(deviceToken)}`);
         const data = await res.json();
         if (data.authenticated) {

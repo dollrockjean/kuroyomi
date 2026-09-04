@@ -180,12 +180,16 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 return
 
             # Check if user needs demo novel seeded initially
-            cur.execute("SELECT demo_seeded FROM users WHERE id = ?", (user_id,))
+            cur.execute("SELECT demo_seeded, sync_key FROM users WHERE id = ?", (user_id,))
             user_row = cur.fetchone()
             if user_row and not user_row["demo_seeded"]:
                 cur.execute("SELECT COUNT(*) as cnt FROM novels WHERE user_id = ?", (user_id,))
                 if cur.fetchone()["cnt"] == 0:
-                    sample_books.seed_demo_novel(user_id)
+                    if user_row["sync_key"] == "DEFAULT_READER":
+                        sample_books.seed_demo_novel(user_id)
+                    else:
+                        cur.execute("UPDATE users SET demo_seeded = 1 WHERE id = ?", (user_id,))
+                        conn.commit()
                 else:
                     cur.execute("UPDATE users SET demo_seeded = 1 WHERE id = ?", (user_id,))
                     conn.commit()

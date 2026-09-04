@@ -278,6 +278,13 @@ def import_backup_data(data: dict, user_id: str):
     progress_list = data.get("progress", [])
     settings = data.get("settings", {})
 
+    # If user backup has novels and demo novel is not in the backup, remove auto-seeded demo
+    has_demo = any(n.get("id", "").startswith("nov_demo") or "Chronicles of the Aether" in n.get("title", "") for n in novels)
+    if not has_demo and len(novels) > 0:
+        cur.execute("DELETE FROM novels WHERE user_id = ? AND (id LIKE 'nov_demo%' OR title LIKE '%Chronicles of the Aether%')", (user_id,))
+
+    cur.execute("UPDATE users SET demo_seeded = 1 WHERE id = ?", (user_id,))
+
     for n in novels:
         cur.execute("""
             INSERT OR REPLACE INTO novels (id, title, author, description, cover_data, user_id, created_at, updated_at)
