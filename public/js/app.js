@@ -17,6 +17,7 @@ window.ReaderSettings = {
   font_size: 19,
   line_height: 1.85,
   content_width: 'normal',
+  margin_width: 'edge',
   auto_scroll_speed: 35,
   tts_voice: 'en-US-BrianNeural',
   tts_rate: 1.0,
@@ -57,12 +58,19 @@ const App = {
     // 3. Connect to sync service & fetch cloud account settings
     const session = await SyncService.init();
     if (session && session.settings && Object.keys(session.settings).length > 0) {
-      this.applySettings(session.settings, false);
+      if (localSettings && Object.keys(localSettings).length > 0) {
+        const merged = { ...session.settings, ...localSettings };
+        this.applySettings(merged, false);
+        SyncService.syncSettings(merged);
+      } else {
+        this.applySettings(session.settings, false);
+      }
     }
 
     this.bindGlobalEvents();
     this.bindMasterPanelEvents();
     this.bindSettingsEvents();
+    this.bindMobileQuickSheetEvents();
     this.bindSyncEvents();
     this.bindBackupRestoreEvents();
 
@@ -391,6 +399,109 @@ const App = {
     }
   },
 
+  openMobileQuickSheet() {
+    const sheet = document.getElementById('mobileQuickSheet');
+    const backdrop = document.getElementById('quickSheetBackdrop');
+    if (!sheet || !backdrop) return;
+
+    // Ensure state displays are fresh
+    const cur = window.ReaderSettings;
+    const fontVal = document.getElementById('quickSheetFontVal');
+    if (fontVal) fontVal.textContent = `${cur.font_size || 19}px`;
+
+    const marginVal = document.getElementById('quickSheetMarginVal');
+    if (marginVal) {
+      const labels = { edge: 'Edge', compact: 'Compact', comfortable: 'Relaxed' };
+      marginVal.textContent = labels[cur.margin_width || 'edge'] || 'Edge';
+    }
+
+    const ttsText = document.getElementById('quickSheetTTSText');
+    if (ttsText && typeof TTSEngine !== 'undefined') {
+      ttsText.textContent = (TTSEngine.isPlaying && !TTSEngine.isPaused) ? 'Pause' : 'Read Aloud';
+    }
+
+    sheet.classList.add('open');
+    backdrop.classList.add('open');
+  },
+
+  closeMobileQuickSheet() {
+    const sheet = document.getElementById('mobileQuickSheet');
+    const backdrop = document.getElementById('quickSheetBackdrop');
+    if (sheet) sheet.classList.remove('open');
+    if (backdrop) backdrop.classList.remove('open');
+  },
+
+  toggleMobileQuickSheet() {
+    const sheet = document.getElementById('mobileQuickSheet');
+    if (sheet && sheet.classList.contains('open')) {
+      this.closeMobileQuickSheet();
+    } else {
+      this.openMobileQuickSheet();
+    }
+  },
+
+  bindMobileQuickSheetEvents() {
+    const backdrop = document.getElementById('quickSheetBackdrop');
+    if (backdrop) {
+      backdrop.addEventListener('click', () => this.closeMobileQuickSheet());
+    }
+
+    const chaptersBtn = document.getElementById('quickSheetChaptersBtn');
+    if (chaptersBtn) {
+      chaptersBtn.addEventListener('click', () => {
+        this.closeMobileQuickSheet();
+        this.openMasterPanel('tabChapters');
+      });
+    }
+
+    const ttsBtn = document.getElementById('quickSheetTTSBtn');
+    if (ttsBtn) {
+      ttsBtn.addEventListener('click', () => {
+        this.closeMobileQuickSheet();
+        if (typeof TTSEngine !== 'undefined') {
+          TTSEngine.toggle();
+        }
+      });
+    }
+
+    const fontDownBtn = document.getElementById('quickSheetFontDown');
+    if (fontDownBtn) {
+      fontDownBtn.addEventListener('click', () => {
+        const curSize = parseInt(window.ReaderSettings.font_size || 19);
+        const newSize = Math.max(12, curSize - 1);
+        this.applySettings({ font_size: newSize });
+      });
+    }
+
+    const fontUpBtn = document.getElementById('quickSheetFontUp');
+    if (fontUpBtn) {
+      fontUpBtn.addEventListener('click', () => {
+        const curSize = parseInt(window.ReaderSettings.font_size || 19);
+        const newSize = Math.min(36, curSize + 1);
+        this.applySettings({ font_size: newSize });
+      });
+    }
+
+    const marginsBtn = document.getElementById('quickSheetMarginsBtn');
+    if (marginsBtn) {
+      marginsBtn.addEventListener('click', () => {
+        const order = ['edge', 'compact', 'comfortable'];
+        const curMargin = window.ReaderSettings.margin_width || 'edge';
+        const nextIdx = (order.indexOf(curMargin) + 1) % order.length;
+        const nextMargin = order[nextIdx];
+        this.applySettings({ margin_width: nextMargin });
+      });
+    }
+
+    const settingsBtn = document.getElementById('quickSheetSettingsBtn');
+    if (settingsBtn) {
+      settingsBtn.addEventListener('click', () => {
+        this.closeMobileQuickSheet();
+        this.openMasterPanel('tabPrefs');
+      });
+    }
+  },
+
   bindSettingsEvents() {
     document.querySelectorAll('.theme-btn').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -434,6 +545,15 @@ const App = {
         this.applySettings({ content_width: width });
       });
     });
+
+    document.querySelectorAll('.margin-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.margin-btn').forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+        const margin = btn.getAttribute('data-margin');
+        this.applySettings({ margin_width: margin });
+      });
+    });
   },
 
   applySettings(s, syncToCloud = true) {
@@ -447,6 +567,9 @@ const App = {
     doc.setAttribute('data-font', cur.font_family || 'times');
     // 3. Content width
     doc.setAttribute('data-width', cur.content_width || 'normal');
+    // 3.5 Margin Mode (Edge, Compact, Relaxed)
+    const marginMode = cur.margin_width || 'edge';
+    doc.setAttribute('data-margin', marginMode);
 
     // 4. Font size & Line height
     doc.style.setProperty('--reader-font-size', `${cur.font_size || 19}px`);
@@ -464,6 +587,27 @@ const App = {
     document.querySelectorAll('.width-btn').forEach(b => {
       b.classList.toggle('selected', b.getAttribute('data-width') === cur.content_width);
     });
+    // Update Margin buttons
+    document.querySelectorAll('.margin-btn').forEach(b => {
+      b.classList.toggle('selected', b.getAttribute('data-margin') === marginMode);
+    });
+
+    // Update Mobile Quick Sheet dynamic values
+    const quickMarginVal = document.getElementById('quickSheetMarginVal');
+    if (quickMarginVal) {
+      const labels = { edge: 'Edge', compact: 'Compact', comfortable: 'Relaxed' };
+      quickMarginVal.textContent = labels[marginMode] || 'Edge';
+    }
+
+    const quickFontVal = document.getElementById('quickSheetFontVal');
+    if (quickFontVal) {
+      quickFontVal.textContent = `${cur.font_size || 19}px`;
+    }
+
+    const quickTtsText = document.getElementById('quickSheetTTSText');
+    if (quickTtsText && typeof TTSEngine !== 'undefined') {
+      quickTtsText.textContent = (TTSEngine.isPlaying && !TTSEngine.isPaused) ? 'Pause' : 'Read Aloud';
+    }
 
     // Update Font Size Slider
     const fsSlider = document.getElementById('fontSizeSlider');

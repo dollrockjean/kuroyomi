@@ -119,18 +119,25 @@ const IDB = {
   },
 
   async saveLibraryMirror(userId, backupData) {
-    if (!userId || !backupData || !backupData.novels) return false;
+    if (!backupData || !backupData.novels) return false;
     try {
       const db = await this.open();
       return new Promise((resolve, reject) => {
         const tx = db.transaction(this.storeName, 'readwrite');
         const store = tx.objectStore(this.storeName);
-        store.put({
-          user_id: userId,
+        const record = {
+          user_id: userId || 'universal_device_mirror',
           backup_data: backupData,
           novel_count: backupData.novels.length,
           saved_at: Date.now()
-        });
+        };
+        store.put(record);
+        if (userId && userId !== 'universal_device_mirror') {
+          store.put({
+            ...record,
+            user_id: 'universal_device_mirror'
+          });
+        }
         tx.oncomplete = () => resolve(true);
         tx.onerror = () => reject(tx.error);
       });
@@ -141,17 +148,40 @@ const IDB = {
   },
 
   async getLibraryMirror(userId) {
-    if (!userId) return null;
     try {
       const db = await this.open();
-      return new Promise((resolve, reject) => {
+      return new Promise((resolve) => {
         const tx = db.transaction(this.storeName, 'readonly');
         const store = tx.objectStore(this.storeName);
-        const req = store.get(userId);
-        req.onsuccess = () => {
-          resolve(req.result ? req.result.backup_data : null);
+
+        const fallbackAll = () => {
+          const allReq = store.getAll();
+          allReq.onsuccess = () => {
+            const items = allReq.result || [];
+            if (items.length > 0) {
+              items.sort((a, b) => (b.saved_at || 0) - (a.saved_at || 0));
+              const best = items.find(it => it.novel_count > 0 && it.backup_data) || items[0];
+              resolve(best ? best.backup_data : null);
+            } else {
+              resolve(null);
+            }
+          };
+          allReq.onerror = () => resolve(null);
         };
-        req.onerror = () => reject(req.error);
+
+        if (userId) {
+          const req = store.get(userId);
+          req.onsuccess = () => {
+            if (req.result && req.result.backup_data) {
+              resolve(req.result.backup_data);
+            } else {
+              fallbackAll();
+            }
+          };
+          req.onerror = () => fallbackAll();
+        } else {
+          fallbackAll();
+        }
       });
     } catch (e) {
       console.warn('IDB get error:', e);

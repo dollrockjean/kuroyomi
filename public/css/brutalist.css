@@ -433,7 +433,7 @@ body {
   width: 100%;
 }
 
-/* Auto-Hiding Top Bar */
+/* Auto-Hiding Top Bar (Lowered on Mobile to avoid iPhone status bar/notch overlap) */
 .reader-top-bar {
   position: fixed;
   top: 0;
@@ -442,12 +442,13 @@ body {
   width: 100%;
   background: var(--bg-primary);
   border-bottom: 1px solid var(--border-color);
-  padding: 10px 18px;
+  padding: calc(14px + var(--safe-top)) 18px 12px 18px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  backdrop-filter: blur(12px);
+  backdrop-filter: blur(14px);
+  box-sizing: border-box;
   transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease;
 }
 
@@ -481,15 +482,16 @@ body {
   background: var(--bg-surface);
 }
 
-/* Reading Body (Times New Roman Main Font) */
+/* Reading Body (Times New Roman Main Font & Configurable Edge-to-Edge Margins) */
 .reader-body-wrapper {
   width: 100%;
   max-width: var(--reader-width);
-  padding: 70px 22px 100px 22px;
+  padding: calc(85px + var(--safe-top)) var(--reader-padding-x, 6px) calc(100px + var(--safe-bottom)) var(--reader-padding-x, 6px);
   font-family: var(--reader-font);
   font-size: var(--reader-font-size);
   line-height: var(--reader-line-height);
   transition: max-width 0.2s ease, font-size 0.15s ease;
+  box-sizing: border-box;
   cursor: pointer; /* Centerscreen tap indicator */
 }
 
@@ -524,7 +526,7 @@ body {
   text-align: justify;
   text-justify: inter-word;
   position: relative;
-  padding: 3px 6px;
+  padding: 2px 2px;
   border-radius: var(--radius-sm);
   transition: background 0.12s ease;
 }
@@ -1376,24 +1378,251 @@ body {
   to { transform: translateX(0); opacity: 1; }
 }
 
-/* Responsive adjustments */
-@media (max-width: 640px) {
-  .resume-hero {
-    grid-template-columns: 1fr;
-    text-align: left;
+/* Subtle Audiobook Percentage Badge */
+.audiobook-para-pct {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-color);
+  background: var(--bg-surface);
+}
+
+/* Margin Presets */
+[data-margin="edge"] {
+  --reader-padding-x: 6px;
+}
+[data-margin="compact"] {
+  --reader-padding-x: 14px;
+}
+[data-margin="comfortable"] {
+  --reader-padding-x: 24px;
+}
+
+/* Menu Active Word Light Highlight */
+.toc-item.active {
+  background: var(--bg-surface);
+  border-left: 3px solid var(--accent);
+  font-weight: 600;
+}
+
+.toc-item.active .toc-chapter-title {
+  background: rgba(255, 255, 255, 0.16);
+  color: var(--text-primary);
+  padding: 2px 7px;
+  border-radius: 4px;
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.12);
+  display: inline-block;
+}
+
+[data-theme="monochrome-light"] .toc-item.active .toc-chapter-title {
+  background: rgba(0, 0, 0, 0.09);
+  color: #000000;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.06);
+}
+
+/* Mobile Overscroll Infinite Scroll Indicators */
+.overscroll-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  border: 1px dashed var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  margin: 14px 0;
+  opacity: 0;
+  transform: scale(0.98);
+  transition: opacity 0.2s ease, transform 0.2s ease, color 0.15s ease, border-color 0.15s ease;
+  user-select: none;
+  pointer-events: none;
+}
+
+.overscroll-indicator.armed {
+  opacity: 1;
+  color: var(--accent);
+  border-color: var(--accent);
+  border-style: solid;
+  transform: scale(1.02);
+}
+
+/* Mobile Slide-Up Quick Reader Sheet */
+.quick-sheet-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  z-index: 120;
+  display: none;
+  opacity: 0;
+  transition: opacity 0.22s ease;
+}
+
+.quick-sheet-backdrop.open {
+  display: block;
+  opacity: 1;
+}
+
+.mobile-quick-sheet {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  z-index: 130;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-color);
+  border-top-left-radius: 20px;
+  border-top-right-radius: 20px;
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.55);
+  box-sizing: border-box;
+  padding: 12px 18px calc(24px + var(--safe-bottom)) 18px;
+  transform: translateY(105%);
+  transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.mobile-quick-sheet.open {
+  transform: translateY(0);
+}
+
+.quick-sheet-handle {
+  width: 38px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border-active);
+  margin: 0 auto 4px auto;
+  opacity: 0.5;
+}
+
+.quick-sheet-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.quick-sheet-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.quick-sheet-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 8px;
+}
+
+.quick-sheet-font-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 8px 14px;
+}
+
+.quick-sheet-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.quick-sheet-font-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.quick-sheet-font-btn {
+  min-width: 40px;
+  min-height: 32px;
+  padding: 4px 10px;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.quick-sheet-font-val {
+  font-size: 13px;
+  font-weight: 700;
+  min-width: 38px;
+  text-align: center;
+  color: var(--text-primary);
+}
+
+.quick-sheet-actions-row {
+  display: flex;
+  gap: 10px;
+}
+
+.quick-sheet-action {
+  flex: 1;
+  font-size: 12px;
+  padding: 10px;
+  text-align: center;
+}
+
+/* Responsive adjustments & Overlap Prevention */
+@media (max-width: 768px) {
+  /* Hide previous/next buttons on mobile - replaced by infinite/overscroll gesture */
+  #footerPrevBtn,
+  #footerNextBtn,
+  #prevChapterBtn,
+  #nextChapterBtn {
+    display: none !important;
   }
-  .resume-cover {
-    width: 70px;
-    height: 100px;
+
+  .reader-footer-nav {
+    justify-content: center;
   }
-  .app-header {
-    padding: 10px 14px;
+
+  #footerMenuBtn {
+    max-width: 220px;
+    width: 100%;
   }
+
   .reader-body-wrapper {
-    padding: 65px 16px 90px 16px;
+    padding: calc(85px + var(--safe-top)) var(--reader-padding-x, 6px) calc(95px + var(--safe-bottom)) var(--reader-padding-x, 6px);
   }
+
   .reader-floating-bar {
-    width: calc(100% - 24px);
-    justify-content: space-around;
+    width: auto;
+    max-width: calc(100% - 32px);
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: calc(18px + var(--safe-bottom));
+  }
+
+  .floating-quick-menu-btn {
+    bottom: calc(75px + var(--safe-bottom));
+    right: 14px;
+  }
+
+  .overscroll-indicator {
+    display: flex;
+  }
+}
+
+@media (min-width: 769px) {
+  .mobile-quick-sheet,
+  .quick-sheet-backdrop,
+  .overscroll-indicator {
+    display: none !important;
   }
 }

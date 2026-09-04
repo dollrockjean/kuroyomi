@@ -91,8 +91,18 @@
 
       <!-- Main Reader Content Wrapper (Times New Roman by default) -->
       <article class="reader-body-wrapper" id="readerBodyWrapper">
+        <div class="overscroll-indicator top-indicator" id="overscrollTopIndicator">
+          <svg class="overscroll-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M7 14l5-5 5 5z"/></svg>
+          <span class="overscroll-text" id="overscrollTopText">Pull down for previous chapter</span>
+        </div>
+
         <div id="readerContent">
           <!-- Chapter HTML rendered with paragraphs -->
+        </div>
+
+        <div class="overscroll-indicator bottom-indicator" id="overscrollBottomIndicator">
+          <svg class="overscroll-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
+          <span class="overscroll-text" id="overscrollBottomText">Pull up for next chapter</span>
         </div>
 
         <!-- Chapter Bottom Navigation -->
@@ -132,20 +142,20 @@
             <span id="ttsPcCoverPlaceholder" class="tts-mini-cover-placeholder">📖</span>
             <div class="tts-mini-cog" title="Audiobook Settings">⚙</div>
           </div>
-          <button class="btn-brutal tts-skip-btn" id="ttsPrevChapterBtn" title="Previous Chapter (Two Triangles)">⏮</button>
-          <button class="btn-brutal tts-skip-btn" id="ttsPrevParaBtn" title="Previous Paragraph (One Triangle)">◀</button>
-          <button class="btn-brutal btn-brutal-accent tts-play-btn" id="ttsPlayPauseBtn" title="Play / Pause">❚❚</button>
-          <button class="btn-brutal tts-skip-btn" id="ttsNextParaBtn" title="Next Paragraph (One Triangle)">▶</button>
-          <button class="btn-brutal tts-skip-btn" id="ttsNextChapterBtn" title="Next Chapter (Two Triangles)">⏭</button>
+          <button class="btn-brutal tts-skip-btn" id="ttsPrevChapterBtn" title="Previous Chapter"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M11 6l-8.5 6 8.5 6V6zm8.5 0L11 12l8.5 6V6z"/></svg></button>
+          <button class="btn-brutal tts-skip-btn" id="ttsPrevParaBtn" title="Previous Paragraph"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M16 6l-10 6 10 6V6z"/></svg></button>
+          <button class="btn-brutal btn-brutal-accent tts-play-btn" id="ttsPlayPauseBtn" title="Play / Pause"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg></button>
+          <button class="btn-brutal tts-skip-btn" id="ttsNextParaBtn" title="Next Paragraph"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 6l10 6-10 6V6z"/></svg></button>
+          <button class="btn-brutal tts-skip-btn" id="ttsNextChapterBtn" title="Next Chapter"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M4.5 18l8.5-6-8.5-6v12zm8.5 0l8.5-6-8.5-6v12z"/></svg></button>
           <span id="ttsRateLabel" class="tts-rate-label" title="Current Speed">1.0x</span>
           <span class="badge-brutal sleep-timer-badge" id="ttsSleepBadge" style="display: none;">15:00</span>
-          <button class="btn-brutal tts-stop-btn" id="ttsStopBtn" title="Stop Read Aloud" style="color: #ef4444; padding: 4px 8px;">✕</button>
+          <button class="btn-brutal tts-stop-btn" id="ttsStopBtn" title="Stop Read Aloud" style="color: #ef4444; padding: 4px 8px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
         </div>
 
         <!-- Mobile Badge Elements (Draggable to Corners: Play/Pause + Stop + Mini Book Cover with Cog) -->
         <div class="tts-mobile-only">
-          <button class="btn-brutal btn-brutal-accent tts-mobile-btn" id="ttsMobilePlayPauseBtn" title="Play / Pause">❚❚</button>
-          <button class="btn-brutal tts-mobile-btn" id="ttsMobileStopBtn" title="Stop" style="color: #ef4444;">✕</button>
+          <button class="btn-brutal btn-brutal-accent tts-mobile-btn" id="ttsMobilePlayPauseBtn" title="Play / Pause"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg></button>
+          <button class="btn-brutal tts-mobile-btn" id="ttsMobileStopBtn" title="Stop" style="color: #ef4444;"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
           <div class="tts-mini-cover-wrap" id="ttsMobileCoverBtn" title="Tap to Open Full-Screen Audiobook Player">
             <img id="ttsMobileCoverImg" class="tts-mini-cover-img" src="" alt="Cover" style="display: none;" />
             <span id="ttsMobileCoverPlaceholder" class="tts-mini-cover-placeholder">📖</span>
@@ -182,8 +192,8 @@
       <!-- Active Paragraph Front and Center -->
       <div class="audiobook-spoken-card">
         <div class="audiobook-para-meta">
-          <span class="badge-brutal accent" id="audiobookParaBadge">Paragraph 1</span>
-          <span id="audiobookModalSleepBadge" class="badge-brutal" style="display: none;">15:00</span>
+          <span class="audiobook-para-pct" id="audiobookParaBadge">0%</span>
+          <span id="audiobookModalSleepBadge" class="badge-brutal" style="display: none;">⏳ 15:00</span>
         </div>
         <div class="audiobook-spoken-text" id="audiobookSpokenText">
           Reading paragraph...
@@ -193,22 +203,22 @@
 
     <!-- Bottom Controls Area -->
     <div class="audiobook-full-footer">
-      <!-- Skips & Play/Pause (1-triangle and 2-triangle buttons) -->
+      <!-- Skips & Play/Pause (Custom Vector SVG Skips) -->
       <div class="audiobook-transport-row">
-        <button class="audiobook-skip-btn" id="modalPrevChapterBtn" title="Previous Chapter (Two Triangles)">
-          ⏮
+        <button class="audiobook-skip-btn" id="modalPrevChapterBtn" title="Previous Chapter">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M11 6l-8.5 6 8.5 6V6zm8.5 0L11 12l8.5 6V6z"/></svg>
         </button>
-        <button class="audiobook-skip-btn" id="modalPrevParaBtn" title="Previous Paragraph (One Triangle)">
-          ◀
+        <button class="audiobook-skip-btn" id="modalPrevParaBtn" title="Previous Paragraph">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M16 6l-10 6 10 6V6z"/></svg>
         </button>
         <button class="audiobook-main-play-btn" id="modalPlayPauseBtn" title="Play / Pause">
-          ❚❚
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
         </button>
-        <button class="audiobook-skip-btn" id="modalNextParaBtn" title="Next Paragraph (One Triangle)">
-          ▶
+        <button class="audiobook-skip-btn" id="modalNextParaBtn" title="Next Paragraph">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 6l10 6-10 6V6z"/></svg>
         </button>
-        <button class="audiobook-skip-btn" id="modalNextChapterBtn" title="Next Chapter (Two Triangles)">
-          ⏭
+        <button class="audiobook-skip-btn" id="modalNextChapterBtn" title="Next Chapter">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M4.5 18l8.5-6-8.5-6v12zm8.5 0l8.5-6-8.5-6v12z"/></svg>
         </button>
       </div>
 
@@ -233,6 +243,42 @@
       </div>
     </div>
   </div>
+
+  <!-- Mobile Slide-Up Quick Reader Sheet (Tapped from Middle of Reading View) -->
+  <div class="quick-sheet-backdrop" id="quickSheetBackdrop"></div>
+  <aside class="mobile-quick-sheet" id="mobileQuickSheet">
+    <div class="quick-sheet-handle"></div>
+    <div class="quick-sheet-body">
+      <div class="quick-sheet-grid">
+        <button class="btn-brutal quick-sheet-btn" id="quickSheetChaptersBtn">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/></svg>
+          Chapters
+        </button>
+        <button class="btn-brutal btn-brutal-accent quick-sheet-btn" id="quickSheetTTSBtn">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
+          <span id="quickSheetTTSText">Read Aloud</span>
+        </button>
+      </div>
+
+      <div class="quick-sheet-font-row">
+        <span class="quick-sheet-label">Font Size</span>
+        <div class="quick-sheet-font-controls">
+          <button class="btn-brutal quick-sheet-font-btn" id="quickSheetFontDown" title="Decrease font size">A-</button>
+          <span class="quick-sheet-font-val" id="quickSheetFontVal">19px</span>
+          <button class="btn-brutal quick-sheet-font-btn" id="quickSheetFontUp" title="Increase font size">A+</button>
+        </div>
+      </div>
+
+      <div class="quick-sheet-actions-row">
+        <button class="btn-brutal quick-sheet-action" id="quickSheetMarginsBtn">
+          Margin: <span id="quickSheetMarginVal" style="font-weight: 700; margin-left: 4px;">Edge</span>
+        </button>
+        <button class="btn-brutal quick-sheet-action" id="quickSheetSettingsBtn">
+          Display Settings
+        </button>
+      </div>
+    </div>
+  </aside>
 
   <!-- Drawer Backdrop -->
   <div class="drawer-backdrop" id="drawerBackdrop"></div>
@@ -375,6 +421,15 @@
             <button class="choice-btn width-btn selected" data-width="normal">Normal</button>
             <button class="choice-btn width-btn" data-width="wide">Wide</button>
             <button class="choice-btn width-btn" data-width="full">Full</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Page Margins (Mobile Edge-to-Edge)</label>
+          <div class="grid-choices">
+            <button class="choice-btn margin-btn selected" data-margin="edge">Edge to Edge (Default)</button>
+            <button class="choice-btn margin-btn" data-margin="compact">Compact</button>
+            <button class="choice-btn margin-btn" data-margin="comfortable">Relaxed</button>
           </div>
         </div>
       </div>

@@ -14,6 +14,7 @@ const Reader = {
   init() {
     this.bindScroll();
     this.bindCenterScreenTap();
+    this.initOverscrollNavigation();
   },
 
   bindScroll() {
@@ -49,14 +50,11 @@ const Reader = {
       const pill = document.getElementById('readerProgressPill');
       if (pill) pill.textContent = `${Math.round(percent)}%`;
 
-      // Silently and continuously detect the current reading paragraph
-      const currentPid = this.getVisibleParagraphIndex();
-
       // Silently debounce saving progress to cloud without toasts
       if (this.scrollDebounce) clearTimeout(this.scrollDebounce);
       this.scrollDebounce = setTimeout(() => {
-        this.saveCurrentProgress(currentPid, percent);
-      }, 1000);
+        this.saveCurrentProgress();
+      }, 500);
     }, { passive: true });
   },
 
@@ -75,12 +73,12 @@ const Reader = {
   },
 
   bindCenterScreenTap() {
-    // Tapping the reading text or screen center opens/toggles the master panel (TOUCH devices only)
+    // Tapping the reading text or screen center opens bottom quick sheet on mobile
     const wrapper = document.getElementById('readerBodyWrapper');
     if (!wrapper) return;
 
     wrapper.addEventListener('pointerup', (e) => {
-      // On PC with a mouse / trackpad click: do NOTHING
+      // On PC with a mouse click: do NOTHING
       if (e.pointerType === 'mouse') return;
 
       // Don't trigger on buttons, links, or inputs
@@ -90,8 +88,107 @@ const Reader = {
       const selection = window.getSelection();
       if (selection && selection.toString().length > 0) return;
 
-      // Toggle the master panel on touch screens
-      App.toggleMasterPanel();
+      // Slide up bottom quick sheet on mobile
+      if (window.innerWidth <= 768) {
+        if (window.App && typeof window.App.openMobileQuickSheet === 'function') {
+          window.App.openMobileQuickSheet();
+        } else {
+          App.toggleMasterPanel();
+        }
+      } else {
+        App.toggleMasterPanel();
+      }
+    });
+  },
+
+  initOverscrollNavigation() {
+    let startY = 0;
+    let isTracking = false;
+    let atTop = false;
+    let atBottom = false;
+
+    window.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 1) return;
+      if (document.getElementById('readerView').style.display === 'none') return;
+
+      const scrollY = window.scrollY;
+      const docHeight = document.documentElement.scrollHeight;
+      const winHeight = window.innerHeight;
+
+      atTop = scrollY <= 3;
+      atBottom = (scrollY + winHeight) >= (docHeight - 12);
+
+      if (atTop || atBottom) {
+        startY = e.touches[0].clientY;
+        isTracking = true;
+      } else {
+        isTracking = false;
+      }
+    }, { passive: true });
+
+    window.addEventListener('touchmove', (e) => {
+      if (!isTracking) return;
+      const currentY = e.touches[0].clientY;
+      const diffY = currentY - startY;
+
+      // Pull down at top -> previous chapter
+      if (atTop && diffY > 15) {
+        const topInd = document.getElementById('overscrollTopIndicator');
+        const topText = document.getElementById('overscrollTopText');
+        if (topInd) {
+          topInd.style.opacity = Math.min(1, diffY / 70);
+          if (diffY > 65) {
+            topInd.classList.add('armed');
+            if (topText) topText.textContent = 'Release to load previous chapter';
+          } else {
+            topInd.classList.remove('armed');
+            if (topText) topText.textContent = 'Pull down for previous chapter';
+          }
+        }
+      }
+
+      // Pull up at bottom -> next chapter
+      if (atBottom && diffY < -15) {
+        const botInd = document.getElementById('overscrollBottomIndicator');
+        const botText = document.getElementById('overscrollBottomText');
+        const absDiff = Math.abs(diffY);
+        if (botInd) {
+          botInd.style.opacity = Math.min(1, absDiff / 70);
+          if (absDiff > 65) {
+            botInd.classList.add('armed');
+            if (botText) botText.textContent = 'Release to load next chapter';
+          } else {
+            botInd.classList.remove('armed');
+            if (botText) botText.textContent = 'Pull up for next chapter';
+          }
+        }
+      }
+    }, { passive: true });
+
+    window.addEventListener('touchend', () => {
+      if (!isTracking) return;
+      isTracking = false;
+
+      const topInd = document.getElementById('overscrollTopIndicator');
+      const botInd = document.getElementById('overscrollBottomIndicator');
+
+      if (topInd && topInd.classList.contains('armed')) {
+        topInd.classList.remove('armed');
+        topInd.style.opacity = '0';
+        this.loadPrevChapter();
+      } else if (topInd) {
+        topInd.style.opacity = '0';
+        topInd.classList.remove('armed');
+      }
+
+      if (botInd && botInd.classList.contains('armed')) {
+        botInd.classList.remove('armed');
+        botInd.style.opacity = '0';
+        this.loadNextChapter();
+      } else if (botInd) {
+        botInd.style.opacity = '0';
+        botInd.classList.remove('armed');
+      }
     });
   },
 
@@ -315,7 +412,7 @@ const Reader = {
           item.classList.add('active');
         }
         item.innerHTML = `
-          <span>${c.title}</span>
+          <span class="toc-chapter-title">${c.title}</span>
           <span class="toc-item-words">${c.word_count || ''} words</span>
         `;
         item.onclick = () => {

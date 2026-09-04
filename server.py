@@ -32,14 +32,14 @@ TTS_CACHE_DIR = os.path.join(tempfile.gettempdir(), "kuroyomi_tts_cache")
 os.makedirs(TTS_CACHE_DIR, exist_ok=True)
 
 BUILTIN_NEURAL_VOICES = [
-    {"id": "en-US-BrianNeural", "name": "Brian", "description": "⭐ Top Pick · Rich Baritone Audiobook Narrator", "gender": "Male"},
-    {"id": "en-US-AvaNeural", "name": "Ava", "description": "⭐ Top Female · Expressive & Natural Storyteller", "gender": "Female"},
-    {"id": "en-US-AndrewNeural", "name": "Andrew", "description": "Dynamic & Engaging American Storyteller", "gender": "Male"},
-    {"id": "en-US-EmmaNeural", "name": "Emma", "description": "Warm & Articulate Novel Narrator", "gender": "Female"},
-    {"id": "en-US-ChristopherNeural", "name": "Christopher", "description": "Deep Resonant Fantasy & Epic Narrator", "gender": "Male"},
-    {"id": "en-GB-RyanNeural", "name": "Ryan", "description": "Classic British Audiobook Narrator", "gender": "Male"},
-    {"id": "en-GB-SoniaNeural", "name": "Sonia", "description": "Refined & Melodic British Narrator", "gender": "Female"},
-    {"id": "en-AU-WilliamMultilingualNeural", "name": "William", "description": "Smooth & Natural Australian Narrator", "gender": "Male"}
+    {"id": "en-US-BrianNeural", "name": "Brian", "description": "Rich Baritone (Default)", "gender": "Male"},
+    {"id": "en-US-AvaNeural", "name": "Ava", "description": "Expressive & Natural", "gender": "Female"},
+    {"id": "en-US-AndrewNeural", "name": "Andrew", "description": "Dynamic American", "gender": "Male"},
+    {"id": "en-US-EmmaNeural", "name": "Emma", "description": "Warm & Articulate", "gender": "Female"},
+    {"id": "en-US-ChristopherNeural", "name": "Christopher", "description": "Deep Resonant", "gender": "Male"},
+    {"id": "en-GB-RyanNeural", "name": "Ryan", "description": "Classic British", "gender": "Male"},
+    {"id": "en-GB-SoniaNeural", "name": "Sonia", "description": "Refined British", "gender": "Female"},
+    {"id": "en-AU-WilliamMultilingualNeural", "name": "William", "description": "Smooth Australian", "gender": "Male"}
 ]
 
 def normalize_text_for_narration(text: str) -> str:
@@ -470,13 +470,14 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             sync_key = body.get("sync_key", "").strip().upper()
             device_token = body.get("device_token", "").strip() or f"dev_{secrets.token_hex(16)}"
             device_name = body.get("device_name", "Web Browser").strip()
+            requested_user_id = body.get("user_id", "").strip()
             user_agent = self.headers.get("User-Agent", "")
             remember = bool(body.get("remember", True))
 
             if not sync_key:
                 sync_key = f"READER-{secrets.token_hex(5).upper()}"
 
-            user_id = database.get_or_create_user(sync_key)
+            user_id = database.get_or_create_user(sync_key, requested_user_id=requested_user_id)
             database.register_device(user_id, device_token, device_name, user_agent, remember)
 
             # Get user settings

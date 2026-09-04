@@ -1,5 +1,17 @@
 // Realistic Built-In Neural TTS Engine for KuroYomi
 // Uses Blob-based local audio streaming for 100% compatibility across iOS Safari, macOS, Chrome, Edge, and Android
+const TTS_ICONS = {
+  play: '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>',
+  pause: '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>',
+  playLg: '<svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>',
+  pauseLg: '<svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>',
+  prevPara: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M16 6l-10 6 10 6V6z"/></svg>',
+  nextPara: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 6l10 6-10 6V6z"/></svg>',
+  prevCh: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M11 6l-8.5 6 8.5 6V6zm8.5 0L11 12l8.5 6V6z"/></svg>',
+  nextCh: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M4.5 18l8.5-6-8.5-6v12zm8.5 0l8.5-6-8.5-6v12z"/></svg>',
+  stop: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>'
+};
+
 const TTSEngine = {
   audioElement: new Audio(),
   testAudioElement: new Audio(),
@@ -24,14 +36,14 @@ const TTSEngine = {
   
   // Curated list of realistic narrative neural voices
   voices: [
-    { id: 'en-US-BrianNeural', name: 'Brian', desc: '⭐ Top Pick · Rich Baritone Audiobook Narrator' },
-    { id: 'en-US-AvaNeural', name: 'Ava', desc: '⭐ Top Female · Expressive & Natural Storyteller' },
-    { id: 'en-US-AndrewNeural', name: 'Andrew', desc: 'Dynamic & Engaging American Storyteller' },
-    { id: 'en-US-EmmaNeural', name: 'Emma', desc: 'Warm & Articulate Novel Narrator' },
-    { id: 'en-US-ChristopherNeural', name: 'Christopher', desc: 'Deep Resonant Fantasy & Epic Narrator' },
-    { id: 'en-GB-RyanNeural', name: 'Ryan', desc: 'Classic British Audiobook Narrator' },
-    { id: 'en-GB-SoniaNeural', name: 'Sonia', desc: 'Refined & Melodic British Narrator' },
-    { id: 'en-AU-WilliamMultilingualNeural', name: 'William', desc: 'Smooth & Natural Australian Narrator' }
+    { id: 'en-US-BrianNeural', name: 'Brian', desc: 'Rich Baritone (Default)' },
+    { id: 'en-US-AvaNeural', name: 'Ava', desc: 'Expressive & Natural' },
+    { id: 'en-US-AndrewNeural', name: 'Andrew', desc: 'Dynamic American' },
+    { id: 'en-US-EmmaNeural', name: 'Emma', desc: 'Warm & Articulate' },
+    { id: 'en-US-ChristopherNeural', name: 'Christopher', desc: 'Deep Resonant' },
+    { id: 'en-GB-RyanNeural', name: 'Ryan', desc: 'Classic British' },
+    { id: 'en-GB-SoniaNeural', name: 'Sonia', desc: 'Refined British' },
+    { id: 'en-AU-WilliamMultilingualNeural', name: 'William', desc: 'Smooth Australian' }
   ],
 
   init(onChapterEnd) {
@@ -133,6 +145,22 @@ const TTSEngine = {
 
     const modalMinimize = document.getElementById('audiobookMinimizeBtn');
     if (modalMinimize) modalMinimize.addEventListener('click', () => this.closeAudiobookModal());
+
+    // Set vector SVG icons for all skip and stop buttons
+    const setBtnIcon = (id, svg) => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = svg;
+    };
+    setBtnIcon('ttsPrevChapterBtn', TTS_ICONS.prevCh);
+    setBtnIcon('ttsPrevParaBtn', TTS_ICONS.prevPara);
+    setBtnIcon('ttsNextParaBtn', TTS_ICONS.nextPara);
+    setBtnIcon('ttsNextChapterBtn', TTS_ICONS.nextCh);
+    setBtnIcon('ttsStopBtn', TTS_ICONS.stop);
+    setBtnIcon('ttsMobileStopBtn', TTS_ICONS.stop);
+    setBtnIcon('modalPrevChapterBtn', TTS_ICONS.prevCh);
+    setBtnIcon('modalPrevParaBtn', TTS_ICONS.prevPara);
+    setBtnIcon('modalNextParaBtn', TTS_ICONS.nextPara);
+    setBtnIcon('modalNextChapterBtn', TTS_ICONS.nextCh);
 
     // Wire modal speed preset chips
     const speedChips = document.querySelectorAll('.speed-chip');
@@ -519,13 +547,13 @@ const TTSEngine = {
       if (this.sleepMode === 'off') {
         b.style.display = 'none';
       } else if (this.sleepMode === 'chapter_end') {
-        b.style.display = 'inline-block';
-        b.textContent = 'End of Ch';
+        b.style.display = 'inline-flex';
+        b.textContent = '⏳ End of Ch';
       } else {
-        b.style.display = 'inline-block';
+        b.style.display = 'inline-flex';
         const m = Math.floor(this.sleepTimerRemaining / 60);
         const s = this.sleepTimerRemaining % 60;
-        b.textContent = `${m}:${s < 10 ? '0' : ''}${s}`;
+        b.textContent = `⏳ ${m}:${s < 10 ? '0' : ''}${s}`;
       }
     });
   },
@@ -589,7 +617,10 @@ const TTSEngine = {
     if (this.paragraphs && this.paragraphs[this.currentIndex]) {
       const activeText = this.paragraphs[this.currentIndex].innerText.trim();
       if (spokenEl) spokenEl.textContent = activeText || 'Reading novel...';
-      if (badgeEl) badgeEl.textContent = `Paragraph ${this.currentIndex + 1} of ${this.paragraphs.length}`;
+      const pct = this.paragraphs.length > 0
+        ? Math.round(((this.currentIndex + 1) / this.paragraphs.length) * 100)
+        : 0;
+      if (badgeEl) badgeEl.textContent = `${pct}%`;
     }
 
     this.updateCoverDisplays();
@@ -619,23 +650,28 @@ const TTSEngine = {
 
   updateAudioUI() {
     const isPlayingState = this.isPlaying && !this.isPaused;
-    const playIcon = isPlayingState ? '❚❚' : '▶';
+    const playSvg = isPlayingState ? TTS_ICONS.pause : TTS_ICONS.play;
+    const modalPlaySvg = isPlayingState ? TTS_ICONS.pauseLg : TTS_ICONS.playLg;
 
     // PC Badge Play button
     const pcPlay = document.getElementById('ttsPlayPauseBtn');
-    if (pcPlay) pcPlay.textContent = playIcon;
+    if (pcPlay) pcPlay.innerHTML = playSvg;
 
     // Mobile Badge Play button
     const mobPlay = document.getElementById('ttsMobilePlayPauseBtn');
-    if (mobPlay) mobPlay.textContent = playIcon;
+    if (mobPlay) mobPlay.innerHTML = playSvg;
 
     // Full Modal Play button
     const modalPlay = document.getElementById('modalPlayPauseBtn');
-    if (modalPlay) modalPlay.textContent = playIcon;
+    if (modalPlay) modalPlay.innerHTML = modalPlaySvg;
 
     // Side panel toggle button
     const panelPlay = document.getElementById('ttsPlayToggleBtn');
     if (panelPlay) panelPlay.textContent = isPlayingState ? 'Pause Read Aloud' : 'Start Read Aloud';
+
+    // Mobile quick sheet toggle button text
+    const quickTtsText = document.getElementById('quickSheetTTSText');
+    if (quickTtsText) quickTtsText.textContent = isPlayingState ? 'Pause' : 'Read Aloud';
 
     // Rate Label
     const rateLabel = document.getElementById('ttsRateLabel');

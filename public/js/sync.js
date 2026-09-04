@@ -49,11 +49,14 @@ const SyncService = {
       let syncKey = Storage.getSyncKey();
       const deviceName = Storage.getDeviceName();
 
+      const existingUserId = Storage.getUserId();
+
       const regRes = await fetch('/api/auth/register-device', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sync_key: syncKey,
+          user_id: existingUserId,
           device_token: deviceToken,
           device_name: deviceName,
           remember: isRemembered

@@ -4,7 +4,15 @@ import json
 import time
 import uuid
 
-DB_PATH = os.environ.get("READER_DB_PATH", os.path.join(os.path.dirname(__file__), "reader.db"))
+def _resolve_db_path():
+    env_path = os.environ.get("READER_DB_PATH")
+    if env_path:
+        return env_path
+    if os.path.isdir("/data") and os.access("/data", os.W_OK):
+        return "/data/reader.db"
+    return os.path.join(os.path.dirname(__file__), "reader.db")
+
+DB_PATH = _resolve_db_path()
 
 def get_db():
     conn = sqlite3.connect(DB_PATH, timeout=10.0)
@@ -135,7 +143,8 @@ def init_db():
     conn.close()
 
 # Helper Functions
-def get_or_create_user(sync_key: str, display_name: str = None):
+def get_or_create_user(sync_key: str, display_name: str = None, requested_user_id: str = None):
+    import hashlib
     conn = get_db()
     cur = conn.cursor()
     cur.execute("SELECT * FROM users WHERE sync_key = ?", (sync_key,))
@@ -146,7 +155,11 @@ def get_or_create_user(sync_key: str, display_name: str = None):
         conn.commit()
         user_id = row["id"]
     else:
-        user_id = f"usr_{uuid.uuid4().hex[:12]}"
+        if requested_user_id and requested_user_id.startswith("usr_"):
+            user_id = requested_user_id
+        else:
+            det_hash = hashlib.sha256(sync_key.strip().upper().encode("utf-8")).hexdigest()[:12]
+            user_id = f"usr_{det_hash}"
         cur.execute(
             "INSERT INTO users (id, sync_key, display_name, created_at, last_active) VALUES (?, ?, ?, ?, ?)",
             (user_id, sync_key, display_name or f"Reader_{sync_key[:6]}", now, now)
