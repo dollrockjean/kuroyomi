@@ -7,6 +7,7 @@ const TTSEngine = {
   
   isPlaying: false,
   isPaused: false,
+  justDragged: false,
   
   selectedVoice: 'en-US-BrianNeural',
   rate: 1.0,
@@ -63,32 +64,116 @@ const TTSEngine = {
     this.audioElement.addEventListener('error', (e) => {
       console.warn('Audio playback error:', e);
       if (this.isPlaying && !this.isPaused) {
-        // Retry next paragraph after brief pause
         setTimeout(() => this.speakParagraph(this.currentIndex + 1), 600);
       }
     });
+
+    // Wire PC Mini Badge controls
+    const pcPlayPause = document.getElementById('ttsPlayPauseBtn');
+    if (pcPlayPause) pcPlayPause.addEventListener('click', () => this.toggle());
+
+    const pcPrevPara = document.getElementById('ttsPrevParaBtn');
+    if (pcPrevPara) pcPrevPara.addEventListener('click', () => this.prevParagraph());
+
+    const pcNextPara = document.getElementById('ttsNextParaBtn');
+    if (pcNextPara) pcNextPara.addEventListener('click', () => this.nextParagraph());
+
+    const pcPrevCh = document.getElementById('ttsPrevChapterBtn');
+    if (pcPrevCh) pcPrevCh.addEventListener('click', () => this.prevChapter());
+
+    const pcNextCh = document.getElementById('ttsNextChapterBtn');
+    if (pcNextCh) pcNextCh.addEventListener('click', () => this.nextChapter());
+
+    const pcStop = document.getElementById('ttsStopBtn');
+    if (pcStop) pcStop.addEventListener('click', () => this.stop());
+
+    const pcCover = document.getElementById('ttsPcCoverBtn');
+    if (pcCover) pcCover.addEventListener('click', () => this.openAudiobookModal());
+
+    // Wire Mobile Mini Badge controls
+    const mobPlayPause = document.getElementById('ttsMobilePlayPauseBtn');
+    if (mobPlayPause) {
+      mobPlayPause.addEventListener('click', () => {
+        if (!this.justDragged) this.toggle();
+      });
+    }
+
+    const mobStop = document.getElementById('ttsMobileStopBtn');
+    if (mobStop) {
+      mobStop.addEventListener('click', () => {
+        if (!this.justDragged) this.stop();
+      });
+    }
+
+    const mobCover = document.getElementById('ttsMobileCoverBtn');
+    if (mobCover) {
+      mobCover.addEventListener('click', () => {
+        if (!this.justDragged) this.openAudiobookModal();
+      });
+    }
+
+    // Wire Full-Screen Audiobook Modal controls
+    const modalPlayPause = document.getElementById('modalPlayPauseBtn');
+    if (modalPlayPause) modalPlayPause.addEventListener('click', () => this.toggle());
+
+    const modalPrevPara = document.getElementById('modalPrevParaBtn');
+    if (modalPrevPara) modalPrevPara.addEventListener('click', () => this.prevParagraph());
+
+    const modalNextPara = document.getElementById('modalNextParaBtn');
+    if (modalNextPara) modalNextPara.addEventListener('click', () => this.nextParagraph());
+
+    const modalPrevCh = document.getElementById('modalPrevChapterBtn');
+    if (modalPrevCh) modalPrevCh.addEventListener('click', () => this.prevChapter());
+
+    const modalNextCh = document.getElementById('modalNextChapterBtn');
+    if (modalNextCh) modalNextCh.addEventListener('click', () => this.nextChapter());
+
+    const modalStop = document.getElementById('audiobookModalStopBtn');
+    if (modalStop) modalStop.addEventListener('click', () => this.stop());
+
+    const modalMinimize = document.getElementById('audiobookMinimizeBtn');
+    if (modalMinimize) modalMinimize.addEventListener('click', () => this.closeAudiobookModal());
+
+    // Wire modal speed preset chips
+    const speedChips = document.querySelectorAll('.speed-chip');
+    speedChips.forEach(chip => {
+      chip.addEventListener('click', () => {
+        const s = parseFloat(chip.getAttribute('data-speed'));
+        if (!isNaN(s)) this.setRate(s);
+      });
+    });
+
+    // Initialize draggable mobile corner badge
+    this.initDraggableBadge();
+
+    // Listen for window resize
+    window.addEventListener('resize', () => this.applySavedCornerPosition());
   },
 
   populateVoiceSelect() {
-    const select = document.getElementById('ttsVoiceSelect');
-    if (!select) return;
+    const s1 = document.getElementById('ttsVoiceSelect');
+    const s2 = document.getElementById('audiobookModalVoiceSelect');
+    const selects = [s1, s2].filter(Boolean);
+    if (!selects.length) return;
 
-    select.innerHTML = '';
     const saved = window.ReaderSettings?.tts_voice || this.selectedVoice;
     this.selectedVoice = saved;
 
-    this.voices.forEach(v => {
-      const opt = document.createElement('option');
-      opt.value = v.id;
-      opt.textContent = `${v.name} (${v.desc})`;
-      if (v.id === this.selectedVoice) {
-        opt.selected = true;
-      }
-      select.appendChild(opt);
-    });
+    selects.forEach(sel => {
+      sel.innerHTML = '';
+      this.voices.forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v.id;
+        opt.textContent = `${v.name} (${v.desc})`;
+        if (v.id === this.selectedVoice) {
+          opt.selected = true;
+        }
+        sel.appendChild(opt);
+      });
 
-    select.addEventListener('change', (e) => {
-      this.setVoice(e.target.value);
+      sel.onchange = (e) => {
+        this.setVoice(e.target.value);
+      };
     });
   },
 
@@ -97,8 +182,15 @@ const TTSEngine = {
     this.blobCache.clear(); // Clear cache when voice changes
     if (window.ReaderSettings) {
       window.ReaderSettings.tts_voice = voiceId;
-      SyncService.syncSettings(window.ReaderSettings);
+      if (window.SyncService) {
+        window.SyncService.syncSettings(window.ReaderSettings);
+      }
     }
+    const s1 = document.getElementById('ttsVoiceSelect');
+    if (s1 && s1.value !== voiceId) s1.value = voiceId;
+    const s2 = document.getElementById('audiobookModalVoiceSelect');
+    if (s2 && s2.value !== voiceId) s2.value = voiceId;
+
     if (this.isPlaying && !this.isPaused) {
       this.speakParagraph(this.currentIndex);
     }
@@ -157,7 +249,16 @@ const TTSEngine = {
     this.blobCache.clear();
     if (window.ReaderSettings) {
       window.ReaderSettings.tts_rate = this.rate;
+      if (window.SyncService) {
+        window.SyncService.syncSettings(window.ReaderSettings);
+      }
     }
+    const slider = document.getElementById('ttsRateSlider');
+    if (slider) slider.value = this.rate;
+    const rateVal = document.getElementById('ttsRateVal');
+    if (rateVal) rateVal.textContent = `${this.rate}x`;
+
+    this.updateAudioUI();
     if (this.isPlaying && !this.isPaused) {
       this.speakParagraph(this.currentIndex);
     }
@@ -184,7 +285,18 @@ const TTSEngine = {
     this.currentIndex = Math.max(0, Math.min(fromIndex, this.paragraphs.length - 1));
     this.isPlaying = true;
     this.isPaused = false;
-    this.showPill();
+    this.showBadge();
+
+    // Auto-open full-screen audiobook mode when read aloud is started on phone
+    const isMobile = window.innerWidth <= 768 || ('ontouchstart' in window && window.innerWidth <= 1024);
+    if (isMobile) {
+      if (window.App && typeof window.App.closeMasterPanel === 'function') {
+        window.App.closeMasterPanel();
+      }
+      this.openAudiobookModal();
+    }
+
+    this.updateAudioUI();
     this.speakParagraph(this.currentIndex);
   },
 
@@ -192,7 +304,7 @@ const TTSEngine = {
     if (this.isPlaying) {
       this.isPaused = true;
       this.audioElement.pause();
-      this.updatePillUI();
+      this.updateAudioUI();
     }
   },
 
@@ -200,7 +312,7 @@ const TTSEngine = {
     if (this.isPlaying && this.isPaused) {
       this.isPaused = false;
       this.audioElement.play().catch(() => this.speakParagraph(this.currentIndex));
-      this.updatePillUI();
+      this.updateAudioUI();
     } else {
       this.start(this.currentIndex);
     }
@@ -222,7 +334,9 @@ const TTSEngine = {
     this.audioElement.pause();
     this.audioElement.src = '';
     this.clearHighlight();
-    this.hidePill();
+    this.hideBadge();
+    this.closeAudiobookModal();
+    this.updateAudioUI();
   },
 
   clearHighlight() {
@@ -259,8 +373,12 @@ const TTSEngine = {
     this.clearHighlight();
     el.classList.add('speaking-active');
 
-    // Keep reading view smoothly focused on the active spoken text
+    // Keep reading view smoothly focused on active spoken text
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+    // Update audiobook modal content and audio UI
+    this.updateAudiobookModalContent();
+    this.updateAudioUI();
 
     // Silently save progress at current spot
     if (window.Reader) {
@@ -279,7 +397,7 @@ const TTSEngine = {
 
       this.audioElement.src = blobUrl;
       await this.audioElement.play();
-      this.updatePillUI();
+      this.updateAudioUI();
 
       // Pre-fetch next paragraph into memory for seamless instant playback
       this.prefetchNext(index + 1);
@@ -316,6 +434,36 @@ const TTSEngine = {
   prevParagraph() {
     if (this.currentIndex > 0) {
       this.speakParagraph(this.currentIndex - 1);
+    }
+  },
+
+  async nextChapter() {
+    if (window.Reader && window.Reader.currentChapter && window.Reader.currentChapter.next_chapter) {
+      const wasModalOpen = document.getElementById('audiobookFullModal')?.style.display === 'flex';
+      const nextId = window.Reader.currentChapter.next_chapter.id;
+      this.audioElement.pause();
+      this.clearHighlight();
+      await window.Reader.loadChapter(nextId, false);
+      this.refreshParagraphs();
+      this.start(0);
+      if (wasModalOpen) {
+        this.openAudiobookModal();
+      }
+    }
+  },
+
+  async prevChapter() {
+    if (window.Reader && window.Reader.currentChapter && window.Reader.currentChapter.prev_chapter) {
+      const wasModalOpen = document.getElementById('audiobookFullModal')?.style.display === 'flex';
+      const prevId = window.Reader.currentChapter.prev_chapter.id;
+      this.audioElement.pause();
+      this.clearHighlight();
+      await window.Reader.loadChapter(prevId, false);
+      this.refreshParagraphs();
+      this.start(0);
+      if (wasModalOpen) {
+        this.openAudiobookModal();
+      }
     }
   },
 
@@ -366,7 +514,7 @@ const TTSEngine = {
   },
 
   updateSleepBadge(customText) {
-    const badges = document.querySelectorAll('.sleep-timer-badge');
+    const badges = document.querySelectorAll('.sleep-timer-badge, #audiobookModalSleepBadge');
     badges.forEach(b => {
       if (this.sleepMode === 'off') {
         b.style.display = 'none';
@@ -382,26 +530,241 @@ const TTSEngine = {
     });
   },
 
-  showPill() {
-    const pill = document.getElementById('ttsPill');
-    if (pill) {
-      pill.style.display = 'flex';
-      this.updatePillUI();
+  showBadge() {
+    const badge = document.getElementById('ttsMiniBadge');
+    if (badge) {
+      badge.style.display = 'flex';
+      this.applySavedCornerPosition();
+      this.updateCoverDisplays();
+      this.updateAudioUI();
     }
+  },
+
+  hideBadge() {
+    const badge = document.getElementById('ttsMiniBadge');
+    if (badge) badge.style.display = 'none';
+  },
+
+  showPill() {
+    this.showBadge();
   },
 
   hidePill() {
-    const pill = document.getElementById('ttsPill');
-    if (pill) pill.style.display = 'none';
+    this.hideBadge();
   },
 
   updatePillUI() {
-    const pauseBtn = document.getElementById('ttsPauseBtn');
-    const rateLabel = document.getElementById('ttsRateLabel');
-    if (pauseBtn) {
-      pauseBtn.textContent = this.isPaused ? 'Resume' : 'Pause';
+    this.updateAudioUI();
+  },
+
+  openAudiobookModal() {
+    const modal = document.getElementById('audiobookFullModal');
+    if (modal) {
+      modal.style.display = 'flex';
+      this.updateAudiobookModalContent();
+      this.updateAudioUI();
     }
+  },
+
+  closeAudiobookModal() {
+    const modal = document.getElementById('audiobookFullModal');
+    if (modal) {
+      modal.style.display = 'none';
+    }
+  },
+
+  updateAudiobookModalContent() {
+    const titleEl = document.getElementById('audiobookHeaderTitle');
+    const chEl = document.getElementById('audiobookHeaderChapter');
+    const spokenEl = document.getElementById('audiobookSpokenText');
+    const badgeEl = document.getElementById('audiobookParaBadge');
+
+    if (window.Reader && window.Reader.currentNovel) {
+      if (titleEl) titleEl.textContent = window.Reader.currentNovel.title || 'KuroYomi Audiobook';
+    }
+    if (window.Reader && window.Reader.currentChapter) {
+      if (chEl) chEl.textContent = window.Reader.currentChapter.title || 'Chapter';
+    }
+
+    if (this.paragraphs && this.paragraphs[this.currentIndex]) {
+      const activeText = this.paragraphs[this.currentIndex].innerText.trim();
+      if (spokenEl) spokenEl.textContent = activeText || 'Reading novel...';
+      if (badgeEl) badgeEl.textContent = `Paragraph ${this.currentIndex + 1} of ${this.paragraphs.length}`;
+    }
+
+    this.updateCoverDisplays();
+  },
+
+  updateCoverDisplays() {
+    const coverUrl = window.Reader?.currentNovel?.cover_data;
+    const updateImgAndPlaceholder = (imgId, placeholderId) => {
+      const img = document.getElementById(imgId);
+      const placeholder = document.getElementById(placeholderId);
+      if (img && placeholder) {
+        if (coverUrl && coverUrl.trim().length > 10) {
+          img.src = coverUrl;
+          img.style.display = 'block';
+          placeholder.style.display = 'none';
+        } else {
+          img.style.display = 'none';
+          placeholder.style.display = 'block';
+        }
+      }
+    };
+
+    updateImgAndPlaceholder('ttsPcCoverImg', 'ttsPcCoverPlaceholder');
+    updateImgAndPlaceholder('ttsMobileCoverImg', 'ttsMobileCoverPlaceholder');
+    updateImgAndPlaceholder('audiobookModalCover', 'audiobookModalPlaceholder');
+  },
+
+  updateAudioUI() {
+    const isPlayingState = this.isPlaying && !this.isPaused;
+    const playIcon = isPlayingState ? '❚❚' : '▶';
+
+    // PC Badge Play button
+    const pcPlay = document.getElementById('ttsPlayPauseBtn');
+    if (pcPlay) pcPlay.textContent = playIcon;
+
+    // Mobile Badge Play button
+    const mobPlay = document.getElementById('ttsMobilePlayPauseBtn');
+    if (mobPlay) mobPlay.textContent = playIcon;
+
+    // Full Modal Play button
+    const modalPlay = document.getElementById('modalPlayPauseBtn');
+    if (modalPlay) modalPlay.textContent = playIcon;
+
+    // Side panel toggle button
+    const panelPlay = document.getElementById('ttsPlayToggleBtn');
+    if (panelPlay) panelPlay.textContent = isPlayingState ? 'Pause Read Aloud' : 'Start Read Aloud';
+
+    // Rate Label
+    const rateLabel = document.getElementById('ttsRateLabel');
     if (rateLabel) rateLabel.textContent = `${this.rate}x`;
+
+    // Speed chips in modal
+    document.querySelectorAll('.speed-chip').forEach(chip => {
+      const chipSpeed = parseFloat(chip.getAttribute('data-speed'));
+      chip.classList.toggle('selected', Math.abs(chipSpeed - this.rate) < 0.05);
+    });
+
+    // Voice selects
+    const modalVoiceSelect = document.getElementById('audiobookModalVoiceSelect');
+    if (modalVoiceSelect && modalVoiceSelect.value !== this.selectedVoice) {
+      modalVoiceSelect.value = this.selectedVoice;
+    }
+    const sideVoiceSelect = document.getElementById('ttsVoiceSelect');
+    if (sideVoiceSelect && sideVoiceSelect.value !== this.selectedVoice) {
+      sideVoiceSelect.value = this.selectedVoice;
+    }
+
     this.updateSleepBadge();
+  },
+
+  applySavedCornerPosition() {
+    const badge = document.getElementById('ttsMiniBadge');
+    if (!badge) return;
+
+    if (window.innerWidth > 768) {
+      badge.style.top = '';
+      badge.style.left = '';
+      badge.style.bottom = '';
+      badge.style.right = '';
+      return;
+    }
+
+    const corner = localStorage.getItem('kuroyomi_tts_badge_corner') || 'bottom-right';
+    badge.style.transition = 'none';
+
+    if (corner === 'top-left') {
+      badge.style.top = 'calc(65px + var(--safe-top))';
+      badge.style.left = '14px';
+      badge.style.bottom = 'auto';
+      badge.style.right = 'auto';
+    } else if (corner === 'top-right') {
+      badge.style.top = 'calc(65px + var(--safe-top))';
+      badge.style.right = '14px';
+      badge.style.bottom = 'auto';
+      badge.style.left = 'auto';
+    } else if (corner === 'bottom-left') {
+      badge.style.bottom = 'calc(75px + var(--safe-bottom))';
+      badge.style.left = '14px';
+      badge.style.top = 'auto';
+      badge.style.right = 'auto';
+    } else {
+      badge.style.bottom = 'calc(75px + var(--safe-bottom))';
+      badge.style.right = '14px';
+      badge.style.top = 'auto';
+      badge.style.left = 'auto';
+    }
+  },
+
+  initDraggableBadge() {
+    const badge = document.getElementById('ttsMiniBadge');
+    if (!badge) return;
+
+    let isDragging = false;
+    let startX = 0, startY = 0;
+    let initialLeft = 0, initialTop = 0;
+    let hasMoved = false;
+
+    badge.addEventListener('touchstart', (e) => {
+      if (window.innerWidth > 768) return;
+      const touch = e.touches[0];
+      isDragging = true;
+      hasMoved = false;
+      this.justDragged = false;
+      startX = touch.clientX;
+      startY = touch.clientY;
+
+      const rect = badge.getBoundingClientRect();
+      initialLeft = rect.left;
+      initialTop = rect.top;
+      badge.style.transition = 'none';
+    }, { passive: true });
+
+    window.addEventListener('touchmove', (e) => {
+      if (!isDragging) return;
+      const touch = e.touches[0];
+      const dx = touch.clientX - startX;
+      const dy = touch.clientY - startY;
+
+      if (Math.hypot(dx, dy) > 6) {
+        hasMoved = true;
+      }
+
+      badge.style.left = `${initialLeft + dx}px`;
+      badge.style.top = `${initialTop + dy}px`;
+      badge.style.bottom = 'auto';
+      badge.style.right = 'auto';
+    }, { passive: true });
+
+    window.addEventListener('touchend', () => {
+      if (!isDragging) return;
+      isDragging = false;
+      badge.style.transition = 'all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1)';
+
+      if (!hasMoved) return;
+
+      this.justDragged = true;
+      setTimeout(() => { this.justDragged = false; }, 280);
+
+      // Snap to closest corner
+      const rect = badge.getBoundingClientRect();
+      const midX = rect.left + rect.width / 2;
+      const midY = rect.top + rect.height / 2;
+      const winW = window.innerWidth;
+      const winH = window.innerHeight;
+
+      const isLeft = midX < winW / 2;
+      const isTop = midY < winH / 2;
+
+      badge.style.left = isLeft ? '14px' : 'auto';
+      badge.style.right = isLeft ? 'auto' : '14px';
+      badge.style.top = isTop ? 'calc(65px + var(--safe-top))' : 'auto';
+      badge.style.bottom = isTop ? 'auto' : 'calc(75px + var(--safe-bottom))';
+
+      const corner = (isTop ? 'top' : 'bottom') + '-' + (isLeft ? 'left' : 'right');
+      localStorage.setItem('kuroyomi_tts_badge_corner', corner);
+    });
   }
 };

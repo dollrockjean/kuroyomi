@@ -228,6 +228,9 @@ const Reader = {
       App.hideLoading();
 
       TTSEngine.refreshParagraphs();
+      if (typeof TTSEngine.updateAudiobookModalContent === 'function') {
+        TTSEngine.updateAudiobookModalContent();
+      }
 
       // Silent scroll position restoration
       if (scrollToTarget && this.targetParagraphIndex > 0) {

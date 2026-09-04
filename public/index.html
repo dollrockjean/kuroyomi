@@ -123,18 +123,116 @@
         <button class="btn-brutal" id="autoscrollCloseBtn" style="min-height: 28px; padding: 4px 8px; font-size: 11px; color: #ef4444;">Close</button>
       </div>
 
-      <!-- Floating Active TTS Read Aloud Pill -->
-      <div class="tts-pill" id="ttsPill">
-        <button class="btn-brutal" id="ttsPauseBtn" style="min-height: 28px; padding: 4px 8px; font-size: 11px;">Pause</button>
-        <button class="btn-brutal" id="ttsPrevBtn" style="min-height: 28px; padding: 4px 6px; font-size: 11px;">Prev</button>
-        <button class="btn-brutal" id="ttsNextBtn" style="min-height: 28px; padding: 4px 6px; font-size: 11px;">Next</button>
-        <span id="ttsRateLabel">1.0x</span>
-        <span class="badge-brutal sleep-timer-badge" style="display: none;">15:00</span>
-        <button class="btn-brutal" id="ttsCloseBtn" style="min-height: 28px; padding: 4px 8px; font-size: 11px; color: #ef4444;">Close</button>
+      <!-- Floating Active Audio Controls (Mini Badge on PC, Draggable Corner Badge on Mobile) -->
+      <div class="tts-mini-badge" id="ttsMiniBadge">
+        <!-- PC Badge Elements -->
+        <div class="tts-pc-only">
+          <div class="tts-mini-cover-wrap tts-pc-cover" id="ttsPcCoverBtn" title="Open Full-Screen Audiobook Mode">
+            <img id="ttsPcCoverImg" class="tts-mini-cover-img" src="" alt="Cover" style="display: none;" />
+            <span id="ttsPcCoverPlaceholder" class="tts-mini-cover-placeholder">📖</span>
+            <div class="tts-mini-cog" title="Audiobook Settings">⚙</div>
+          </div>
+          <button class="btn-brutal tts-skip-btn" id="ttsPrevChapterBtn" title="Previous Chapter (Two Triangles)">⏮</button>
+          <button class="btn-brutal tts-skip-btn" id="ttsPrevParaBtn" title="Previous Paragraph (One Triangle)">◀</button>
+          <button class="btn-brutal btn-brutal-accent tts-play-btn" id="ttsPlayPauseBtn" title="Play / Pause">❚❚</button>
+          <button class="btn-brutal tts-skip-btn" id="ttsNextParaBtn" title="Next Paragraph (One Triangle)">▶</button>
+          <button class="btn-brutal tts-skip-btn" id="ttsNextChapterBtn" title="Next Chapter (Two Triangles)">⏭</button>
+          <span id="ttsRateLabel" class="tts-rate-label" title="Current Speed">1.0x</span>
+          <span class="badge-brutal sleep-timer-badge" id="ttsSleepBadge" style="display: none;">15:00</span>
+          <button class="btn-brutal tts-stop-btn" id="ttsStopBtn" title="Stop Read Aloud" style="color: #ef4444; padding: 4px 8px;">✕</button>
+        </div>
+
+        <!-- Mobile Badge Elements (Draggable to Corners: Play/Pause + Stop + Mini Book Cover with Cog) -->
+        <div class="tts-mobile-only">
+          <button class="btn-brutal btn-brutal-accent tts-mobile-btn" id="ttsMobilePlayPauseBtn" title="Play / Pause">❚❚</button>
+          <button class="btn-brutal tts-mobile-btn" id="ttsMobileStopBtn" title="Stop" style="color: #ef4444;">✕</button>
+          <div class="tts-mini-cover-wrap" id="ttsMobileCoverBtn" title="Tap to Open Full-Screen Audiobook Player">
+            <img id="ttsMobileCoverImg" class="tts-mini-cover-img" src="" alt="Cover" style="display: none;" />
+            <span id="ttsMobileCoverPlaceholder" class="tts-mini-cover-placeholder">📖</span>
+            <div class="tts-mini-cog">⚙</div>
+          </div>
+        </div>
       </div>
 
     </div>
   </main>
+
+  <!-- Full-Screen Mobile Audiobook Mode -->
+  <div class="audiobook-full-modal" id="audiobookFullModal">
+    <div class="audiobook-full-header">
+      <button class="btn-brutal audiobook-minimize-btn" id="audiobookMinimizeBtn" title="Minimize to Corner Badge">
+        <span>▼</span> Minimize
+      </button>
+      <div class="audiobook-header-info">
+        <div class="audiobook-header-title" id="audiobookHeaderTitle">KuroYomi Audio</div>
+        <div class="audiobook-header-chapter" id="audiobookHeaderChapter">Chapter</div>
+      </div>
+      <button class="btn-brutal audiobook-stop-btn" id="audiobookModalStopBtn" style="color: #ef4444;">
+        Stop
+      </button>
+    </div>
+
+    <div class="audiobook-full-body">
+      <!-- Smaller Book Icon Above -->
+      <div class="audiobook-book-icon-wrap" id="audiobookCoverWrap">
+        <img id="audiobookModalCover" class="audiobook-modal-cover" src="" alt="Cover" style="display: none;" />
+        <div class="audiobook-modal-cover-placeholder" id="audiobookModalPlaceholder">📖</div>
+      </div>
+
+      <!-- Active Paragraph Front and Center -->
+      <div class="audiobook-spoken-card">
+        <div class="audiobook-para-meta">
+          <span class="badge-brutal accent" id="audiobookParaBadge">Paragraph 1</span>
+          <span id="audiobookModalSleepBadge" class="badge-brutal" style="display: none;">15:00</span>
+        </div>
+        <div class="audiobook-spoken-text" id="audiobookSpokenText">
+          Reading paragraph...
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom Controls Area -->
+    <div class="audiobook-full-footer">
+      <!-- Skips & Play/Pause (1-triangle and 2-triangle buttons) -->
+      <div class="audiobook-transport-row">
+        <button class="audiobook-skip-btn" id="modalPrevChapterBtn" title="Previous Chapter (Two Triangles)">
+          ⏮
+        </button>
+        <button class="audiobook-skip-btn" id="modalPrevParaBtn" title="Previous Paragraph (One Triangle)">
+          ◀
+        </button>
+        <button class="audiobook-main-play-btn" id="modalPlayPauseBtn" title="Play / Pause">
+          ❚❚
+        </button>
+        <button class="audiobook-skip-btn" id="modalNextParaBtn" title="Next Paragraph (One Triangle)">
+          ▶
+        </button>
+        <button class="audiobook-skip-btn" id="modalNextChapterBtn" title="Next Chapter (Two Triangles)">
+          ⏭
+        </button>
+      </div>
+
+      <!-- Compact Speed Presets & Voice Settings -->
+      <div class="audiobook-settings-compact">
+        <div class="audiobook-compact-row">
+          <span class="audiobook-compact-label">Speed:</span>
+          <div class="audiobook-speed-chips" id="audiobookSpeedChips">
+            <button class="speed-chip" data-speed="0.8">0.8x</button>
+            <button class="speed-chip selected" data-speed="1.0">1.0x</button>
+            <button class="speed-chip" data-speed="1.2">1.2x</button>
+            <button class="speed-chip" data-speed="1.4">1.4x</button>
+            <button class="speed-chip" data-speed="1.6">1.6x</button>
+            <button class="speed-chip" data-speed="1.8">1.8x</button>
+          </div>
+        </div>
+
+        <div class="audiobook-compact-row">
+          <span class="audiobook-compact-label">Voice:</span>
+          <select id="audiobookModalVoiceSelect" class="form-select audiobook-compact-select"></select>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- Drawer Backdrop -->
   <div class="drawer-backdrop" id="drawerBackdrop"></div>

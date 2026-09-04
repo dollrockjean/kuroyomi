@@ -133,14 +133,20 @@ const App = {
     document.getElementById('autoscrollSpeedUp').addEventListener('click', () => AutoScroll.changeSpeed(5));
     document.getElementById('autoscrollCloseBtn').addEventListener('click', () => AutoScroll.stop());
 
-    // TTS Pill Controls
-    document.getElementById('ttsPauseBtn').addEventListener('click', () => {
-      if (TTSEngine.isPaused) TTSEngine.resume();
-      else TTSEngine.pause();
-    });
-    document.getElementById('ttsCloseBtn').addEventListener('click', () => TTSEngine.stop());
-    document.getElementById('ttsPrevBtn').addEventListener('click', () => TTSEngine.prevParagraph());
-    document.getElementById('ttsNextBtn').addEventListener('click', () => TTSEngine.nextParagraph());
+    // TTS Pill Controls (Legacy fallback)
+    const ttsPause = document.getElementById('ttsPauseBtn');
+    if (ttsPause) {
+      ttsPause.addEventListener('click', () => {
+        if (TTSEngine.isPaused) TTSEngine.resume();
+        else TTSEngine.pause();
+      });
+    }
+    const ttsClose = document.getElementById('ttsCloseBtn');
+    if (ttsClose) ttsClose.addEventListener('click', () => TTSEngine.stop());
+    const ttsPrev = document.getElementById('ttsPrevBtn');
+    if (ttsPrev) ttsPrev.addEventListener('click', () => TTSEngine.prevParagraph());
+    const ttsNext = document.getElementById('ttsNextBtn');
+    if (ttsNext) ttsNext.addEventListener('click', () => TTSEngine.nextParagraph());
 
     // Upload Modal Trigger
     document.getElementById('uploadNovelBtn').addEventListener('click', () => this.openUploadModal());
@@ -492,6 +498,13 @@ const App = {
       if (voiceSelect && voiceSelect.value !== cur.tts_voice) {
         voiceSelect.value = cur.tts_voice;
       }
+      const modalVoice = document.getElementById('audiobookModalVoiceSelect');
+      if (modalVoice && modalVoice.value !== cur.tts_voice) {
+        modalVoice.value = cur.tts_voice;
+      }
+    }
+    if (typeof TTSEngine.updateAudioUI === 'function') {
+      TTSEngine.updateAudioUI();
     }
 
     // 7. Auto-Scroll Speed
