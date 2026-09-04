@@ -32,17 +32,38 @@ TTS_CACHE_DIR = os.path.join(tempfile.gettempdir(), "kuroyomi_tts_cache")
 os.makedirs(TTS_CACHE_DIR, exist_ok=True)
 
 BUILTIN_NEURAL_VOICES = [
-    {"id": "en-US-JennyNeural", "name": "Jenny", "description": "US Female · Expressive & Natural", "gender": "Female"},
-    {"id": "en-US-GuyNeural", "name": "Guy", "description": "US Male · Warm & Narrative", "gender": "Male"},
-    {"id": "en-US-AriaNeural", "name": "Aria", "description": "US Female · Smooth & Clear", "gender": "Female"},
-    {"id": "en-US-ChristopherNeural", "name": "Christopher", "description": "US Male · Deep Storyteller", "gender": "Male"},
-    {"id": "en-GB-SoniaNeural", "name": "Sonia", "description": "UK Female · Refined & Melodic", "gender": "Female"},
-    {"id": "en-GB-RyanNeural", "name": "Ryan", "description": "UK Male · Classic Narrator", "gender": "Male"},
-    {"id": "en-AU-NatashaNeural", "name": "Natasha", "description": "AU Female · Calm & Relaxed", "gender": "Female"}
+    {"id": "en-US-BrianNeural", "name": "Brian", "description": "⭐ Top Pick · Rich Baritone Audiobook Narrator", "gender": "Male"},
+    {"id": "en-US-AvaNeural", "name": "Ava", "description": "⭐ Top Female · Expressive & Natural Storyteller", "gender": "Female"},
+    {"id": "en-US-AndrewNeural", "name": "Andrew", "description": "Dynamic & Engaging American Storyteller", "gender": "Male"},
+    {"id": "en-US-EmmaNeural", "name": "Emma", "description": "Warm & Articulate Novel Narrator", "gender": "Female"},
+    {"id": "en-US-ChristopherNeural", "name": "Christopher", "description": "Deep Resonant Fantasy & Epic Narrator", "gender": "Male"},
+    {"id": "en-GB-RyanNeural", "name": "Ryan", "description": "Classic British Audiobook Narrator", "gender": "Male"},
+    {"id": "en-GB-SoniaNeural", "name": "Sonia", "description": "Refined & Melodic British Narrator", "gender": "Female"},
+    {"id": "en-AU-WilliamMultilingualNeural", "name": "William", "description": "Smooth & Natural Australian Narrator", "gender": "Male"}
 ]
 
-def synthesize_speech(text, voice="en-US-JennyNeural", rate="+0%"):
-    cache_key = hashlib.sha256(f"{voice}_{rate}_{text}".encode('utf-8')).hexdigest()
+def normalize_text_for_narration(text: str) -> str:
+    """Preprocesses web novel prose to ensure natural human cadence and eliminate robotic monotone."""
+    if not text:
+        return ""
+    # Strip any leaked HTML tags
+    clean = re.sub(r"<[^>]+>", "", text)
+    # Convert status/system brackets like [Level Up] or 【Warning】 into natural spoken clauses
+    clean = re.sub(r"[\[【《](.*?)[\]】》]", r" \1 ", clean)
+    # Normalize long ellipses (.... or ……) into a natural breath pause
+    clean = re.sub(r"\.{3,}|…+", ", ... ", clean)
+    # Convert em-dashes into spaced em-dashes for natural dialogue beats
+    clean = re.sub(r"[\u2013\u2014]+|--+", " — ", clean)
+    # Collapse multiple whitespace
+    clean = re.sub(r"\s+", " ", clean).strip()
+    return clean
+
+def synthesize_speech(text, voice="en-US-BrianNeural", rate="+0%"):
+    clean_text = normalize_text_for_narration(text)
+    if not clean_text:
+        return None
+
+    cache_key = hashlib.sha256(f"{voice}_{rate}_{clean_text}".encode('utf-8')).hexdigest()
     cache_file = os.path.join(TTS_CACHE_DIR, f"{cache_key}.mp3")
     if os.path.exists(cache_file) and os.path.getsize(cache_file) > 0:
         with open(cache_file, "rb") as f:
@@ -51,7 +72,7 @@ def synthesize_speech(text, voice="en-US-JennyNeural", rate="+0%"):
     try:
         import edge_tts
         async def _run():
-            comm = edge_tts.Communicate(text, voice, rate=rate)
+            comm = edge_tts.Communicate(clean_text, voice, rate=rate)
             buf = io.BytesIO()
             async for chunk in comm.stream():
                 if chunk['type'] == 'audio':

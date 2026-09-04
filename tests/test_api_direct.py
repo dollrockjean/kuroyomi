@@ -299,10 +299,10 @@ class ApiDirectTests(unittest.TestCase):
         voices_data = json.loads(h_voices.wfile.getvalue().decode('utf-8'))
         self.assertIn("voices", voices_data)
         self.assertTrue(len(voices_data["voices"]) >= 5)
-        self.assertEqual(voices_data["voices"][0]["id"], "en-US-JennyNeural")
+        self.assertEqual(voices_data["voices"][0]["id"], "en-US-BrianNeural")
 
         # 2. Test Realistic Speech Synthesis Endpoint
-        h_speak = create_mock_handler("/api/tts/speak?text=Hello+world&voice=en-US-JennyNeural", "GET")
+        h_speak = create_mock_handler("/api/tts/speak?text=Hello+world&voice=en-US-BrianNeural", "GET")
         h_speak.do_GET()
         raw_val = h_speak.wfile.getvalue()
         # Should return HTTP 200 and audio/mpeg

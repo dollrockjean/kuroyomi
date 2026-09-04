@@ -8,7 +8,7 @@ const TTSEngine = {
   isPlaying: false,
   isPaused: false,
   
-  selectedVoice: 'en-US-JennyNeural',
+  selectedVoice: 'en-US-BrianNeural',
   rate: 1.0,
   
   paragraphs: [],
@@ -21,15 +21,16 @@ const TTSEngine = {
   sleepTimerInterval: null,
   sleepMode: 'off',
   
-  // Curated list of realistic neural voices
+  // Curated list of realistic narrative neural voices
   voices: [
-    { id: 'en-US-JennyNeural', name: 'Jenny', desc: 'US Female · Natural & Expressive' },
-    { id: 'en-US-GuyNeural', name: 'Guy', desc: 'US Male · Warm & Narrative' },
-    { id: 'en-US-AriaNeural', name: 'Aria', desc: 'US Female · Smooth & Clear' },
-    { id: 'en-US-ChristopherNeural', name: 'Christopher', desc: 'US Male · Deep Storyteller' },
-    { id: 'en-GB-SoniaNeural', name: 'Sonia', desc: 'UK Female · Refined & Melodic' },
-    { id: 'en-GB-RyanNeural', name: 'Ryan', desc: 'UK Male · Classic Narrator' },
-    { id: 'en-AU-NatashaNeural', name: 'Natasha', desc: 'AU Female · Calm & Relaxed' }
+    { id: 'en-US-BrianNeural', name: 'Brian', desc: '⭐ Top Pick · Rich Baritone Audiobook Narrator' },
+    { id: 'en-US-AvaNeural', name: 'Ava', desc: '⭐ Top Female · Expressive & Natural Storyteller' },
+    { id: 'en-US-AndrewNeural', name: 'Andrew', desc: 'Dynamic & Engaging American Storyteller' },
+    { id: 'en-US-EmmaNeural', name: 'Emma', desc: 'Warm & Articulate Novel Narrator' },
+    { id: 'en-US-ChristopherNeural', name: 'Christopher', desc: 'Deep Resonant Fantasy & Epic Narrator' },
+    { id: 'en-GB-RyanNeural', name: 'Ryan', desc: 'Classic British Audiobook Narrator' },
+    { id: 'en-GB-SoniaNeural', name: 'Sonia', desc: 'Refined & Melodic British Narrator' },
+    { id: 'en-AU-WilliamMultilingualNeural', name: 'William', desc: 'Smooth & Natural Australian Narrator' }
   ],
 
   init(onChapterEnd) {
@@ -292,13 +293,16 @@ const TTSEngine = {
   },
 
   async prefetchNext(nextIndex) {
-    if (nextIndex < this.paragraphs.length) {
-      const nextEl = this.paragraphs[nextIndex];
-      const nextText = nextEl ? nextEl.innerText.trim() : '';
-      if (nextText) {
-        try {
-          await this.getAudioBlobUrl(nextText, this.selectedVoice, this.rate);
-        } catch {}
+    const targets = [nextIndex, nextIndex + 1];
+    for (const idx of targets) {
+      if (idx < this.paragraphs.length) {
+        const el = this.paragraphs[idx];
+        const text = el ? el.innerText.trim() : '';
+        if (text) {
+          try {
+            await this.getAudioBlobUrl(text, this.selectedVoice, this.rate);
+          } catch {}
+        }
       }
     }
   },

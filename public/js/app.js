@@ -18,7 +18,7 @@ window.ReaderSettings = {
   line_height: 1.85,
   content_width: 'normal',
   auto_scroll_speed: 35,
-  tts_voice: 'en-US-JennyNeural',
+  tts_voice: 'en-US-BrianNeural',
   tts_rate: 1.0,
   tts_pitch: 1.0
 };

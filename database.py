@@ -123,7 +123,7 @@ def init_db():
         line_height REAL DEFAULT 1.85,
         content_width TEXT DEFAULT 'normal',
         auto_scroll_speed INTEGER DEFAULT 35,
-        tts_voice TEXT DEFAULT 'en-US-JennyNeural',
+        tts_voice TEXT DEFAULT 'en-US-BrianNeural',
         tts_rate REAL DEFAULT 1.0,
         tts_pitch REAL DEFAULT 1.0,
         updated_at REAL NOT NULL,
