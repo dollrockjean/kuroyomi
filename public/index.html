@@ -40,7 +40,7 @@
     </div>
 
     <div class="header-controls">
-      <span class="mobile-offline-badge" id="libraryOfflineBadge" style="display: none;">⚡ Offline Cache</span>
+      <span class="mobile-offline-badge" id="libraryOfflineBadge" style="display: none;">Offline Cache</span>
       <button class="btn-brutal" id="headerMenuBtn">Menu</button>
       <button class="btn-brutal btn-brutal-accent" id="uploadNovelBtn">+ Upload</button>
     </div>
@@ -95,7 +95,7 @@
           <strong>Novel</strong> · Chapter
         </div>
         <div style="display: flex; align-items: center; gap: 8px;">
-          <span class="mobile-offline-badge" id="mobileOfflineBadge" style="display: none;">⚡ Offline</span>
+          <span class="mobile-offline-badge" id="mobileOfflineBadge" style="display: none;">Offline</span>
           <span class="reader-progress-pill" id="readerProgressPill">0%</span>
           <button class="btn-brutal" id="readerMenuBtn">Menu</button>
         </div>
@@ -151,8 +151,8 @@
         <div class="tts-pc-only">
           <div class="tts-mini-cover-wrap tts-pc-cover" id="ttsPcCoverBtn" title="Open Full-Screen Audiobook Mode">
             <img id="ttsPcCoverImg" class="tts-mini-cover-img" src="" alt="Cover" style="display: none;" />
-            <span id="ttsPcCoverPlaceholder" class="tts-mini-cover-placeholder">📖</span>
-            <div class="tts-mini-cog" title="Audiobook Settings">⚙</div>
+            <span id="ttsPcCoverPlaceholder" class="tts-mini-cover-placeholder"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg></span>
+            <div class="tts-mini-cog" title="Audiobook Settings"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg></div>
           </div>
           <button class="btn-brutal tts-skip-btn" id="ttsPrevChapterBtn" title="Previous Chapter"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M11 6l-8.5 6 8.5 6V6zm8.5 0L11 12l8.5 6V6z"/></svg></button>
           <button class="btn-brutal tts-skip-btn" id="ttsPrevParaBtn" title="Previous Paragraph"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M16 6l-10 6 10 6V6z"/></svg></button>
@@ -170,8 +170,8 @@
           <button class="btn-brutal tts-mobile-btn" id="ttsMobileStopBtn" title="Stop" style="color: #ef4444;"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
           <div class="tts-mini-cover-wrap" id="ttsMobileCoverBtn" title="Tap to Open Full-Screen Audiobook Player">
             <img id="ttsMobileCoverImg" class="tts-mini-cover-img" src="" alt="Cover" style="display: none;" />
-            <span id="ttsMobileCoverPlaceholder" class="tts-mini-cover-placeholder">📖</span>
-            <div class="tts-mini-cog">⚙</div>
+            <span id="ttsMobileCoverPlaceholder" class="tts-mini-cover-placeholder"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg></span>
+            <div class="tts-mini-cog"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg></div>
           </div>
         </div>
       </div>
@@ -198,15 +198,15 @@
       <!-- Smaller Book Icon Above -->
       <div class="audiobook-book-icon-wrap" id="audiobookCoverWrap">
         <img id="audiobookModalCover" class="audiobook-modal-cover" src="" alt="Cover" style="display: none;" />
-        <div class="audiobook-modal-cover-placeholder" id="audiobookModalPlaceholder">📖</div>
+        <div class="audiobook-modal-cover-placeholder" id="audiobookModalPlaceholder"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg></div>
       </div>
 
       <!-- Active Paragraph Front and Center -->
       <div class="audiobook-spoken-card">
         <div class="audiobook-para-meta">
           <span class="audiobook-para-pct" id="audiobookParaBadge">0%</span>
-          <span id="audiobookOfflineStatus" class="audiobook-offline-status" style="display: none;">⚡ Offline (Device Voice)</span>
-          <span id="audiobookModalSleepBadge" class="badge-brutal" style="display: none;">⏳ 15:00</span>
+          <span id="audiobookOfflineStatus" class="audiobook-offline-status" style="display: none;">Offline: Device Voice</span>
+          <span id="audiobookModalSleepBadge" class="badge-brutal" style="display: none;">15:00</span>
         </div>
         <div class="audiobook-spoken-text" id="audiobookSpokenText">
           Reading paragraph...

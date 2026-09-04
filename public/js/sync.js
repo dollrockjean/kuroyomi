@@ -1,4 +1,4 @@
-async function fetchWithTimeout(url, options = {}, timeoutMs = 2500) {
+async function fetchWithTimeout(url, options = {}, timeoutMs = 4000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -290,7 +290,7 @@ const SyncService = {
       Storage.clearOfflineProgressQueue();
       this.updateStatus('synced', 'SYNCED');
       if (window.App && typeof window.App.showToast === 'function') {
-        window.App.showToast(`🌐 Back Online · Synced ${syncedCount} reading position(s)`);
+        window.App.showToast(`Online: Synced ${syncedCount} reading position(s)`);
       }
     }
   },

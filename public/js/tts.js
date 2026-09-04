@@ -338,7 +338,7 @@ const TTSEngine = {
     if (offlineStatusEl) {
       offlineStatusEl.style.display = enabled ? 'inline-flex' : 'none';
       if (enabled) {
-        offlineStatusEl.textContent = '⚡ Offline (Device Voice)';
+        offlineStatusEl.textContent = 'Offline: Device Voice';
       }
     }
 
@@ -346,13 +346,13 @@ const TTSEngine = {
       if (window.App && typeof window.App.showToast === 'function') {
         const curVoiceObj = this.voices.find(v => v.id === this.selectedVoice);
         const name = curVoiceObj ? curVoiceObj.name : 'Cloud Voice';
-        window.App.showToast(`⚡ Offline: Switched from ${name} to Device Voice (Siri/System)`);
+        window.App.showToast(`Offline: Switched from ${name} to Device Voice`);
       }
     } else {
       if (window.App && typeof window.App.showToast === 'function') {
         const curVoiceObj = this.voices.find(v => v.id === this.selectedVoice);
         const name = curVoiceObj ? curVoiceObj.name : 'Cloud Voice';
-        window.App.showToast(`🌐 Back Online: Resumed Cloud Neural Voice (${name})`);
+        window.App.showToast(`Online: Resumed Cloud Voice (${name})`);
       }
     }
   },
@@ -645,12 +645,12 @@ const TTSEngine = {
         b.style.display = 'none';
       } else if (this.sleepMode === 'chapter_end') {
         b.style.display = 'inline-flex';
-        b.textContent = '⏳ End of Ch';
+        b.textContent = 'End of Ch';
       } else {
         b.style.display = 'inline-flex';
         const m = Math.floor(this.sleepTimerRemaining / 60);
         const s = this.sleepTimerRemaining % 60;
-        b.textContent = `⏳ ${m}:${s < 10 ? '0' : ''}${s}`;
+        b.textContent = `${m}:${s < 10 ? '0' : ''}${s}`;
       }
     });
   },

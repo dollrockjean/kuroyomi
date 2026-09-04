@@ -1,6 +1,6 @@
-// KuroYomi Service Worker v3
+// KuroYomi Service Worker v4
 // High-performance offline caching with instant WebKit/Safari PWA launch
-const CACHE_NAME = 'kuroyomi-v3';
+const CACHE_NAME = 'kuroyomi-v4';
 
 const PRECACHE_ASSETS = [
   '/',

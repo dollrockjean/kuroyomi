@@ -215,10 +215,10 @@ const Reader = {
       let data = null;
 
       // 1. Attempt network fetch if online
-      if (navigator.onLine && userId !== 'universal_device_mirror' && userId !== 'offline_user') {
+      if (navigator.onLine && userId !== 'offline_user') {
         try {
           const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 2500);
+          const timer = setTimeout(() => controller.abort(), 4000);
           const res = await fetch(`/api/novels/${encodeURIComponent(novelId)}?user_id=${encodeURIComponent(userId)}`, { signal: controller.signal });
           clearTimeout(timer);
           if (res.ok) {
@@ -233,8 +233,8 @@ const Reader = {
       if (!data || !data.novel) {
         if (typeof IDB !== 'undefined') {
           data = await IDB.getNovelData(userId, novelId);
-          if (data && data.novel) {
-            App.showToast(`⚡ Offline Mode · Loaded "${data.novel.title}" from local cache`);
+          if (data && data.novel && !navigator.onLine) {
+            App.showToast(`Offline Mode: Loaded "${data.novel.title}" from local cache`);
           }
         }
       }
@@ -292,10 +292,10 @@ const Reader = {
       let ch = null;
 
       // 1. Attempt network fetch if online
-      if (navigator.onLine && userId !== 'universal_device_mirror' && userId !== 'offline_user') {
+      if (navigator.onLine) {
         try {
           const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 2500);
+          const timer = setTimeout(() => controller.abort(), 4000);
           const res = await fetch(`/api/chapters/${encodeURIComponent(chapterId)}`, { signal: controller.signal });
           clearTimeout(timer);
           if (res.ok) {
@@ -310,8 +310,8 @@ const Reader = {
       if (!ch || ch.error) {
         if (typeof IDB !== 'undefined') {
           ch = await IDB.getChapter(userId, chapterId);
-          if (ch) {
-            App.showToast(`⚡ Offline · Reading Chapter from cache`);
+          if (ch && !navigator.onLine) {
+            App.showToast(`Offline: Reading Chapter from cache`);
           }
         }
       }
@@ -409,7 +409,9 @@ const Reader = {
       if (contentEl) {
         contentEl.innerHTML = `
           <div style="padding: 40px 20px; text-align: center; border: 1px dashed var(--border-color); border-radius: 8px; margin: 40px auto; max-width: 500px; background: var(--bg-surface);">
-            <div style="font-size: 32px; margin-bottom: 12px;">⚡</div>
+            <div style="margin-bottom: 14px; display: flex; justify-content: center; color: var(--accent);">
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
+            </div>
             <h3 style="font-family: var(--font-sans); margin-bottom: 8px; font-size: 16px;">Chapter Not Cached Offline</h3>
             <p style="font-family: var(--font-sans); font-size: 13px; color: var(--text-muted); line-height: 1.5; margin-bottom: 18px;">
               ${e.message || 'This chapter has not been downloaded to your device storage yet. Connect to the internet to cache it.'}

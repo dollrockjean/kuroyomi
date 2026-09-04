@@ -824,8 +824,8 @@ const App = {
     if (toggle) toggle.checked = Storage.isRemembered();
   },
 
-  updateOfflineBadges(isOffline) {
-    const offline = isOffline !== undefined ? isOffline : !navigator.onLine;
+  updateOfflineBadges() {
+    const offline = !navigator.onLine;
     const topBadge = document.getElementById('mobileOfflineBadge');
     const libBadge = document.getElementById('libraryOfflineBadge');
     if (topBadge) topBadge.style.display = offline ? 'inline-flex' : 'none';
@@ -836,14 +836,14 @@ const App = {
     this.updateOfflineBadges();
 
     window.addEventListener('online', () => {
-      this.updateOfflineBadges(false);
-      this.showToast('🌐 Back Online · Syncing with cloud...');
+      this.updateOfflineBadges();
+      this.showToast('Online: Synced with cloud');
       this.loadLibrary(false);
     });
 
     window.addEventListener('offline', () => {
-      this.updateOfflineBadges(true);
-      this.showToast('⚡ Offline Mode · Reading from local cache');
+      this.updateOfflineBadges();
+      this.showToast('Offline Mode: Reading from local cache');
     });
   },
 
@@ -855,10 +855,10 @@ const App = {
       let lastReadData = null;
 
       // 1. Attempt network fetch if online
-      if (navigator.onLine && userId && userId !== 'universal_device_mirror' && userId !== 'offline_user') {
+      if (navigator.onLine && userId && userId !== 'offline_user') {
         try {
           const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 2500);
+          const timer = setTimeout(() => controller.abort(), 4000);
 
           const [novelsRes, lastReadRes] = await Promise.all([
             fetch(`/api/novels?user_id=${encodeURIComponent(userId)}`, { signal: controller.signal }),
@@ -873,7 +873,7 @@ const App = {
         }
       }
 
-      // 2. Offline Fallback from IndexedDB
+      // 2. Offline / Local Mirror Fallback from IndexedDB
       if (!novelsData || !novelsData.novels || novelsData.novels.length === 0) {
         if (typeof IDB !== 'undefined') {
           const mirror = await IDB.getLibraryMirror(userId);
@@ -898,7 +898,34 @@ const App = {
             }
             this.renderResumeHero(lastRead);
             this.updateMirrorStatus();
-            this.updateOfflineBadges(true);
+            this.updateOfflineBadges();
+
+            // If online, auto-restore missing novels to cloud
+            if (navigator.onLine && allowAutoRestore && userId && userId !== 'universal_device_mirror') {
+              const serverNovelIds = new Set((novelsData && novelsData.novels ? novelsData.novels : []).map(n => n.id));
+              const missingNovels = mirror.novels.filter(n => !serverNovelIds.has(n.id));
+              if (missingNovels.length > 0) {
+                console.warn(`Auto-Shield: Server is missing ${missingNovels.length} novel(s) from device mirror. Restoring...`);
+                this.showToast(`Restoring ${missingNovels.length} novel(s) to cloud...`);
+                try {
+                  const restoreRes = await fetch('/api/restore', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      user_id: userId,
+                      backup_data: mirror
+                    })
+                  });
+                  const restoreData = await restoreRes.json();
+                  if (restoreData.success) {
+                    this.showToast(`Auto-restored ${restoreData.novels_restored || 0} novel(s) from device!`);
+                    return this.loadLibrary(false);
+                  }
+                } catch (e) {
+                  console.warn('Auto-restore failed:', e);
+                }
+              }
+            }
             return;
           }
         }
@@ -942,9 +969,10 @@ const App = {
         this.updateDeviceMirror();
       }
 
-      this.renderResumeHero(lastReadData.last_read);
+      this.renderResumeHero(lastReadData ? lastReadData.last_read : null);
       this.renderLibraryGrid();
       this.updateMirrorStatus();
+      this.updateOfflineBadges();
     } catch (e) {
       console.warn('Error loading library:', e);
     }
