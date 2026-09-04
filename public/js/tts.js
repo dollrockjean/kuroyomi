@@ -23,6 +23,8 @@ const TTSEngine = {
   
   selectedVoice: 'en-US-BrianNeural',
   rate: 1.0,
+  isUsingDeviceVoice: false,
+  deviceUtterance: null,
   
   paragraphs: [],
   currentIndex: 0,
@@ -328,10 +330,79 @@ const TTSEngine = {
     this.speakParagraph(this.currentIndex);
   },
 
+  setDeviceVoiceMode(enabled) {
+    if (this.isUsingDeviceVoice === enabled) return;
+    this.isUsingDeviceVoice = enabled;
+
+    const offlineStatusEl = document.getElementById('audiobookOfflineStatus');
+    if (offlineStatusEl) {
+      offlineStatusEl.style.display = enabled ? 'inline-flex' : 'none';
+      if (enabled) {
+        offlineStatusEl.textContent = '⚡ Offline (Device Voice)';
+      }
+    }
+
+    if (enabled) {
+      if (window.App && typeof window.App.showToast === 'function') {
+        const curVoiceObj = this.voices.find(v => v.id === this.selectedVoice);
+        const name = curVoiceObj ? curVoiceObj.name : 'Cloud Voice';
+        window.App.showToast(`⚡ Offline: Switched from ${name} to Device Voice (Siri/System)`);
+      }
+    } else {
+      if (window.App && typeof window.App.showToast === 'function') {
+        const curVoiceObj = this.voices.find(v => v.id === this.selectedVoice);
+        const name = curVoiceObj ? curVoiceObj.name : 'Cloud Voice';
+        window.App.showToast(`🌐 Back Online: Resumed Cloud Neural Voice (${name})`);
+      }
+    }
+  },
+
+  speakWithDeviceVoice(text, index) {
+    if (!('speechSynthesis' in window)) {
+      console.warn('SpeechSynthesis not supported on this device.');
+      setTimeout(() => this.speakParagraph(index + 1), 1000);
+      return;
+    }
+
+    window.speechSynthesis.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = Math.min(2.0, Math.max(0.5, this.rate));
+
+    // Choose best English system voice (e.g. Siri, Samantha, Daniel, etc.)
+    const voices = window.speechSynthesis.getVoices();
+    if (voices && voices.length > 0) {
+      const best = voices.find(v => v.lang && v.lang.startsWith('en') && (
+        v.name.includes('Siri') || v.name.includes('Daniel') || v.name.includes('Samantha') || v.name.includes('Karen') || v.name.includes('Google')
+      )) || voices.find(v => v.lang && v.lang.startsWith('en')) || voices[0];
+      if (best) utterance.voice = best;
+    }
+
+    utterance.onend = () => {
+      if (this.isPlaying && !this.isPaused) {
+        this.speakParagraph(index + 1);
+      }
+    };
+
+    utterance.onerror = (e) => {
+      console.warn('Device speech synthesis error:', e);
+      if (this.isPlaying && !this.isPaused) {
+        setTimeout(() => this.speakParagraph(index + 1), 600);
+      }
+    };
+
+    this.deviceUtterance = utterance;
+    window.speechSynthesis.speak(utterance);
+    this.updateAudioUI();
+  },
+
   pause() {
     if (this.isPlaying) {
       this.isPaused = true;
       this.audioElement.pause();
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.pause();
+      }
       this.updateAudioUI();
     }
   },
@@ -339,7 +410,15 @@ const TTSEngine = {
   resume() {
     if (this.isPlaying && this.isPaused) {
       this.isPaused = false;
-      this.audioElement.play().catch(() => this.speakParagraph(this.currentIndex));
+      if (this.isUsingDeviceVoice && 'speechSynthesis' in window) {
+        if (window.speechSynthesis.paused) {
+          window.speechSynthesis.resume();
+        } else {
+          this.speakParagraph(this.currentIndex);
+        }
+      } else {
+        this.audioElement.play().catch(() => this.speakParagraph(this.currentIndex));
+      }
       this.updateAudioUI();
     } else {
       this.start(this.currentIndex);
@@ -361,6 +440,10 @@ const TTSEngine = {
     this.isPaused = false;
     this.audioElement.pause();
     this.audioElement.src = '';
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    this.setDeviceVoiceMode(false);
     this.clearHighlight();
     this.hideBadge();
     this.closeAudiobookModal();
@@ -419,9 +502,22 @@ const TTSEngine = {
       return;
     }
 
+    // 1. If device is currently offline, immediately use device native voice
+    if (!navigator.onLine) {
+      this.setDeviceVoiceMode(true);
+      this.speakWithDeviceVoice(textToSpeak, index);
+      return;
+    }
+
+    // 2. Otherwise try realistic cloud neural TTS
     try {
       const blobUrl = await this.getAudioBlobUrl(textToSpeak, this.selectedVoice, this.rate);
       if (!this.isPlaying || this.isPaused) return;
+
+      // If we were in device voice mode, return to cloud neural voice
+      if (this.isUsingDeviceVoice) {
+        this.setDeviceVoiceMode(false);
+      }
 
       this.audioElement.src = blobUrl;
       await this.audioElement.play();
@@ -430,11 +526,12 @@ const TTSEngine = {
       // Pre-fetch next paragraph into memory for seamless instant playback
       this.prefetchNext(index + 1);
     } catch (err) {
-      console.error('Speech playback error for paragraph:', err);
-      // If error occurs, advance after brief delay
-      if (this.isPlaying && !this.isPaused) {
-        setTimeout(() => this.speakParagraph(index + 1), 1000);
-      }
+      console.warn('Speech playback network error, switching to device voice:', err);
+      if (!this.isPlaying || this.isPaused) return;
+
+      // Automatically engage offline native voice fallback
+      this.setDeviceVoiceMode(true);
+      this.speakWithDeviceVoice(textToSpeak, index);
     }
   },
 

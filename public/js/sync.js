@@ -8,6 +8,20 @@ const SyncService = {
   async init() {
     this.updateStatus('syncing', 'CONNECTING...');
 
+    // Register online/offline status listeners once
+    if (!this._listenersBound) {
+      this._listenersBound = true;
+      window.addEventListener('online', () => {
+        this.isOnline = true;
+        this.updateStatus('synced', 'ONLINE');
+        this.flushOfflineQueue();
+      });
+      window.addEventListener('offline', () => {
+        this.isOnline = false;
+        this.updateStatus('offline', 'OFFLINE');
+      });
+    }
+
     // 0. Detect 1-Click Pairing Link (?pair=READER-XXXXX)
     let pairKeyDetected = null;
     try {
@@ -173,7 +187,23 @@ const SyncService = {
       scrollPercent
     });
 
-    // 2. Debounce cloud sync
+    const progressRecord = {
+      user_id: this.currentUserId,
+      novel_id: novelId,
+      volume_id: volumeId,
+      chapter_id: chapterId,
+      paragraph_index: paragraphIndex,
+      scroll_percent: scrollPercent
+    };
+
+    // 2. If offline, queue for later sync
+    if (!navigator.onLine) {
+      Storage.queueOfflineProgress(progressRecord);
+      this.updateStatus('offline', 'LOCAL ONLY');
+      return;
+    }
+
+    // 3. Debounce cloud sync
     if (this.syncTimeout) clearTimeout(this.syncTimeout);
     this.updateStatus('syncing', 'SAVING...');
 
@@ -183,24 +213,51 @@ const SyncService = {
         const res = await fetch('/api/progress', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            user_id: this.currentUserId,
-            novel_id: novelId,
-            volume_id: volumeId,
-            chapter_id: chapterId,
-            paragraph_index: paragraphIndex,
-            scroll_percent: scrollPercent
-          })
+          body: JSON.stringify(progressRecord)
         });
         const data = await res.json();
         if (data.success) {
           this.updateStatus('synced', 'SAVED');
         }
       } catch (e) {
-        console.warn('Progress cloud sync error:', e);
+        console.warn('Progress cloud sync error, queuing offline:', e);
+        Storage.queueOfflineProgress(progressRecord);
         this.updateStatus('offline', 'LOCAL ONLY');
       }
     }, 1500);
+  },
+
+  async flushOfflineQueue() {
+    const queue = Storage.getOfflineProgressQueue();
+    if (!queue || queue.length === 0) return;
+
+    let syncedCount = 0;
+    for (const record of queue) {
+      try {
+        const res = await fetch('/api/progress', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...record,
+            user_id: this.currentUserId || record.user_id
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          syncedCount++;
+        }
+      } catch (e) {
+        console.warn('Error syncing queued offline progress:', e);
+      }
+    }
+
+    if (syncedCount > 0) {
+      Storage.clearOfflineProgressQueue();
+      this.updateStatus('synced', 'SYNCED');
+      if (window.App && typeof window.App.showToast === 'function') {
+        window.App.showToast(`🌐 Back Online · Synced ${syncedCount} reading position(s)`);
+      }
+    }
   },
 
   async syncSettings(settings) {

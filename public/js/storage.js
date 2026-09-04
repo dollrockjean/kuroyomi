@@ -93,6 +93,37 @@ const Storage = {
   clearSession() {
     localStorage.removeItem(this.SYNC_KEY_KEY);
     localStorage.removeItem(this.USER_ID_KEY);
+  },
+
+  // Offline Progress Queue Management
+  OFFLINE_QUEUE_KEY: 'kuroyomi_offline_progress_queue',
+
+  queueOfflineProgress(record) {
+    try {
+      const q = this.getOfflineProgressQueue();
+      const existingIdx = q.findIndex(item => item.novel_id === record.novel_id);
+      if (existingIdx >= 0) {
+        q[existingIdx] = { ...record, queued_at: Date.now() };
+      } else {
+        q.push({ ...record, queued_at: Date.now() });
+      }
+      localStorage.setItem(this.OFFLINE_QUEUE_KEY, JSON.stringify(q));
+    } catch (e) {
+      console.warn('Queue offline progress error:', e);
+    }
+  },
+
+  getOfflineProgressQueue() {
+    try {
+      const val = localStorage.getItem(this.OFFLINE_QUEUE_KEY);
+      return val ? JSON.parse(val) : [];
+    } catch {
+      return [];
+    }
+  },
+
+  clearOfflineProgressQueue() {
+    localStorage.removeItem(this.OFFLINE_QUEUE_KEY);
   }
 };
 
@@ -229,6 +260,70 @@ const IDB = {
       });
     } catch {
       return 0;
+    }
+  },
+
+  async getNovelData(userId, novelId) {
+    try {
+      const mirror = await this.getLibraryMirror(userId);
+      if (!mirror || !mirror.novels) return null;
+
+      const novel = mirror.novels.find(n => n.id === novelId);
+      if (!novel) return null;
+
+      const volumes = (mirror.volumes || [])
+        .filter(v => v.novel_id === novelId)
+        .sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+
+      const chapters = (mirror.chapters || [])
+        .filter(c => c.novel_id === novelId)
+        .sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+
+      const progress = (mirror.progress || []).find(p => p.novel_id === novelId) || null;
+
+      return {
+        novel,
+        volumes,
+        chapters,
+        progress
+      };
+    } catch (e) {
+      console.warn('IDB getNovelData error:', e);
+      return null;
+    }
+  },
+
+  async getChapter(userId, chapterId) {
+    try {
+      const mirror = await this.getLibraryMirror(userId);
+      if (!mirror || !mirror.chapters) return null;
+
+      const ch = mirror.chapters.find(c => c.id === chapterId);
+      if (!ch) return null;
+
+      // Find novel and volume titles
+      const novel = (mirror.novels || []).find(n => n.id === ch.novel_id);
+      const volume = (mirror.volumes || []).find(v => v.id === ch.volume_id);
+
+      // Find prev and next chapters
+      const novelChapters = mirror.chapters
+        .filter(c => c.novel_id === ch.novel_id)
+        .sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+
+      const idx = novelChapters.findIndex(c => c.id === chapterId);
+      const prev = idx > 0 ? novelChapters[idx - 1] : null;
+      const next = idx < novelChapters.length - 1 ? novelChapters[idx + 1] : null;
+
+      return {
+        ...ch,
+        novel_title: novel ? novel.title : '',
+        volume_title: volume ? volume.title : '',
+        prev_chapter: prev ? { id: prev.id, title: prev.title } : null,
+        next_chapter: next ? { id: next.id, title: next.title } : null
+      };
+    } catch (e) {
+      console.warn('IDB getChapter error:', e);
+      return null;
     }
   }
 };

@@ -30,6 +30,7 @@
     </div>
 
     <div class="header-controls">
+      <span class="mobile-offline-badge" id="libraryOfflineBadge" style="display: none;">⚡ Offline Cache</span>
       <button class="btn-brutal" id="headerMenuBtn">Menu</button>
       <button class="btn-brutal btn-brutal-accent" id="uploadNovelBtn">+ Upload</button>
     </div>
@@ -84,6 +85,7 @@
           <strong>Novel</strong> · Chapter
         </div>
         <div style="display: flex; align-items: center; gap: 8px;">
+          <span class="mobile-offline-badge" id="mobileOfflineBadge" style="display: none;">⚡ Offline</span>
           <span class="reader-progress-pill" id="readerProgressPill">0%</span>
           <button class="btn-brutal" id="readerMenuBtn">Menu</button>
         </div>
@@ -193,6 +195,7 @@
       <div class="audiobook-spoken-card">
         <div class="audiobook-para-meta">
           <span class="audiobook-para-pct" id="audiobookParaBadge">0%</span>
+          <span id="audiobookOfflineStatus" class="audiobook-offline-status" style="display: none;">⚡ Offline (Device Voice)</span>
           <span id="audiobookModalSleepBadge" class="badge-brutal" style="display: none;">⏳ 15:00</span>
         </div>
         <div class="audiobook-spoken-text" id="audiobookSpokenText">

@@ -1390,6 +1390,41 @@ body {
   background: var(--bg-surface);
 }
 
+/* Mobile Offline Badges & Alerts (Amber Luminous Aesthetic) */
+.mobile-offline-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  animation: offlinePulse 3s infinite ease-in-out;
+}
+
+@keyframes offlinePulse {
+  0%, 100% { opacity: 0.85; border-color: rgba(245, 158, 11, 0.35); }
+  50% { opacity: 1; border-color: rgba(245, 158, 11, 0.75); }
+}
+
+.audiobook-offline-status {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  letter-spacing: 0.2px;
+}
+
 /* Margin Presets */
 [data-margin="edge"] {
   --reader-padding-x: 6px;
@@ -1622,7 +1657,9 @@ body {
 @media (min-width: 769px) {
   .mobile-quick-sheet,
   .quick-sheet-backdrop,
-  .overscroll-indicator {
+  .overscroll-indicator,
+  .mobile-offline-badge,
+  .audiobook-offline-status {
     display: none !important;
   }
 }

@@ -73,6 +73,16 @@ const App = {
     this.bindMobileQuickSheetEvents();
     this.bindSyncEvents();
     this.bindBackupRestoreEvents();
+    this.bindNetworkEvents();
+
+    // Register Service Worker for Mobile PWA Offline Reading
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').then((reg) => {
+        console.log('[SW] ServiceWorker registered with scope:', reg.scope);
+      }).catch((err) => {
+        console.warn('[SW] ServiceWorker registration failed:', err);
+      });
+    }
 
     await this.loadLibrary();
     this.hideLoading();
@@ -807,20 +817,83 @@ const App = {
     if (toggle) toggle.checked = Storage.isRemembered();
   },
 
+  updateOfflineBadges(isOffline) {
+    const offline = isOffline !== undefined ? isOffline : !navigator.onLine;
+    const topBadge = document.getElementById('mobileOfflineBadge');
+    const libBadge = document.getElementById('libraryOfflineBadge');
+    if (topBadge) topBadge.style.display = offline ? 'inline-flex' : 'none';
+    if (libBadge) libBadge.style.display = offline ? 'inline-flex' : 'none';
+  },
+
+  bindNetworkEvents() {
+    this.updateOfflineBadges();
+
+    window.addEventListener('online', () => {
+      this.updateOfflineBadges(false);
+      this.showToast('🌐 Back Online · Syncing with cloud...');
+      this.loadLibrary(false);
+    });
+
+    window.addEventListener('offline', () => {
+      this.updateOfflineBadges(true);
+      this.showToast('⚡ Offline Mode · Reading from local cache');
+    });
+  },
+
   async loadLibrary(allowAutoRestore = true) {
     try {
       const userId = SyncService.currentUserId;
       if (!userId) return;
 
-      const [novelsRes, lastReadRes] = await Promise.all([
-        fetch(`/api/novels?user_id=${encodeURIComponent(userId)}`),
-        fetch(`/api/last-read?user_id=${encodeURIComponent(userId)}`)
-      ]);
+      let novelsData = null;
+      let lastReadData = null;
 
-      const novelsData = await novelsRes.json();
-      const lastReadData = await lastReadRes.json();
+      // 1. Attempt network fetch if online
+      if (navigator.onLine) {
+        try {
+          const [novelsRes, lastReadRes] = await Promise.all([
+            fetch(`/api/novels?user_id=${encodeURIComponent(userId)}`),
+            fetch(`/api/last-read?user_id=${encodeURIComponent(userId)}`)
+          ]);
+          if (novelsRes.ok) novelsData = await novelsRes.json();
+          if (lastReadRes.ok) lastReadData = await lastReadRes.json();
+        } catch (netErr) {
+          console.warn('Network error loading library, checking local offline mirror:', netErr);
+        }
+      }
 
-      this.novels = novelsData.novels || [];
+      // 2. Offline Fallback from IndexedDB
+      if (!novelsData || !novelsData.novels) {
+        if (typeof IDB !== 'undefined') {
+          const mirror = await IDB.getLibraryMirror(userId);
+          if (mirror && mirror.novels && mirror.novels.length > 0) {
+            this.novels = mirror.novels;
+            this.renderLibraryGrid();
+
+            let lastRead = null;
+            if (mirror.progress && mirror.progress.length > 0) {
+              const latest = [...mirror.progress].sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0))[0];
+              const book = mirror.novels.find(n => n.id === latest.novel_id);
+              const vol = (mirror.volumes || []).find(v => v.id === latest.volume_id);
+              const ch = (mirror.chapters || []).find(c => c.id === latest.chapter_id);
+              lastRead = {
+                novel_id: latest.novel_id,
+                novel_title: book ? book.title : 'Novel',
+                volume_title: vol ? vol.title : '',
+                chapter_title: ch ? ch.title : '',
+                scroll_percent: latest.scroll_percent || 0,
+                cover_data: book ? book.cover_data : null
+              };
+            }
+            this.renderResumeHero(lastRead);
+            this.updateMirrorStatus();
+            this.updateOfflineBadges(true);
+            return;
+          }
+        }
+      }
+
+      this.novels = novelsData ? (novelsData.novels || []) : [];
 
       // Auto-Shield: Check if server is missing any books present in local device mirror
       if (allowAutoRestore && typeof IDB !== 'undefined') {

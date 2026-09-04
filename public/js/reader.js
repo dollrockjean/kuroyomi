@@ -212,9 +212,33 @@ const Reader = {
     App.showLoading('Opening novel...');
     try {
       const userId = SyncService.currentUserId;
-      const res = await fetch(`/api/novels/${encodeURIComponent(novelId)}?user_id=${encodeURIComponent(userId)}`);
-      const data = await res.json();
-      if (!data.novel) throw new Error('Novel not found');
+      let data = null;
+
+      // 1. Attempt network fetch if online
+      if (navigator.onLine) {
+        try {
+          const res = await fetch(`/api/novels/${encodeURIComponent(novelId)}?user_id=${encodeURIComponent(userId)}`);
+          if (res.ok) {
+            data = await res.json();
+          }
+        } catch (netErr) {
+          console.warn('Network novel fetch failed, attempting offline cache:', netErr);
+        }
+      }
+
+      // 2. Offline Fallback from IndexedDB
+      if (!data || !data.novel) {
+        if (typeof IDB !== 'undefined') {
+          data = await IDB.getNovelData(userId, novelId);
+          if (data && data.novel) {
+            App.showToast(`⚡ Offline Mode · Loaded "${data.novel.title}" from local cache`);
+          }
+        }
+      }
+
+      if (!data || !data.novel) {
+        throw new Error('Novel not found or not cached offline on this device.');
+      }
 
       this.currentNovel = data.novel;
       this.volumes = data.volumes || [];
@@ -261,9 +285,34 @@ const Reader = {
   async loadChapter(chapterId, scrollToTarget = false) {
     App.showLoading('Loading chapter...');
     try {
-      const res = await fetch(`/api/chapters/${encodeURIComponent(chapterId)}`);
-      const ch = await res.json();
-      if (ch.error) throw new Error(ch.error);
+      const userId = SyncService.currentUserId;
+      let ch = null;
+
+      // 1. Attempt network fetch if online
+      if (navigator.onLine) {
+        try {
+          const res = await fetch(`/api/chapters/${encodeURIComponent(chapterId)}`);
+          if (res.ok) {
+            ch = await res.json();
+          }
+        } catch (netErr) {
+          console.warn('Network chapter fetch failed, attempting offline cache:', netErr);
+        }
+      }
+
+      // 2. Fallback to local IndexedDB mirror
+      if (!ch || ch.error) {
+        if (typeof IDB !== 'undefined') {
+          ch = await IDB.getChapter(userId, chapterId);
+          if (ch) {
+            App.showToast(`⚡ Offline · Reading Chapter from cache`);
+          }
+        }
+      }
+
+      if (!ch || ch.error) {
+        throw new Error('This chapter is not downloaded yet. Connect to the internet to cache it.');
+      }
 
       this.currentChapter = ch;
       this.currentVolumeId = ch.volume_id;
@@ -271,7 +320,7 @@ const Reader = {
       // Update Top Bar
       const titleEl = document.getElementById('readerChapterTitle');
       if (titleEl) {
-        titleEl.innerHTML = `<strong>${ch.novel_title}</strong> · ${ch.title}`;
+        titleEl.innerHTML = `<strong>${ch.novel_title || ''}</strong> · ${ch.title || ''}`;
       }
 
       // Check if content already starts with the chapter title or heading
@@ -294,7 +343,7 @@ const Reader = {
       const contentEl = document.getElementById('readerContent');
       contentEl.innerHTML = `
         <div class="chapter-separator-banner">
-          ${ch.volume_title || ch.novel_title}
+          ${ch.volume_title || ch.novel_title || ''}
         </div>
         ${headingHtml}
         ${ch.content_html}
@@ -350,7 +399,20 @@ const Reader = {
       this.renderTOC();
     } catch (e) {
       App.hideLoading();
-      alert('Error loading chapter: ' + e.message);
+      const contentEl = document.getElementById('readerContent');
+      if (contentEl) {
+        contentEl.innerHTML = `
+          <div style="padding: 40px 20px; text-align: center; border: 1px dashed var(--border-color); border-radius: 8px; margin: 40px auto; max-width: 500px; background: var(--bg-surface);">
+            <div style="font-size: 32px; margin-bottom: 12px;">⚡</div>
+            <h3 style="font-family: var(--font-sans); margin-bottom: 8px; font-size: 16px;">Chapter Not Cached Offline</h3>
+            <p style="font-family: var(--font-sans); font-size: 13px; color: var(--text-muted); line-height: 1.5; margin-bottom: 18px;">
+              ${e.message || 'This chapter has not been downloaded to your device storage yet. Connect to the internet to cache it.'}
+            </p>
+            <button class="btn-brutal btn-brutal-accent" onclick="Reader.loadChapter('${chapterId}', true)">Retry Loading</button>
+          </div>
+        `;
+      }
+      App.showToast('Chapter not cached offline yet');
     }
   },
 
