@@ -66,8 +66,30 @@ const App = {
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('/sw.js').then((reg) => {
           console.log('[SW] ServiceWorker registered with scope:', reg.scope);
+          if (reg.waiting) {
+            reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+          }
+          reg.onupdatefound = () => {
+            const installing = reg.installing;
+            if (installing) {
+              installing.onstatechange = () => {
+                if (installing.state === 'installed' && navigator.serviceWorker.controller) {
+                  console.log('[SW] New version installed, reloading...');
+                  window.location.reload();
+                }
+              };
+            }
+          };
         }).catch((err) => {
           console.warn('[SW] ServiceWorker registration failed:', err);
+        });
+
+        let refreshing = false;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          if (!refreshing) {
+            refreshing = true;
+            window.location.reload();
+          }
         });
       }
 
@@ -824,25 +846,32 @@ const App = {
     if (toggle) toggle.checked = Storage.isRemembered();
   },
 
-  updateOfflineBadges() {
-    const offline = !navigator.onLine;
+  updateOfflineBadges(isOffline) {
+    const offline = isOffline !== undefined ? isOffline : !navigator.onLine;
     const topBadge = document.getElementById('mobileOfflineBadge');
-    const libBadge = document.getElementById('libraryOfflineBadge');
     if (topBadge) topBadge.style.display = offline ? 'inline-flex' : 'none';
-    if (libBadge) libBadge.style.display = offline ? 'inline-flex' : 'none';
   },
 
   bindNetworkEvents() {
-    this.updateOfflineBadges();
+    let startupGracePeriod = true;
+    setTimeout(() => { startupGracePeriod = false; }, 6000);
 
-    window.addEventListener('online', () => {
-      this.updateOfflineBadges();
-      this.showToast('Online: Synced with cloud');
+    window.addEventListener('online', async () => {
+      this.updateOfflineBadges(false);
+      if (!startupGracePeriod) {
+        this.showToast('Online: Synced with cloud');
+      }
       this.loadLibrary(false);
     });
 
-    window.addEventListener('offline', () => {
-      this.updateOfflineBadges();
+    window.addEventListener('offline', async () => {
+      if (startupGracePeriod) return;
+      // In mobile Safari / WebKit, confirm with network probe before alarming user
+      try {
+        const ping = await fetch('/health?_t=' + Date.now(), { method: 'HEAD', cache: 'no-store' });
+        if (ping.ok) return; // False alarm from iOS radio handover
+      } catch (e) {}
+      this.updateOfflineBadges(true);
       this.showToast('Offline Mode: Reading from local cache');
     });
   },

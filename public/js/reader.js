@@ -233,9 +233,6 @@ const Reader = {
       if (!data || !data.novel) {
         if (typeof IDB !== 'undefined') {
           data = await IDB.getNovelData(userId, novelId);
-          if (data && data.novel && !navigator.onLine) {
-            App.showToast(`Offline Mode: Loaded "${data.novel.title}" from local cache`);
-          }
         }
       }
 
@@ -310,9 +307,6 @@ const Reader = {
       if (!ch || ch.error) {
         if (typeof IDB !== 'undefined') {
           ch = await IDB.getChapter(userId, chapterId);
-          if (ch && !navigator.onLine) {
-            App.showToast(`Offline: Reading Chapter from cache`);
-          }
         }
       }
 

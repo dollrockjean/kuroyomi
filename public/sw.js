@@ -1,31 +1,38 @@
-// KuroYomi Service Worker v4
+// KuroYomi Service Worker v5
 // High-performance offline caching with instant WebKit/Safari PWA launch
-const CACHE_NAME = 'kuroyomi-v4';
+const CACHE_NAME = 'kuroyomi-v5';
 
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
-  '/css/brutalist.css',
-  '/js/app.js',
-  '/js/reader.js',
-  '/js/tts.js',
-  '/js/storage.js',
-  '/js/sync.js',
-  '/js/autoscroll.js',
+  '/css/brutalist.css?v=5.0',
+  '/js/app.js?v=5.0',
+  '/js/reader.js?v=5.0',
+  '/js/tts.js?v=5.0',
+  '/js/storage.js?v=5.0',
+  '/js/sync.js?v=5.0',
+  '/js/autoscroll.js?v=5.0',
   '/manifest.json',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
   '/icons/apple-touch-icon.png'
 ];
 
-// Install: pre-cache application shell
+// Install: pre-cache application shell and skip waiting immediately
 self.addEventListener('install', (event) => {
+  self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then((cache) => cache.addAll(PRECACHE_ASSETS))
-      .then(() => self.skipWaiting())
       .catch((err) => console.warn('[SW] Pre-cache warning:', err))
   );
+});
+
+// Message listener for skipWaiting commands
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
 
 // Activate: clean up outdated caches and claim clients immediately

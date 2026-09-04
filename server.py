@@ -106,6 +106,19 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def end_headers(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        if path in ("/sw.js", "/service-worker.js"):
+            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
+        elif path in ("", "/", "/index.html"):
+            self.send_header("Cache-Control", "no-cache, must-revalidate")
+        elif any(path.startswith(p) for p in ("/js/", "/css/", "/icons/")):
+            self.send_header("Cache-Control", "public, max-age=86400")
+        super().end_headers()
+
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
