@@ -154,8 +154,8 @@ class NovelReaderUnitTests(unittest.TestCase):
 
         now = time.time()
         cur.execute("""
-            INSERT INTO user_settings (user_id, theme, font_family, font_size, line_height, content_width, auto_scroll_speed, tts_voice, tts_rate, tts_pitch, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO user_settings (user_id, theme, font_family, font_size, line_height, content_width, auto_scroll_speed, tts_voice, tts_rate, tts_pitch, library_view_mode, library_sort_by, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET
                 theme = excluded.theme,
                 font_family = excluded.font_family,
@@ -166,8 +166,10 @@ class NovelReaderUnitTests(unittest.TestCase):
                 tts_voice = excluded.tts_voice,
                 tts_rate = excluded.tts_rate,
                 tts_pitch = excluded.tts_pitch,
+                library_view_mode = excluded.library_view_mode,
+                library_sort_by = excluded.library_sort_by,
                 updated_at = excluded.updated_at
-        """, (user_id, "oled-blackout", "mono", 20, 2.0, "wide", 50, "Samantha", 1.2, 1.0, now))
+        """, (user_id, "oled-blackout", "mono", 20, 2.0, "wide", 50, "Samantha", 1.2, 1.0, "tile", "last_read", now))
         conn.commit()
 
         cur.execute("SELECT * FROM user_settings WHERE user_id = ?", (user_id,))
@@ -178,6 +180,8 @@ class NovelReaderUnitTests(unittest.TestCase):
         self.assertEqual(s["line_height"], 2.0)
         self.assertEqual(s["content_width"], "wide")
         self.assertEqual(s["auto_scroll_speed"], 50)
+        self.assertEqual(s["library_view_mode"], "tile")
+        self.assertEqual(s["library_sort_by"], "last_read")
         self.assertEqual(s["tts_voice"], "Samantha")
 
         conn.close()

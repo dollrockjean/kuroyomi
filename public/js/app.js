@@ -21,12 +21,15 @@ window.ReaderSettings = {
   auto_scroll_speed: 35,
   tts_voice: 'en-US-BrianNeural',
   tts_rate: 1.0,
-  tts_pitch: 1.0
+  tts_pitch: 1.0,
+  library_view_mode: 'tile',
+  library_sort_by: 'last_read'
 };
 
 const App = {
   currentView: 'library',
   novels: [],
+  searchQuery: '',
   selectedUploadFiles: [],
   targetUploadNovelId: null,
   targetCoverNovelId: null,
@@ -58,6 +61,7 @@ const App = {
       this.bindMasterPanelEvents();
       this.bindSettingsEvents();
       this.bindMobileQuickSheetEvents();
+      this.bindLibraryToolbarEvents();
       this.bindSyncEvents();
       this.bindBackupRestoreEvents();
       this.bindNetworkEvents();
@@ -700,12 +704,104 @@ const App = {
       if (speedVal) speedVal.textContent = `${scrollSpeed} px/s`;
     }
 
+    // 8. Library View Mode (Tile / List)
+    const viewMode = cur.library_view_mode || 'tile';
+    const tileBtn = document.getElementById('viewTileBtn');
+    const listBtn = document.getElementById('viewListBtn');
+    if (tileBtn && listBtn) {
+      tileBtn.classList.toggle('active', viewMode === 'tile');
+      listBtn.classList.toggle('active', viewMode === 'list');
+    }
+    const grid = document.getElementById('novelGrid');
+    if (grid) {
+      grid.className = (viewMode === 'list') ? 'novel-list' : 'novel-grid';
+    }
+
+    // 9. Library Sort Selection
+    const sortBy = cur.library_sort_by || 'last_read';
+    const sortSelect = document.getElementById('librarySortSelect');
+    if (sortSelect && sortSelect.value !== sortBy) {
+      sortSelect.value = sortBy;
+    }
+
     // Always persist to local device storage
     Storage.setLocalSettings(cur);
 
     // Sync to user account
     if (syncToCloud) {
       this.debounceSyncSettings();
+    }
+  },
+
+  bindLibraryToolbarEvents() {
+    const searchInput = document.getElementById('librarySearchInput');
+    const clearBtn = document.getElementById('librarySearchClearBtn');
+    const sortSelect = document.getElementById('librarySortSelect');
+    const tileBtn = document.getElementById('viewTileBtn');
+    const listBtn = document.getElementById('viewListBtn');
+
+    if (searchInput) {
+      searchInput.addEventListener('input', (e) => {
+        this.searchQuery = e.target.value;
+        if (clearBtn) {
+          clearBtn.style.display = this.searchQuery.length > 0 ? 'flex' : 'none';
+        }
+        this.renderLibraryGrid();
+      });
+    }
+
+    if (clearBtn) {
+      clearBtn.addEventListener('click', () => {
+        this.searchQuery = '';
+        if (searchInput) {
+          searchInput.value = '';
+          searchInput.focus();
+        }
+        clearBtn.style.display = 'none';
+        this.renderLibraryGrid();
+      });
+    }
+
+    if (sortSelect) {
+      sortSelect.addEventListener('change', (e) => {
+        const sortBy = e.target.value;
+        window.ReaderSettings.library_sort_by = sortBy;
+        Storage.setLocalSettings(window.ReaderSettings);
+        this.debounceSyncSettings();
+        this.renderLibraryGrid();
+      });
+    }
+
+    if (tileBtn) {
+      tileBtn.addEventListener('click', () => {
+        if (window.ReaderSettings.library_view_mode === 'tile') return;
+        window.ReaderSettings.library_view_mode = 'tile';
+        tileBtn.classList.add('active');
+        if (listBtn) listBtn.classList.remove('active');
+        const grid = document.getElementById('novelGrid');
+        if (grid) {
+          grid.className = 'novel-grid';
+        }
+        Storage.setLocalSettings(window.ReaderSettings);
+        this.debounceSyncSettings();
+        this.renderLibraryGrid();
+      });
+    }
+
+    if (listBtn) {
+      listBtn.addEventListener('click', () => {
+        if (window.ReaderSettings.library_view_mode === 'list') return;
+        window.ReaderSettings.library_view_mode = 'list';
+        listBtn.classList.add('active');
+        if (tileBtn) tileBtn.classList.remove('active');
+        const grid = document.getElementById('novelGrid');
+        if (grid) {
+          grid.className = 'novel-list';
+        }
+        Storage.setLocalSettings(window.ReaderSettings);
+        this.debounceSyncSettings();
+        this.renderLibraryGrid();
+      });
     }
   },
 
@@ -1078,11 +1174,56 @@ const App = {
     };
   },
 
+  getSortedAndFilteredNovels() {
+    let list = [...(this.novels || [])];
+
+    // 1. Filter by search query
+    const q = (this.searchQuery || '').trim().toLowerCase();
+    if (q) {
+      list = list.filter(n => {
+        const t = (n.title || '').toLowerCase();
+        const a = (n.author || '').toLowerCase();
+        return t.includes(q) || a.includes(q);
+      });
+    }
+
+    // 2. Sort by selected criterion
+    const sortBy = (window.ReaderSettings && window.ReaderSettings.library_sort_by) || 'last_read';
+    if (sortBy === 'upload_date') {
+      list.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+    } else if (sortBy === 'length') {
+      list.sort((a, b) => (b.total_chapters || 0) - (a.total_chapters || 0));
+    } else if (sortBy === 'title') {
+      list.sort((a, b) => (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' }));
+    } else {
+      // Default: last_read
+      const getLastReadTime = (n) => {
+        let t = n.last_read_at || 0;
+        if (typeof Storage !== 'undefined' && Storage.getProgress) {
+          const local = Storage.getProgress(SyncService.currentUserId, n.id);
+          if (local && local.updated_at) {
+            t = Math.max(t, local.updated_at);
+          }
+        }
+        return Math.max(t, n.created_at || 0);
+      };
+      list.sort((a, b) => getLastReadTime(b) - getLastReadTime(a));
+    }
+
+    return list;
+  },
+
   renderLibraryGrid() {
     const grid = document.getElementById('novelGrid');
+    if (!grid) return;
     grid.innerHTML = '';
 
+    const countBadge = document.getElementById('libraryCountBadge');
+    const viewMode = (window.ReaderSettings && window.ReaderSettings.library_view_mode) || 'tile';
+    grid.className = (viewMode === 'list') ? 'novel-list' : 'novel-grid';
+
     if (this.novels.length === 0) {
+      if (countBadge) countBadge.textContent = '0 Novels';
       grid.innerHTML = `
         <div style="grid-column: 1 / -1; padding: 36px 20px; text-align: center; border: 1px dashed var(--border-color); border-radius: 8px;">
           <p style="font-size: 15px; font-weight: 600; margin-bottom: 6px;">Your Library is Empty</p>
@@ -1098,59 +1239,133 @@ const App = {
       return;
     }
 
-    this.novels.forEach(n => {
-      const card = document.createElement('div');
-      card.className = 'novel-card';
+    const items = this.getSortedAndFilteredNovels();
 
+    if (countBadge) {
+      if (this.searchQuery && this.searchQuery.trim()) {
+        countBadge.textContent = `${items.length} of ${this.novels.length}`;
+      } else {
+        countBadge.textContent = `${this.novels.length} ${this.novels.length === 1 ? 'Novel' : 'Novels'}`;
+      }
+    }
+
+    if (items.length === 0) {
+      grid.innerHTML = `
+        <div style="grid-column: 1 / -1; padding: 36px 20px; text-align: center; border: 1px dashed var(--border-color); border-radius: 8px;">
+          <p style="font-size: 14px; font-weight: 600; margin-bottom: 6px;">No novels match "${escapeHtml(this.searchQuery)}"</p>
+          <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 16px;">Try adjusting your search query or clear the filter.</p>
+          <button class="btn-brutal btn-sm" id="emptyClearSearchBtn">Clear Search</button>
+        </div>
+      `;
+      const clrBtn = document.getElementById('emptyClearSearchBtn');
+      if (clrBtn) {
+        clrBtn.onclick = () => {
+          this.searchQuery = '';
+          const searchInput = document.getElementById('librarySearchInput');
+          if (searchInput) searchInput.value = '';
+          const clearBtn = document.getElementById('librarySearchClearBtn');
+          if (clearBtn) clearBtn.style.display = 'none';
+          this.renderLibraryGrid();
+        };
+      }
+      return;
+    }
+
+    items.forEach(n => {
       const coverSrc = n.cover_data || FALLBACK_COVER;
       const lastReadTag = n.last_chapter_title ? `Last: ${n.last_chapter_title}` : 'Not started';
       const readPercent = Math.round(n.progress_scroll || 0);
-
-      card.innerHTML = `
-        <div class="novel-card-cover-wrap" style="position: relative; cursor: pointer;" title="Click to change cover image">
-          <img src="${coverSrc}" class="novel-card-cover" alt="${escapeHtml(n.title)}" loading="lazy" />
-          <div class="cover-overlay-badge" style="position: absolute; bottom: 8px; right: 8px; background: rgba(0,0,0,0.75); border: 1px solid var(--border-color); border-radius: 4px; padding: 2px 6px; font-size: 10px; color: var(--text-secondary); backdrop-filter: blur(4px);">
-            Change Cover
-          </div>
-        </div>
-        <div class="novel-card-body">
-          <h3 class="novel-card-title">${escapeHtml(n.title)}</h3>
-          <p class="novel-card-author">${escapeHtml(n.author || 'Unknown')}</p>
-          <div class="novel-card-meta">
-            <span class="badge-brutal accent">${n.volume_count || 1} Volumes</span>
-            <span class="badge-brutal">${n.total_chapters || 0} Chapters</span>
-          </div>
-          <div style="margin-bottom: 14px;">
-            <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">
-              <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 170px;">${escapeHtml(lastReadTag)}</span>
-              <span>${readPercent}%</span>
-            </div>
-            <div class="progress-bar-container" style="max-width: 100%;">
-              <div class="progress-bar-fill" style="width: ${readPercent}%;"></div>
-            </div>
-          </div>
-          <div class="novel-card-actions">
-            <button class="btn-brutal btn-brutal-accent read-novel-btn" data-id="${n.id}">Read</button>
-            <button class="btn-brutal add-vol-btn" data-id="${n.id}" title="Add another .epub volume">+ Vol</button>
-            <button class="btn-brutal cover-novel-btn" data-id="${n.id}" title="Upload custom cover">Cover</button>
-            <button class="btn-brutal delete-novel-btn" data-id="${n.id}" title="Delete novel" style="color: #ef4444;">Del</button>
-          </div>
-        </div>
-      `;
-
-      card.querySelector('.read-novel-btn').onclick = () => Reader.openNovel(n.id, true);
-      card.querySelector('.add-vol-btn').onclick = () => this.openUploadModal(n.id, n.title);
-      card.querySelector('.delete-novel-btn').onclick = () => this.deleteNovel(n.id, n.title);
 
       const triggerCover = () => {
         this.targetCoverNovelId = n.id;
         const input = document.getElementById('novelCoverInput');
         if (input) input.click();
       };
-      card.querySelector('.novel-card-cover-wrap').onclick = triggerCover;
-      card.querySelector('.cover-novel-btn').onclick = triggerCover;
 
-      grid.appendChild(card);
+      if (viewMode === 'list') {
+        const card = document.createElement('div');
+        card.className = 'novel-card-list';
+        card.innerHTML = `
+          <div class="novel-list-cover-wrap" style="cursor: pointer;" title="Click to change cover image">
+            <img src="${coverSrc}" class="novel-list-cover" alt="${escapeHtml(n.title)}" loading="lazy" />
+          </div>
+          <div class="novel-list-body">
+            <h3 class="novel-list-title">${escapeHtml(n.title)}</h3>
+            <p class="novel-list-author">${escapeHtml(n.author || 'Unknown')}</p>
+            <div class="novel-list-meta">
+              <span class="badge-brutal accent">${n.volume_count || 1} Vol</span>
+              <span class="badge-brutal">${n.total_chapters || 0} Ch</span>
+            </div>
+            <div class="novel-list-progress-bar">
+              <span class="novel-list-progress-info">${escapeHtml(lastReadTag)}</span>
+              <div class="progress-bar-container" style="flex: 1; min-width: 50px;">
+                <div class="progress-bar-fill" style="width: ${readPercent}%;"></div>
+              </div>
+              <span class="badge-brutal" style="font-size: 10px; padding: 1px 5px;">${readPercent}%</span>
+            </div>
+          </div>
+          <div class="novel-list-actions">
+            <button class="btn-brutal btn-brutal-accent btn-sm read-novel-btn" data-id="${n.id}">Read</button>
+            <button class="btn-brutal btn-sm add-vol-btn" data-id="${n.id}" title="Add another .epub volume">+ Vol</button>
+            <button class="btn-brutal btn-sm cover-novel-btn" data-id="${n.id}" title="Upload custom cover">Cover</button>
+            <button class="btn-brutal btn-sm btn-brutal-danger delete-novel-btn" data-id="${n.id}" title="Delete novel">Del</button>
+          </div>
+        `;
+
+        card.querySelector('.read-novel-btn').onclick = () => Reader.openNovel(n.id, true);
+        card.querySelector('.add-vol-btn').onclick = () => this.openUploadModal(n.id, n.title);
+        card.querySelector('.delete-novel-btn').onclick = () => this.deleteNovel(n.id, n.title);
+        card.querySelector('.novel-list-cover-wrap').onclick = triggerCover;
+        card.querySelector('.cover-novel-btn').onclick = triggerCover;
+
+        grid.appendChild(card);
+      } else {
+        const card = document.createElement('div');
+        card.className = 'novel-card';
+        card.innerHTML = `
+          <div class="novel-card-cover-wrap" style="position: relative; cursor: pointer;" title="Click to change cover image">
+            <img src="${coverSrc}" class="novel-card-cover" alt="${escapeHtml(n.title)}" loading="lazy" />
+            <div class="cover-overlay-badge">
+              Change Cover
+            </div>
+          </div>
+          <div class="novel-card-body">
+            <h3 class="novel-card-title">${escapeHtml(n.title)}</h3>
+            <p class="novel-card-author">${escapeHtml(n.author || 'Unknown')}</p>
+            <div class="novel-card-meta">
+              <span class="badge-brutal accent">${n.volume_count || 1} Vol</span>
+              <span class="badge-brutal">${n.total_chapters || 0} Ch</span>
+            </div>
+            <div class="novel-card-progress">
+              <div class="novel-card-progress-info">
+                <span>${escapeHtml(lastReadTag)}</span>
+                <span>${readPercent}%</span>
+              </div>
+              <div class="progress-bar-container" style="max-width: 100%;">
+                <div class="progress-bar-fill" style="width: ${readPercent}%;"></div>
+              </div>
+            </div>
+            <div class="novel-card-actions">
+              <div class="novel-card-primary-action">
+                <button class="btn-brutal btn-brutal-accent read-novel-btn" data-id="${n.id}">Read</button>
+              </div>
+              <div class="novel-card-secondary-actions">
+                <button class="btn-brutal btn-sm add-vol-btn" data-id="${n.id}" title="Add another .epub volume">+ Vol</button>
+                <button class="btn-brutal btn-sm cover-novel-btn" data-id="${n.id}" title="Upload custom cover">Cover</button>
+                <button class="btn-brutal btn-sm btn-brutal-danger delete-novel-btn" data-id="${n.id}" title="Delete novel">Del</button>
+              </div>
+            </div>
+          </div>
+        `;
+
+        card.querySelector('.read-novel-btn').onclick = () => Reader.openNovel(n.id, true);
+        card.querySelector('.add-vol-btn').onclick = () => this.openUploadModal(n.id, n.title);
+        card.querySelector('.delete-novel-btn').onclick = () => this.deleteNovel(n.id, n.title);
+        card.querySelector('.novel-card-cover-wrap').onclick = triggerCover;
+        card.querySelector('.cover-novel-btn').onclick = triggerCover;
+
+        grid.appendChild(card);
+      }
     });
   },
 

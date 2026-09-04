@@ -584,11 +584,13 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             tts_voice = body.get("tts_voice", "en-US-JennyNeural")
             tts_rate = float(body.get("tts_rate", 1.0))
             tts_pitch = float(body.get("tts_pitch", 1.0))
+            library_view_mode = body.get("library_view_mode", "tile")
+            library_sort_by = body.get("library_sort_by", "last_read")
             now = time.time()
 
             cur.execute("""
-                INSERT INTO user_settings (user_id, theme, font_family, font_size, line_height, content_width, auto_scroll_speed, tts_voice, tts_rate, tts_pitch, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO user_settings (user_id, theme, font_family, font_size, line_height, content_width, auto_scroll_speed, tts_voice, tts_rate, tts_pitch, library_view_mode, library_sort_by, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(user_id) DO UPDATE SET
                     theme = excluded.theme,
                     font_family = excluded.font_family,
@@ -599,8 +601,10 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                     tts_voice = excluded.tts_voice,
                     tts_rate = excluded.tts_rate,
                     tts_pitch = excluded.tts_pitch,
+                    library_view_mode = excluded.library_view_mode,
+                    library_sort_by = excluded.library_sort_by,
                     updated_at = excluded.updated_at
-            """, (user_id, theme, font_family, font_size, line_height, content_width, auto_scroll_speed, tts_voice, tts_rate, tts_pitch, now))
+            """, (user_id, theme, font_family, font_size, line_height, content_width, auto_scroll_speed, tts_voice, tts_rate, tts_pitch, library_view_mode, library_sort_by, now))
             conn.commit()
             conn.close()
             self.send_json({"success": True, "updated_at": now})

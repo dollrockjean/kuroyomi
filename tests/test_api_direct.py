@@ -170,7 +170,9 @@ class ApiDirectTests(unittest.TestCase):
             "auto_scroll_speed": 42,
             "tts_voice": "Karen",
             "tts_rate": 1.15,
-            "tts_pitch": 0.95
+            "tts_pitch": 0.95,
+            "library_view_mode": "list",
+            "library_sort_by": "length"
         }).encode('utf-8')
 
         h_set = create_mock_handler("/api/settings", "POST", payload)
@@ -185,6 +187,8 @@ class ApiDirectTests(unittest.TestCase):
         self.assertEqual(saved["font_size"], 24)
         self.assertEqual(saved["auto_scroll_speed"], 42)
         self.assertEqual(saved["tts_voice"], "Karen")
+        self.assertEqual(saved["library_view_mode"], "list")
+        self.assertEqual(saved["library_sort_by"], "length")
 
     def test_05_multipart_upload_and_add_volume(self):
         user_id = database.get_or_create_user("UPLOAD_USER")

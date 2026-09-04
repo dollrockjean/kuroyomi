@@ -25,7 +25,7 @@
   </style>
 
   <!-- Styles -->
-  <link rel="stylesheet" href="/css/brutalist.css?v=5.0">
+  <link rel="stylesheet" href="/css/brutalist.css?v=6.0">
 </head>
 <body style="background-color: #0a0a0a; color: #f0f0f0;">
 
@@ -66,19 +66,70 @@
           </div>
         </div>
         <div>
-          <button class="btn-brutal btn-brutal-accent" id="resumeReadBtn" style="font-size: 13px; padding: 10px 18px;">
+          <button class="btn-brutal btn-brutal-accent" id="resumeReadBtn">
             Resume Novel
           </button>
         </div>
       </section>
 
-      <!-- Library Grid Header -->
-      <div class="section-header">
-        <h2 class="section-title">Library</h2>
-        <span class="badge-brutal">Multi-Volume Ready</span>
+      <!-- Library Toolbar & Controls -->
+      <div class="library-toolbar">
+        <div class="library-toolbar-left">
+          <h2 class="section-title">Library</h2>
+          <span class="badge-brutal" id="libraryCountBadge">0 Novels</span>
+        </div>
+
+        <div class="library-toolbar-right">
+          <!-- Compact Search Bar -->
+          <div class="library-search-box">
+            <svg class="library-search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input type="text" id="librarySearchInput" class="library-search-input" placeholder="Search novels..." autocomplete="off" autocorrect="off" spellcheck="false" />
+            <button type="button" id="librarySearchClearBtn" class="library-search-clear" style="display: none;" title="Clear search" aria-label="Clear search">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            </button>
+          </div>
+
+          <!-- Sort Selector -->
+          <div class="library-sort-control">
+            <label for="librarySortSelect" class="library-sort-label">Sort:</label>
+            <select id="librarySortSelect" class="library-sort-select" aria-label="Sort novels by">
+              <option value="last_read">Last Read</option>
+              <option value="upload_date">Date Added</option>
+              <option value="length">Length</option>
+              <option value="title">Title (A-Z)</option>
+            </select>
+          </div>
+
+          <!-- View Switcher (Tile / List) -->
+          <div class="segmented-control" role="group" aria-label="Library View Mode">
+            <button type="button" id="viewTileBtn" class="segmented-btn active" title="Tile View" aria-label="Tile View">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                <rect x="3" y="3" width="7" height="7"></rect>
+                <rect x="14" y="3" width="7" height="7"></rect>
+                <rect x="14" y="14" width="7" height="7"></rect>
+                <rect x="3" y="14" width="7" height="7"></rect>
+              </svg>
+              <span>Tile</span>
+            </button>
+            <button type="button" id="viewListBtn" class="segmented-btn" title="List View" aria-label="List View">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                <line x1="8" y1="6" x2="21" y2="6"></line>
+                <line x1="8" y1="12" x2="21" y2="12"></line>
+                <line x1="8" y1="18" x2="21" y2="18"></line>
+                <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                <line x1="3" y1="18" x2="3.01" y2="18"></line>
+              </svg>
+              <span>List</span>
+            </button>
+          </div>
+        </div>
       </div>
 
-      <!-- Novels Grid -->
+      <!-- Novels Grid / List Container -->
       <div class="novel-grid" id="novelGrid">
         <!-- Novel cards inserted dynamically -->
       </div>
@@ -570,11 +621,11 @@
   <input type="file" id="novelCoverInput" accept="image/*" style="display: none;" />
 
   <!-- Application Scripts -->
-  <script src="/js/storage.js?v=5.0"></script>
-  <script src="/js/sync.js?v=5.0"></script>
-  <script src="/js/autoscroll.js?v=5.0"></script>
-  <script src="/js/tts.js?v=5.0"></script>
-  <script src="/js/reader.js?v=5.0"></script>
-  <script src="/js/app.js?v=5.0"></script>
+  <script src="/js/storage.js?v=6.0"></script>
+  <script src="/js/sync.js?v=6.0"></script>
+  <script src="/js/autoscroll.js?v=6.0"></script>
+  <script src="/js/tts.js?v=6.0"></script>
+  <script src="/js/reader.js?v=6.0"></script>
+  <script src="/js/app.js?v=6.0"></script>
 </body>
 </html>

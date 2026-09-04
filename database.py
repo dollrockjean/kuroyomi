@@ -134,11 +134,23 @@ def init_db():
         tts_voice TEXT DEFAULT 'en-US-BrianNeural',
         tts_rate REAL DEFAULT 1.0,
         tts_pitch REAL DEFAULT 1.0,
+        library_view_mode TEXT DEFAULT 'tile',
+        library_sort_by TEXT DEFAULT 'last_read',
         updated_at REAL NOT NULL,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )
     """)
     
+    # Safe migrations for existing databases
+    for col, col_type, default_val in [
+        ("library_view_mode", "TEXT", "'tile'"),
+        ("library_sort_by", "TEXT", "'last_read'")
+    ]:
+        try:
+            cursor.execute(f"ALTER TABLE user_settings ADD COLUMN {col} {col_type} DEFAULT {default_val}")
+        except sqlite3.OperationalError:
+            pass
+
     conn.commit()
     conn.close()
 
@@ -324,8 +336,8 @@ def import_backup_data(data: dict, user_id: str):
 
     if settings:
         cur.execute("""
-            INSERT OR REPLACE INTO user_settings (user_id, theme, font_family, font_size, line_height, content_width, auto_scroll_speed, tts_voice, tts_rate, tts_pitch, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO user_settings (user_id, theme, font_family, font_size, line_height, content_width, auto_scroll_speed, tts_voice, tts_rate, tts_pitch, library_view_mode, library_sort_by, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             user_id,
             settings.get("theme", "monochrome-dark"),
@@ -337,6 +349,8 @@ def import_backup_data(data: dict, user_id: str):
             settings.get("tts_voice", "en-US-JennyNeural"),
             settings.get("tts_rate", 1.0),
             settings.get("tts_pitch", 1.0),
+            settings.get("library_view_mode", "tile"),
+            settings.get("library_sort_by", "last_read"),
             now
         ))
 
