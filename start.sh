@@ -17,4 +17,9 @@ echo "Starting server on port $PORT..."
 echo "Access locally: http://localhost:$PORT"
 echo "Access on iOS / LAN: http://$(ipconfig getifaddr en0 2>/dev/null || echo 'localhost'):$PORT"
 echo "=========================================================="
-python3 server.py
+PYTHON_CMD="python3"
+if [ -x "/Library/Developer/CommandLineTools/usr/bin/python3" ]; then
+  PYTHON_CMD="/Library/Developer/CommandLineTools/usr/bin/python3"
+fi
+
+exec "$PYTHON_CMD" server.py
