@@ -25,7 +25,7 @@
   </style>
 
   <!-- Styles -->
-  <link rel="stylesheet" href="/css/brutalist.css?v=12.0">
+  <link rel="stylesheet" href="/css/brutalist.css?v=13.0">
 </head>
 <body style="background-color: #141518; color: #f0f0f0;">
 
@@ -170,6 +170,7 @@
         <!-- Chapter Bottom Navigation -->
         <nav class="reader-footer-nav" id="readerFooterNav">
           <button class="btn-brutal" id="footerPrevBtn">Previous Chapter</button>
+          <button class="btn-brutal" id="footerLibraryBtn">Library</button>
           <button class="btn-brutal" id="footerMenuBtn">Menu</button>
           <button class="btn-brutal btn-brutal-accent" id="footerNextBtn">Next Chapter</button>
         </nav>
@@ -353,7 +354,10 @@
         <h3 class="master-panel-title" id="masterPanelTitle">Menu</h3>
         <div class="master-panel-subtitle" id="masterPanelSubtitle" style="font-size: 11px; color: var(--text-muted); margin-top: 2px;"></div>
       </div>
-      <button class="btn-brutal" id="closeMasterPanelBtn" style="min-height: 30px; padding: 3px 10px;">Close</button>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <button class="btn-brutal" id="drawerBackToLibraryBtn" style="min-height: 30px; padding: 3px 10px;">Library</button>
+        <button class="btn-brutal" id="closeMasterPanelBtn" style="min-height: 30px; padding: 3px 10px;">Close</button>
+      </div>
     </div>
 
     <!-- Navigation Tabs inside Master Side Panel -->
@@ -597,9 +601,9 @@
         </div>
 
         <div id="epubDropzone" style="border: 1px dashed var(--border-color); border-radius: 8px; background: var(--bg-surface); padding: 32px; text-align: center; cursor: pointer; margin-bottom: 14px;">
-          <div style="font-size: 14px; font-weight: 600;">Drag and drop .epub files here or click to browse</div>
-          <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Supports multiple volume files at once</div>
-          <input type="file" id="epubFileInput" accept=".epub" multiple style="display: none;" />
+          <div style="font-size: 14px; font-weight: 600;">Drag and drop .epub or .pdf files here or click to browse</div>
+          <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Supports EPUB &amp; PDF files (including multiple volumes at once)</div>
+          <input type="file" id="epubFileInput" accept=".epub,.pdf,application/pdf,application/epub+zip" multiple style="display: none;" />
         </div>
 
         <div id="uploadFileList"></div>

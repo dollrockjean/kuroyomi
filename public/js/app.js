@@ -161,12 +161,27 @@ const App = {
       this.switchView('library');
     });
 
-    document.getElementById('backToLibraryBtn').addEventListener('click', () => {
+    const handleGoToLibrary = (e) => {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
       AutoScroll.stop();
       TTSEngine.stop();
+      this.closeMasterPanel();
+      this.closeMobileQuickSheet();
       this.switchView('library');
       this.loadLibrary();
-    });
+    };
+
+    const backToLib = document.getElementById('backToLibraryBtn');
+    if (backToLib) backToLib.addEventListener('click', handleGoToLibrary);
+
+    const drawerBackToLib = document.getElementById('drawerBackToLibraryBtn');
+    if (drawerBackToLib) drawerBackToLib.addEventListener('click', handleGoToLibrary);
+
+    const footerLib = document.getElementById('footerLibraryBtn');
+    if (footerLib) footerLib.addEventListener('click', handleGoToLibrary);
 
     // Master Panel Triggers
     document.getElementById('headerMenuBtn').addEventListener('click', () => this.openMasterPanel('tabSync'));
@@ -1218,7 +1233,7 @@ const App = {
     };
     document.getElementById('resumeChapterTag').textContent = `${lastRead.volume_title} · ${lastRead.chapter_title}`;
     
-    const pct = Math.round(lastRead.scroll_percent || 0);
+    const pct = Math.round(lastRead.progress_overall_percent !== undefined ? lastRead.progress_overall_percent : (lastRead.scroll_percent || 0));
     document.getElementById('resumeProgressBar').style.width = `${pct}%`;
     document.getElementById('resumeProgressPercent').textContent = `${pct}% Read`;
 
@@ -1328,7 +1343,7 @@ const App = {
     items.forEach(n => {
       const coverSrc = n.cover_data || FALLBACK_COVER;
       const lastReadTag = n.last_chapter_title ? `Last: ${n.last_chapter_title}` : 'Not started';
-      const readPercent = Math.round(n.progress_scroll || 0);
+      const readPercent = Math.round(n.progress_overall_percent !== undefined ? n.progress_overall_percent : (n.progress_scroll || 0));
 
       const triggerCover = () => {
         this.targetCoverNovelId = n.id;
@@ -1483,9 +1498,12 @@ const App = {
   },
 
   handleSelectedFiles(fileList) {
-    this.selectedUploadFiles = Array.from(fileList).filter(f => f.name.toLowerCase().endsWith('.epub'));
+    this.selectedUploadFiles = Array.from(fileList).filter(f => {
+      const lower = f.name.toLowerCase();
+      return lower.endsWith('.epub') || lower.endsWith('.pdf');
+    });
     if (!this.selectedUploadFiles.length) {
-      alert('Please select .epub files.');
+      alert('Please select .epub or .pdf files.');
       return;
     }
 
@@ -1511,7 +1529,7 @@ const App = {
 
   async performUpload() {
     if (!this.selectedUploadFiles.length) {
-      alert('Please select at least one .epub file.');
+      alert('Please select at least one .epub or .pdf file.');
       return;
     }
 
@@ -1579,6 +1597,8 @@ const App = {
       readerView.style.display = 'flex';
       if (resetScroll) window.scrollTo(0, 0);
     } else {
+      this.closeMasterPanel();
+      this.closeMobileQuickSheet();
       if (appHeader) appHeader.style.display = 'flex';
       libView.style.display = 'block';
       readerView.style.display = 'none';

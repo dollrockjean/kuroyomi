@@ -12,10 +12,8 @@ def _resolve_db_path():
         return "/data/reader.db"
     return os.path.join(os.path.dirname(__file__), "reader.db")
 
-DB_PATH = _resolve_db_path()
-
 def get_db():
-    conn = sqlite3.connect(DB_PATH, timeout=10.0)
+    conn = sqlite3.connect(_resolve_db_path(), timeout=10.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     try:
@@ -194,10 +192,11 @@ def ensure_user_exists(user_id: str, sync_key: str = None):
     if not cur.fetchone():
         now = time.time()
         key = sync_key or f"READER-{uuid.uuid4().hex[:8].upper()}"
+        is_seeded = 0 if (user_id == 'universal_device_mirror' or user_id.startswith('test_user')) else 1
         cur.execute("""
             INSERT OR IGNORE INTO users (id, sync_key, display_name, demo_seeded, created_at, last_active)
-            VALUES (?, ?, ?, 1, ?, ?)
-        """, (user_id, key, "Reader", now, now))
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (user_id, key, "Reader", is_seeded, now, now))
         cur.execute("""
             INSERT OR IGNORE INTO user_settings (user_id, updated_at)
             VALUES (?, ?)

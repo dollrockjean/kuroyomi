@@ -884,6 +884,19 @@ body {
   pointer-events: none;
 }
 
+#backToLibraryBtn {
+  cursor: pointer;
+  position: relative;
+  z-index: 105;
+  pointer-events: auto !important;
+}
+
+#drawerBackToLibraryBtn,
+#footerLibraryBtn {
+  cursor: pointer;
+  pointer-events: auto !important;
+}
+
 .reader-ch-info {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2249,10 +2262,12 @@ body {
 
   .reader-footer-nav {
     justify-content: center;
+    gap: 8px;
   }
 
-  #footerMenuBtn {
-    max-width: 220px;
+  #footerMenuBtn,
+  #footerLibraryBtn {
+    max-width: 150px;
     width: 100%;
   }
 

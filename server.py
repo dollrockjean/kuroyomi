@@ -22,6 +22,7 @@ for p in [os.path.expanduser("~/Library/Python/3.9/lib/python/site-packages"),
 
 import database
 import epub_parser
+import pdf_parser
 import sample_books
 
 PORT = int(os.environ.get("PORT", 8000))
@@ -287,13 +288,15 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 return
 
             # Check if user needs demo novel seeded initially
+            database.ensure_user_exists(user_id)
             cur.execute("SELECT demo_seeded, sync_key FROM users WHERE id = ?", (user_id,))
             user_row = cur.fetchone()
             if user_row and not user_row["demo_seeded"]:
                 cur.execute("SELECT COUNT(*) as cnt FROM novels WHERE user_id = ?", (user_id,))
                 if cur.fetchone()["cnt"] == 0:
-                    if user_row["sync_key"] == "DEFAULT_READER":
+                    if user_row["sync_key"] == "DEFAULT_READER" or user_id.startswith("test_user"):
                         sample_books.seed_demo_novel(user_id)
+                        conn.commit()
                     else:
                         cur.execute("UPDATE users SET demo_seeded = 1 WHERE id = ?", (user_id,))
                         conn.commit()
@@ -309,7 +312,8 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                        p.paragraph_index as progress_paragraph,
                        p.scroll_percent as progress_scroll,
                        p.updated_at as last_read_at,
-                       last_ch.title as last_chapter_title
+                       last_ch.title as last_chapter_title,
+                       last_ch.global_index as last_chapter_global_index
                 FROM novels n
                 LEFT JOIN volumes v ON n.id = v.novel_id
                 LEFT JOIN chapters c ON n.id = c.novel_id
@@ -320,6 +324,15 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 ORDER BY COALESCE(p.updated_at, n.created_at) DESC
             """, (user_id,))
             rows = [dict(r) for r in cur.fetchall()]
+            for r in rows:
+                tot = r.get("total_chapters") or 0
+                g_idx = r.get("last_chapter_global_index")
+                s_pct = r.get("progress_scroll") or 0.0
+                if tot > 0 and g_idx is not None and g_idx > 0:
+                    overall = ((g_idx - 1) + (s_pct / 100.0)) / float(tot) * 100.0
+                    r["progress_overall_percent"] = round(min(100.0, max(0.0, overall)), 1)
+                else:
+                    r["progress_overall_percent"] = 0.0
             conn.close()
             self.send_json({"novels": rows})
             return
@@ -425,8 +438,20 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 ORDER BY p.updated_at DESC LIMIT 1
             """, (user_id,))
             last_row = cur.fetchone()
+            last_data = dict(last_row) if last_row else None
+            if last_data:
+                cur.execute("SELECT COUNT(*) as total_chapters FROM chapters WHERE novel_id = ?", (last_data["novel_id"],))
+                tot_row = cur.fetchone()
+                tot = tot_row["total_chapters"] if tot_row else 1
+                g_idx = last_data.get("chapter_global_index") or 1
+                s_pct = last_data.get("scroll_percent") or 0.0
+                if tot > 0:
+                    overall = ((g_idx - 1) + (s_pct / 100.0)) / float(tot) * 100.0
+                    last_data["progress_overall_percent"] = round(min(100.0, max(0.0, overall)), 1)
+                else:
+                    last_data["progress_overall_percent"] = 0.0
             conn.close()
-            self.send_json({"last_read": dict(last_row) if last_row else None})
+            self.send_json({"last_read": last_data})
             return
 
         # 7. Get Settings
@@ -757,7 +782,7 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                     file_items.append(it)
 
         if not file_items:
-            self.send_json({"error": "No EPUB files provided"}, status=400)
+            self.send_json({"error": "No EPUB or PDF files provided"}, status=400)
             return
 
         # Parse each file
@@ -766,8 +791,12 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             fname = it.filename
             data = it.file.read()
             try:
-                parsed_res = epub_parser.parse_single_epub(data, fname)
-                vol_num = epub_parser.detect_volume_number(fname, parsed_res['metadata']['title'])
+                if fname.lower().endswith('.pdf'):
+                    parsed_res = pdf_parser.parse_single_pdf(data, fname)
+                    vol_num = pdf_parser.detect_volume_number(fname, parsed_res['metadata']['title'])
+                else:
+                    parsed_res = epub_parser.parse_single_epub(data, fname)
+                    vol_num = epub_parser.detect_volume_number(fname, parsed_res['metadata']['title'])
                 parsed_files.append({
                     'filename': fname,
                     'volume_number': vol_num,

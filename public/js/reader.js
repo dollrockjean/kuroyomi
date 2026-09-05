@@ -15,6 +15,21 @@ const Reader = {
     this.bindScroll();
     this.bindCenterScreenTap();
     this.initOverscrollNavigation();
+    this.bindDesktopHover();
+  },
+
+  bindDesktopHover() {
+    window.addEventListener('mousemove', (e) => {
+      if (!this.currentChapter || document.getElementById('readerView').style.display === 'none') return;
+      // Moving cursor to within 60px of the top edge un-hides top navigation bar on desktop
+      if (e.clientY <= 60) {
+        const topBar = document.getElementById('readerTopBar');
+        if (topBar && topBar.classList.contains('minimized')) {
+          topBar.classList.remove('minimized');
+          this.isControlsVisible = true;
+        }
+      }
+    }, { passive: true });
   },
 
   bindScroll() {
@@ -43,12 +58,8 @@ const Reader = {
       }
       this.lastScrollY = currentScrollY;
 
-      // Progress calculation
-      const docHeight = document.documentElement.scrollHeight - window.innerHeight;
-      const percent = docHeight > 0 ? Math.min(100, Math.max(0, (currentScrollY / docHeight) * 100)) : 0;
-      
-      const pill = document.getElementById('readerProgressPill');
-      if (pill) pill.textContent = `${Math.round(percent)}%`;
+      // Whole-book reading progress calculation across all volumes & chapters
+      this.updateProgressPill(currentScrollY);
 
       // Silently debounce saving progress to cloud without toasts
       if (this.isRestoringScroll) return;
@@ -59,6 +70,29 @@ const Reader = {
         }
       }, 500);
     }, { passive: true });
+  },
+
+  updateProgressPill(scrollY = window.scrollY) {
+    if (!this.currentChapter) return;
+    const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+    const chapterScrollFrac = docHeight > 0 ? Math.min(1, Math.max(0, scrollY / docHeight)) : 0;
+    
+    let overallPercent = 0;
+    const totalCh = (this.chapterList && this.chapterList.length) ? this.chapterList.length : 1;
+    let chIdx = 0;
+    if (typeof this.currentChapter.global_index === 'number' && this.currentChapter.global_index >= 1) {
+      chIdx = this.currentChapter.global_index - 1;
+    } else {
+      chIdx = this.chapterList.findIndex(c => c.id === this.currentChapter.id);
+      if (chIdx < 0) chIdx = 0;
+    }
+    overallPercent = Math.min(100, Math.max(0, ((chIdx + chapterScrollFrac) / totalCh) * 100));
+    
+    const pill = document.getElementById('readerProgressPill');
+    if (pill) {
+      pill.textContent = `${Math.round(overallPercent)}%`;
+      pill.title = `Overall Book Progress: ${overallPercent.toFixed(1)}% (Chapter ${(this.currentChapter && this.currentChapter.global_index) || (chIdx + 1)} of ${totalCh})`;
+    }
   },
 
   getVisibleParagraphIndex() {
@@ -389,6 +423,7 @@ const Reader = {
       setupBtn(footerNextBtn, ch.next_chapter);
 
       App.hideLoading();
+      this.updateProgressPill();
 
       TTSEngine.refreshParagraphs();
       if (typeof TTSEngine.updateAudiobookModalContent === 'function') {

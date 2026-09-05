@@ -129,9 +129,10 @@ def seed_demo_novel(user_id: str):
     
     # Check if novel already seeded for this user
     cur.execute("SELECT id FROM novels WHERE user_id = ? AND title = ?", (user_id, "Chronicles of the Aether Sovereign"))
-    if cur.fetchone():
+    row = cur.fetchone()
+    if row:
         conn.close()
-        return
+        return row["id"]
         
     now = time.time()
     novel_id = f"nov_{uuid.uuid4().hex[:12]}"
