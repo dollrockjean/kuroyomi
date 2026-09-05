@@ -327,3 +327,6 @@ const IDB = {
     }
   }
 };
+
+window.Storage = Storage;
+window.IDB = IDB;

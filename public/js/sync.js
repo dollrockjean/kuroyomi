@@ -313,3 +313,5 @@ const SyncService = {
     }
   }
 };
+
+window.SyncService = SyncService;

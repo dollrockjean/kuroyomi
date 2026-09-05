@@ -500,7 +500,6 @@ const Reader = {
     }
     return null;
   },
-  },
 
   renderTOC() {
     const listEl = document.getElementById('tocList');
@@ -591,3 +590,5 @@ const Reader = {
     });
   }
 };
+
+window.Reader = Reader;

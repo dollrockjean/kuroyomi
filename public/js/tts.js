@@ -1201,3 +1201,5 @@ const TTSEngine = {
     });
   }
 };
+
+window.TTSEngine = TTSEngine;

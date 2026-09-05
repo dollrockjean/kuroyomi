@@ -129,3 +129,5 @@ const AutoScroll = {
     }
   }
 };
+
+window.AutoScroll = AutoScroll;
