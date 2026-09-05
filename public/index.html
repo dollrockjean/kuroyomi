@@ -527,6 +527,18 @@
           </button>
         </div>
 
+        <!-- 24/7 Cloud Keepalive Ping URL Helper -->
+        <div style="border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-surface); padding: 14px; margin-bottom: 16px;">
+          <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase;">Server Keepalive Ping URL</div>
+          <p style="font-size: 11px; color: var(--text-muted); margin-top: 4px; margin-bottom: 8px;">
+            Paste this URL into cron-job.org to keep your cloud server awake 24/7 with zero boot screens:
+          </p>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <input type="text" id="keepaliveUrlInput" class="form-input" style="font-size: 11px; font-family: monospace;" readonly />
+            <button class="btn-brutal" id="copyKeepaliveUrlBtn" style="white-space: nowrap; font-size: 11px; padding: 6px 10px;">Copy URL</button>
+          </div>
+        </div>
+
         <div class="form-group">
           <label class="form-label">Pair Another Device Key</label>
           <div style="display: flex; gap: 8px;">

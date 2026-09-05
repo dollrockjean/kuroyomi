@@ -891,6 +891,18 @@ const App = {
         });
       });
     }
+
+    const copyPingBtn = document.getElementById('copyKeepaliveUrlBtn');
+    if (copyPingBtn) {
+      copyPingBtn.addEventListener('click', () => {
+        const pingUrl = `${window.location.origin}/api/health`;
+        navigator.clipboard.writeText(pingUrl).then(() => {
+          this.showToast('Copied keepalive URL to clipboard!');
+        }).catch(() => {
+          prompt('Copy this Keepalive URL for cron-job.org:', pingUrl);
+        });
+      });
+    }
   },
 
   bindBackupRestoreEvents() {
@@ -973,6 +985,11 @@ const App = {
 
     const toggle = document.getElementById('rememberDeviceToggle');
     if (toggle) toggle.checked = Storage.isRemembered();
+
+    const keepaliveInput = document.getElementById('keepaliveUrlInput');
+    if (keepaliveInput) {
+      keepaliveInput.value = `${window.location.origin}/api/health`;
+    }
   },
 
   updateOfflineBadges(isOffline) {
