@@ -51,9 +51,12 @@ const Reader = {
       if (pill) pill.textContent = `${Math.round(percent)}%`;
 
       // Silently debounce saving progress to cloud without toasts
+      if (this.isRestoringScroll) return;
       if (this.scrollDebounce) clearTimeout(this.scrollDebounce);
       this.scrollDebounce = setTimeout(() => {
-        this.saveCurrentProgress();
+        if (!this.isRestoringScroll) {
+          this.saveCurrentProgress();
+        }
       }, 500);
     }, { passive: true });
   },
@@ -248,18 +251,31 @@ const Reader = {
       let targetPid = 0;
       let targetPercent = 0;
 
-      if (resume && data.progress) {
-        targetChapterId = data.progress.chapter_id;
-        targetPid = data.progress.paragraph_index || 0;
-        targetPercent = data.progress.scroll_percent || 0;
-      }
+      const local = Storage.getLocalProgress(novelId);
+      if (resume) {
+        if (data.progress && data.progress.chapter_id) {
+          targetChapterId = data.progress.chapter_id;
+          targetPid = data.progress.paragraph_index || 0;
+          targetPercent = data.progress.scroll_percent || 0;
+        }
 
-      if (resume && !targetChapterId) {
-        const local = Storage.getLocalProgress(novelId);
-        if (local) {
-          targetChapterId = local.chapterId;
-          targetPid = local.paragraphIndex || 0;
-          targetPercent = local.scrollPercent || 0;
+        // Compare with local storage; choose whichever has valid deeper reading progress
+        if (local && local.chapterId) {
+          if (!targetChapterId) {
+            targetChapterId = local.chapterId;
+            targetPid = local.paragraphIndex || 0;
+            targetPercent = local.scrollPercent || 0;
+          } else if (local.chapterId === targetChapterId) {
+            if ((local.paragraphIndex || 0) > targetPid || (local.scrollPercent || 0) > targetPercent) {
+              targetPid = local.paragraphIndex || 0;
+              targetPercent = local.scrollPercent || 0;
+            }
+          } else if (targetPid === 0 && targetPercent === 0 && (local.paragraphIndex > 0 || local.scrollPercent > 0)) {
+            // Local has real spot on a chapter while cloud was reset to 0
+            targetChapterId = local.chapterId;
+            targetPid = local.paragraphIndex || 0;
+            targetPercent = local.scrollPercent || 0;
+          }
         }
       }
 
@@ -274,15 +290,16 @@ const Reader = {
       this.targetParagraphIndex = targetPid;
       this.targetScrollPercent = targetPercent;
 
+      // Switch to reader view FIRST so container layout and dimensions exist before scrolling
+      App.switchView('reader', false);
       await this.loadChapter(targetChapterId, true);
-      App.switchView('reader');
     } catch (e) {
       App.hideLoading();
       alert('Could not open novel: ' + e.message);
     }
   },
 
-  async loadChapter(chapterId, scrollToTarget = false) {
+  async loadChapter(chapterId, scrollToTarget = false, isTtsAdvance = false) {
     App.showLoading('Loading chapter...');
     try {
       const userId = SyncService.currentUserId || Storage.getUserId() || 'universal_device_mirror';
@@ -378,25 +395,57 @@ const Reader = {
         TTSEngine.updateAudiobookModalContent();
       }
 
-      // Silent scroll position restoration
-      if (scrollToTarget && this.targetParagraphIndex > 0) {
-        setTimeout(() => {
-          const targetP = document.getElementById(`p-${this.targetParagraphIndex}`);
-          if (targetP) {
-            targetP.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          } else if (this.targetScrollPercent > 0) {
-            const docH = document.documentElement.scrollHeight - window.innerHeight;
-            window.scrollTo(0, (this.targetScrollPercent / 100) * docH);
+      // Reliable reading spot restoration
+      if (scrollToTarget && (this.targetParagraphIndex > 0 || this.targetScrollPercent > 0)) {
+        this.isRestoringScroll = true;
+        const targetPid = this.targetParagraphIndex;
+        const targetPct = this.targetScrollPercent;
+
+        const performScroll = () => {
+          let found = false;
+          if (targetPid > 0) {
+            let el = document.getElementById(`p-${targetPid}`);
+            if (!el) {
+              el = document.querySelector(`[data-pid="${targetPid}"]`);
+            }
+            if (!el) {
+              const allP = document.querySelectorAll('#readerContent .reader-paragraph, #readerContent .reader-heading');
+              if (allP && allP[targetPid]) {
+                el = allP[targetPid];
+              }
+            }
+            if (el) {
+              el.scrollIntoView({ behavior: 'auto', block: 'start' });
+              found = true;
+            }
           }
-          this.targetParagraphIndex = 0;
-          this.targetScrollPercent = 0;
-        }, 150);
+
+          if (!found && targetPct > 0) {
+            const docH = document.documentElement.scrollHeight - window.innerHeight;
+            if (docH > 0) {
+              window.scrollTo(0, (targetPct / 100) * docH);
+            }
+          }
+
+          setTimeout(() => {
+            this.isRestoringScroll = false;
+            this.targetParagraphIndex = 0;
+            this.targetScrollPercent = 0;
+          }, 350);
+        };
+
+        requestAnimationFrame(() => {
+          setTimeout(performScroll, 60);
+        });
       } else {
-        window.scrollTo(0, 0);
+        if (!isTtsAdvance) {
+          window.scrollTo(0, 0);
+          this.saveCurrentProgress(0, 0);
+        }
       }
 
-      this.saveCurrentProgress(0, 0);
       this.renderTOC();
+      return this.currentChapter;
     } catch (e) {
       App.hideLoading();
       const contentEl = document.getElementById('readerContent');
@@ -415,12 +464,19 @@ const Reader = {
         `;
       }
       App.showToast('Chapter not cached offline yet');
+      return null;
     }
   },
 
-  saveCurrentProgress(pid = null, scrollPercent = 0) {
+  saveCurrentProgress(pid = null, scrollPercent = null) {
     if (!this.currentNovel || !this.currentChapter) return;
+    if (this.isRestoringScroll) return;
+
     if (pid === null) pid = this.getVisibleParagraphIndex();
+    if (scrollPercent === null) {
+      const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+      scrollPercent = docHeight > 0 ? Math.min(100, Math.max(0, (window.scrollY / docHeight) * 100)) : 0;
+    }
 
     SyncService.syncReadingProgress(
       this.currentNovel.id,
@@ -431,16 +487,19 @@ const Reader = {
     );
   },
 
-  loadNextChapter() {
+  async loadNextChapter(isTtsAdvance = false) {
     if (this.currentChapter && this.currentChapter.next_chapter) {
-      this.loadChapter(this.currentChapter.next_chapter.id, false);
+      return await this.loadChapter(this.currentChapter.next_chapter.id, false, isTtsAdvance);
     }
+    return null;
   },
 
-  loadPrevChapter() {
+  async loadPrevChapter(isTtsAdvance = false) {
     if (this.currentChapter && this.currentChapter.prev_chapter) {
-      this.loadChapter(this.currentChapter.prev_chapter.id, false);
+      return await this.loadChapter(this.currentChapter.prev_chapter.id, false, isTtsAdvance);
     }
+    return null;
+  },
   },
 
   renderTOC() {

@@ -28,6 +28,7 @@ const TTSEngine = {
   
   paragraphs: [],
   currentIndex: 0,
+  playbackSessionId: 0,
   onChapterEndCallback: null,
 
   // Real-time word-by-word highlight tracking
@@ -75,7 +76,7 @@ const TTSEngine = {
 
     // Handle audio completion -> move to next paragraph
     this.audioElement.addEventListener('ended', () => {
-      if (this.isPlaying && !this.isPaused) {
+      if (this.isPlaying && !this.isPaused && !this.audioElement.loop) {
         this.speakParagraph(this.currentIndex + 1);
       }
     });
@@ -87,10 +88,28 @@ const TTSEngine = {
 
     this.audioElement.addEventListener('error', (e) => {
       console.warn('Audio playback error:', e);
-      if (this.isPlaying && !this.isPaused) {
+      if (this.isPlaying && !this.isPaused && !this.audioElement.loop) {
         setTimeout(() => this.speakParagraph(this.currentIndex + 1), 600);
       }
     });
+
+    // Setup lock screen & bluetooth media session controls
+    this.setupMediaSession();
+
+    // Allow tapping any paragraph in the reader to jump TTS speech to that paragraph
+    const readerContent = document.getElementById('readerContent');
+    if (readerContent) {
+      readerContent.addEventListener('click', (e) => {
+        if (!this.isPlaying) return;
+        const targetP = e.target.closest('.reader-paragraph, .reader-heading');
+        if (targetP && this.paragraphs && this.paragraphs.length) {
+          const idx = this.paragraphs.indexOf(targetP);
+          if (idx !== -1 && idx !== this.currentIndex) {
+            this.speakParagraph(idx);
+          }
+        }
+      });
+    }
 
     // Wire PC Mini Badge controls
     const pcPlayPause = document.getElementById('ttsPlayPauseBtn');
@@ -503,15 +522,18 @@ const TTSEngine = {
   },
 
   stop() {
+    this.playbackSessionId = (this.playbackSessionId || 0) + 1;
     this.isPlaying = false;
     this.isPaused = false;
     this.audioElement.pause();
+    this.audioElement.loop = false;
     this.audioElement.src = '';
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
     this.setDeviceVoiceMode(false);
     this.clearHighlight();
+    this.clearWordHighlights();
     this.hideBadge();
     this.closeAudiobookModal();
     this.updateAudioUI();
@@ -520,31 +542,31 @@ const TTSEngine = {
   clearHighlight() {
     document.querySelectorAll('.reader-paragraph.speaking-active, .reader-heading.speaking-active')
       .forEach(el => el.classList.remove('speaking-active'));
-    document.querySelectorAll('#audiobookSpokenText .tts-word-active')
-      .forEach(el => el.classList.remove('tts-word-active'));
-    document.querySelectorAll('#audiobookSpokenText .tts-word-spoken')
-      .forEach(el => el.classList.remove('tts-word-spoken'));
-    this.activeWordIndex = -1;
+    this.clearWordHighlights();
   },
 
   async speakParagraph(index) {
     if (!this.isPlaying || this.isPaused) return;
 
+    this.playbackSessionId = (this.playbackSessionId || 0) + 1;
+    const sessionId = this.playbackSessionId;
+
+    // 1. Immediately pause prior playback & cancel speech synthesis so skipping is instantaneous
+    this.audioElement.pause();
+    this.audioElement.loop = false;
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    this.clearWordHighlights();
+
+    // 2. Seamless transition to next chapter if current chapter ended
     if (index >= this.paragraphs.length) {
       this.clearHighlight();
       if (this.sleepMode === 'chapter_end') {
         this.stop();
         return;
       }
-      if (this.onChapterEndCallback) {
-        this.onChapterEndCallback();
-        setTimeout(() => {
-          this.refreshParagraphs();
-          this.speakParagraph(0);
-        }, 1200);
-      } else {
-        this.stop();
-      }
+      await this.advanceToNextChapter();
       return;
     }
 
@@ -552,20 +574,21 @@ const TTSEngine = {
     const el = this.paragraphs[index];
     if (!el) return;
 
-    // Visual highlight
+    // Visual highlight on reader text
     this.clearHighlight();
     el.classList.add('speaking-active');
-
-    // Keep reading view smoothly focused on active spoken text
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
-    // Update audiobook modal content and audio UI
+    // Update audiobook modal content and audio UI immediately
     this.updateAudiobookModalContent();
     this.updateAudioUI();
+    this.updateMediaSessionMetadata();
 
-    // Silently save progress at current spot
+    // Silently save progress with accurate scroll percentage
     if (window.Reader) {
-      window.Reader.saveCurrentProgress(index);
+      const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+      const scrollPct = docHeight > 0 ? Math.round((window.scrollY / docHeight) * 100) : 0;
+      window.Reader.saveCurrentProgress(index, scrollPct);
     }
 
     const textToSpeak = el.innerText.trim();
@@ -574,23 +597,25 @@ const TTSEngine = {
       return;
     }
 
-    // 1. If device is explicitly reported offline by browser
+    // If device is offline
     if (!navigator.onLine) {
       this.setDeviceVoiceMode(true);
       this.speakWithDeviceVoice(textToSpeak, index);
       return;
     }
 
-    // 2. ALWAYS prioritize the main voice selected (realistic cloud neural TTS)
+    // ALWAYS prioritize the main voice selected (realistic cloud neural TTS)
     try {
       const blobUrl = await this.getAudioBlobUrl(textToSpeak, this.selectedVoice, this.rate);
-      if (!this.isPlaying || this.isPaused) return;
+      // If user skipped or paused while fetching was in flight, discard cleanly
+      if (this.playbackSessionId !== sessionId || !this.isPlaying || this.isPaused) return;
 
-      // Cloud synthesis succeeded! If previously fallen back to device voice, restore main cloud voice immediately
+      // Cloud synthesis succeeded! Restore main cloud voice immediately
       if (this.isUsingDeviceVoice) {
         this.setDeviceVoiceMode(false);
       }
 
+      this.audioElement.loop = false;
       this.audioElement.src = blobUrl;
       await this.audioElement.play();
       this.updateAudioUI();
@@ -598,26 +623,85 @@ const TTSEngine = {
       // Pre-fetch next paragraph into memory for seamless instant playback
       this.prefetchNext(index + 1);
     } catch (err) {
+      if (this.playbackSessionId !== sessionId || !this.isPlaying || this.isPaused) return;
       console.warn('Cloud TTS synthesis failed, using device voice fallback for this paragraph:', err);
-      if (!this.isPlaying || this.isPaused) return;
-
-      // Automatically engage offline native voice fallback for this paragraph only
       this.setDeviceVoiceMode(true);
       this.speakWithDeviceVoice(textToSpeak, index);
     }
   },
 
-  async prefetchNext(nextIndex) {
-    const targets = [nextIndex, nextIndex + 1];
-    for (const idx of targets) {
-      if (idx < this.paragraphs.length) {
-        const el = this.paragraphs[idx];
-        const text = el ? el.innerText.trim() : '';
-        if (text) {
-          try {
-            await this.getAudioBlobUrl(text, this.selectedVoice, this.rate);
-          } catch {}
+  playKeepAliveSilence() {
+    // 0.5s silent WAV loop to maintain WebKit background audio session during chapter transition
+    const SILENCE_DATA_URI = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+    try {
+      this.audioElement.loop = true;
+      this.audioElement.src = SILENCE_DATA_URI;
+      this.audioElement.play().catch(() => {});
+    } catch {}
+  },
+
+  async advanceToNextChapter() {
+    if (window.Reader && window.Reader.currentChapter && window.Reader.currentChapter.next_chapter) {
+      const wasModalOpen = document.getElementById('audiobookFullModal')?.style.display === 'flex';
+      const nextId = window.Reader.currentChapter.next_chapter.id;
+      
+      this.clearHighlight();
+      this.clearWordHighlights();
+      this.playKeepAliveSilence();
+
+      const loaded = await window.Reader.loadChapter(nextId, false, true);
+      if (!loaded) {
+        this.stop();
+        return;
+      }
+
+      this.refreshParagraphs();
+      if (this.paragraphs.length > 0) {
+        if (wasModalOpen) {
+          this.openAudiobookModal();
         }
+        await this.speakParagraph(0);
+      } else {
+        this.stop();
+      }
+    } else {
+      this.stop();
+    }
+  },
+
+  async prefetchNext(nextIndex) {
+    if (nextIndex < this.paragraphs.length) {
+      const targets = [nextIndex, nextIndex + 1];
+      for (const idx of targets) {
+        if (idx < this.paragraphs.length) {
+          const el = this.paragraphs[idx];
+          const text = el ? el.innerText.trim() : '';
+          if (text) {
+            try {
+              await this.getAudioBlobUrl(text, this.selectedVoice, this.rate);
+            } catch {}
+          }
+        }
+      }
+    } else {
+      // Near end of chapter -> preload next chapter in background
+      if (window.Reader && window.Reader.currentChapter && window.Reader.currentChapter.next_chapter) {
+        const nextId = window.Reader.currentChapter.next_chapter.id;
+        try {
+          const res = await fetch(`/api/chapters/${encodeURIComponent(nextId)}`);
+          if (res.ok) {
+            const nextCh = await res.json();
+            if (nextCh && nextCh.content_html) {
+              const div = document.createElement('div');
+              div.innerHTML = nextCh.content_html;
+              const firstP = div.querySelector('.reader-paragraph, .reader-heading');
+              const firstText = firstP ? firstP.textContent.trim() : '';
+              if (firstText) {
+                await this.getAudioBlobUrl(firstText, this.selectedVoice, this.rate);
+              }
+            }
+          }
+        } catch {}
       }
     }
   },
@@ -625,6 +709,8 @@ const TTSEngine = {
   nextParagraph() {
     if (this.currentIndex < this.paragraphs.length - 1) {
       this.speakParagraph(this.currentIndex + 1);
+    } else {
+      this.advanceToNextChapter();
     }
   },
 
@@ -638,9 +724,10 @@ const TTSEngine = {
     if (window.Reader && window.Reader.currentChapter && window.Reader.currentChapter.next_chapter) {
       const wasModalOpen = document.getElementById('audiobookFullModal')?.style.display === 'flex';
       const nextId = window.Reader.currentChapter.next_chapter.id;
-      this.audioElement.pause();
       this.clearHighlight();
-      await window.Reader.loadChapter(nextId, false);
+      this.clearWordHighlights();
+      this.playKeepAliveSilence();
+      await window.Reader.loadChapter(nextId, false, true);
       this.refreshParagraphs();
       this.start(0);
       if (wasModalOpen) {
@@ -653,9 +740,10 @@ const TTSEngine = {
     if (window.Reader && window.Reader.currentChapter && window.Reader.currentChapter.prev_chapter) {
       const wasModalOpen = document.getElementById('audiobookFullModal')?.style.display === 'flex';
       const prevId = window.Reader.currentChapter.prev_chapter.id;
-      this.audioElement.pause();
       this.clearHighlight();
-      await window.Reader.loadChapter(prevId, false);
+      this.clearWordHighlights();
+      this.playKeepAliveSilence();
+      await window.Reader.loadChapter(prevId, false, true);
       this.refreshParagraphs();
       this.start(0);
       if (wasModalOpen) {
@@ -842,6 +930,7 @@ const TTSEngine = {
   syncWordHighlight() {
     if (!this.currentWordList || this.currentWordList.length === 0) return;
     if (!this.audioElement || !this.audioElement.duration || isNaN(this.audioElement.duration)) return;
+    if (this.audioElement.paused) return;
 
     const progress = Math.min(1.0, Math.max(0, this.audioElement.currentTime / this.audioElement.duration));
     const targetChar = Math.floor(progress * (this.currentSpokenLength || 1));
@@ -956,6 +1045,52 @@ const TTSEngine = {
     }
 
     this.updateSleepBadge();
+
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.playbackState = isPlayingState ? 'playing' : 'paused';
+    }
+  },
+
+  setupMediaSession() {
+    if (!('mediaSession' in navigator)) return;
+    try {
+      navigator.mediaSession.setActionHandler('play', () => {
+        if (this.isPlaying && this.isPaused) {
+          this.resume();
+        } else if (!this.isPlaying) {
+          this.start();
+        }
+      });
+      navigator.mediaSession.setActionHandler('pause', () => {
+        this.pause();
+      });
+      navigator.mediaSession.setActionHandler('nexttrack', () => {
+        this.nextParagraph();
+      });
+      navigator.mediaSession.setActionHandler('previoustrack', () => {
+        this.prevParagraph();
+      });
+    } catch (e) {
+      console.warn('MediaSession handler error:', e);
+    }
+  },
+
+  updateMediaSessionMetadata() {
+    if (!('mediaSession' in navigator) || !window.MediaMetadata) return;
+    try {
+      const novelTitle = (window.Reader && window.Reader.currentNovel && window.Reader.currentNovel.title) || 'KuroYomi';
+      const chTitle = (window.Reader && window.Reader.currentChapter && window.Reader.currentChapter.title) || 'Audiobook';
+
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: chTitle,
+        artist: novelTitle,
+        album: 'KuroYomi Audiobook',
+        artwork: [
+          { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+          { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' }
+        ]
+      });
+    } catch (e) {}
   },
 
   applySavedCornerPosition() {

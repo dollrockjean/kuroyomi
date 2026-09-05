@@ -26,56 +26,6 @@ window.ReaderSettings = {
   library_sort_by: 'last_read'
 };
 
-const SplashScreen = {
-  element: null,
-  statusText: null,
-  hintText: null,
-  bypassBtn: null,
-  wakeTimer: null,
-  isDismissed: false,
-
-  init(onBypass) {
-    this.element = document.getElementById('appSplashScreen');
-    this.statusText = document.getElementById('splashStatusText');
-    this.hintText = document.getElementById('splashServerHint');
-    this.bypassBtn = document.getElementById('splashBypassBtn');
-
-    if (this.bypassBtn) {
-      this.bypassBtn.addEventListener('click', () => {
-        if (onBypass) onBypass();
-        this.dismiss();
-      });
-    }
-
-    // After 2.4s, if still showing, detect cold start & offer offline library bypass
-    this.wakeTimer = setTimeout(() => {
-      if (!this.isDismissed && this.element) {
-        if (this.statusText) this.statusText.textContent = 'Connecting to server...';
-        if (this.hintText) this.hintText.style.display = 'block';
-        if (this.bypassBtn) this.bypassBtn.style.display = 'inline-block';
-      }
-    }, 2400);
-  },
-
-  setStatus(text) {
-    if (this.statusText) this.statusText.textContent = text;
-  },
-
-  dismiss() {
-    if (this.isDismissed) return;
-    this.isDismissed = true;
-    if (this.wakeTimer) clearTimeout(this.wakeTimer);
-    if (this.element) {
-      this.element.classList.add('splash-hidden');
-      setTimeout(() => {
-        if (this.element && this.element.parentElement) {
-          this.element.style.display = 'none';
-        }
-      }, 400);
-    }
-  }
-};
-
 const App = {
   currentView: 'library',
   novels: [],
@@ -119,13 +69,6 @@ const App = {
   },
 
   async init() {
-    SplashScreen.init(async () => {
-      console.log('[Splash] User tapped Continue Reading Offline');
-      try {
-        await this.loadLibrary(false);
-      } catch (e) {}
-      this.pollServerWakeUp();
-    });
 
     try {
       // 1. Initialize reading engines first
@@ -208,7 +151,6 @@ const App = {
       this.pollServerWakeUp();
     } finally {
       this.hideLoading();
-      SplashScreen.dismiss();
     }
   },
 
@@ -1608,7 +1550,7 @@ const App = {
     }
   },
 
-  switchView(view) {
+  switchView(view, resetScroll = true) {
     this.currentView = view;
     const appHeader = document.querySelector('.app-header');
     const libView = document.getElementById('libraryView');
@@ -1618,12 +1560,12 @@ const App = {
       if (appHeader) appHeader.style.display = 'none';
       libView.style.display = 'none';
       readerView.style.display = 'flex';
-      window.scrollTo(0, 0);
+      if (resetScroll) window.scrollTo(0, 0);
     } else {
       if (appHeader) appHeader.style.display = 'flex';
       libView.style.display = 'block';
       readerView.style.display = 'none';
-      window.scrollTo(0, 0);
+      if (resetScroll) window.scrollTo(0, 0);
     }
   },
 
