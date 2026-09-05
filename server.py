@@ -294,7 +294,7 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             if user_row and not user_row["demo_seeded"]:
                 cur.execute("SELECT COUNT(*) as cnt FROM novels WHERE user_id = ?", (user_id,))
                 if cur.fetchone()["cnt"] == 0:
-                    if user_row["sync_key"] == "DEFAULT_READER" or user_id.startswith("test_user"):
+                    if user_row["sync_key"] in ("DEFAULT_READER", "READER-PRIMARY") or user_id.startswith("test_user"):
                         sample_books.seed_demo_novel(user_id)
                         conn.commit()
                     else:
@@ -585,8 +585,27 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             user_agent = self.headers.get("User-Agent", "")
             remember = bool(body.get("remember", True))
 
-            if not sync_key:
-                sync_key = f"READER-{secrets.token_hex(5).upper()}"
+            if not sync_key or sync_key in ("DEFAULT_READER", "OFFLINE"):
+                if requested_user_id and requested_user_id.startswith("usr_"):
+                    cur.execute("SELECT sync_key FROM users WHERE id = ?", (requested_user_id,))
+                    u_row = cur.fetchone()
+                    if u_row and u_row["sync_key"]:
+                        sync_key = u_row["sync_key"]
+
+                if not sync_key or sync_key in ("DEFAULT_READER", "OFFLINE"):
+                    cur.execute("""
+                        SELECT u.sync_key FROM users u 
+                        LEFT JOIN novels n ON u.id = n.user_id 
+                        WHERE u.sync_key NOT IN ('OFFLINE', 'DEFAULT_READER')
+                        GROUP BY u.id 
+                        ORDER BY COUNT(n.id) DESC, u.last_active DESC 
+                        LIMIT 1
+                    """)
+                    primary_user = cur.fetchone()
+                    if primary_user and primary_user["sync_key"]:
+                        sync_key = primary_user["sync_key"]
+                    else:
+                        sync_key = "READER-PRIMARY"
 
             user_id = database.get_or_create_user(sync_key, requested_user_id=requested_user_id)
             database.register_device(user_id, device_token, device_name, user_agent, remember)

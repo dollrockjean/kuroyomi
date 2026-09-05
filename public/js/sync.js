@@ -1,4 +1,4 @@
-async function fetchWithTimeout(url, options = {}, timeoutMs = 4000) {
+async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -17,6 +17,7 @@ const SyncService = {
   currentSyncKey: null,
   syncTimeout: null,
   isOnline: true,
+  cloudServerUrl: 'https://kuroyomi-webnovel-reader.onrender.com',
 
   async init() {
     // Register online/offline status listeners once
@@ -38,7 +39,7 @@ const SyncService = {
       this.isOnline = false;
       this.updateStatus('offline', 'OFFLINE');
       this.currentUserId = Storage.getUserId() || 'universal_device_mirror';
-      this.currentSyncKey = Storage.getSyncKey() || 'OFFLINE';
+      this.currentSyncKey = Storage.getSyncKey() || 'READER-PRIMARY';
       return {
         userId: this.currentUserId,
         syncKey: this.currentSyncKey,
@@ -74,7 +75,7 @@ const SyncService = {
       // 3. Try to restore session via device token ("Remember This Device")
       if (isRemembered && deviceToken) {
         try {
-          const res = await fetchWithTimeout(`/api/auth/device-session?device_token=${encodeURIComponent(deviceToken)}`, {}, 2500);
+          const res = await fetchWithTimeout(`/api/auth/device-session?device_token=${encodeURIComponent(deviceToken)}`, {}, 12000);
           if (res.ok) {
             const data = await res.json();
             if (data.authenticated) {
@@ -91,8 +92,11 @@ const SyncService = {
         }
       }
 
-      // 4. Fallback to existing local sync key or create new one
+      // 4. Connect with existing local sync key or link to primary shared library
       let syncKey = Storage.getSyncKey();
+      if (!syncKey || syncKey === 'OFFLINE') {
+        syncKey = 'READER-PRIMARY';
+      }
       const deviceName = Storage.getDeviceName();
       const existingUserId = Storage.getUserId();
 
@@ -106,7 +110,7 @@ const SyncService = {
           device_name: deviceName,
           remember: isRemembered
         })
-      }, 2500);
+      }, 15000);
 
       if (regRes.ok) {
         const regData = await regRes.json();
@@ -126,7 +130,7 @@ const SyncService = {
       this.isOnline = false;
       this.updateStatus('offline', 'OFFLINE');
       this.currentUserId = Storage.getUserId() || 'universal_device_mirror';
-      this.currentSyncKey = Storage.getSyncKey() || 'OFFLINE';
+      this.currentSyncKey = Storage.getSyncKey() || 'READER-PRIMARY';
       return { userId: this.currentUserId, syncKey: this.currentSyncKey, settings: Storage.getLocalSettings() || {} };
     }
   },
@@ -311,6 +315,52 @@ const SyncService = {
     } catch (e) {
       console.warn('Settings cloud sync error:', e);
     }
+  },
+
+  async pushLibraryToCloud(targetRemoteUrl = null) {
+    const cloudUrl = (targetRemoteUrl || this.cloudServerUrl).replace(/\/+$/, '');
+    const userId = this.currentUserId || Storage.getUserId() || 'universal_device_mirror';
+
+    // 1. Fetch current full local backup from local server or IDB mirror
+    let backupData = null;
+    try {
+      const res = await fetch(`/api/backup?user_id=${encodeURIComponent(userId)}`);
+      if (res.ok) {
+        backupData = await res.json();
+      }
+    } catch (e) {
+      console.warn('Could not fetch from local /api/backup, checking IDB mirror:', e);
+    }
+
+    if ((!backupData || !backupData.novels || backupData.novels.length === 0) && typeof IDB !== 'undefined') {
+      backupData = await IDB.getLibraryMirror(userId);
+    }
+
+    if (!backupData || !backupData.novels || backupData.novels.length === 0) {
+      throw new Error('No local novels found to push to cloud.');
+    }
+
+    // 2. Transmit to remote Cloud Server (/api/restore)
+    const restoreRes = await fetch(`${cloudUrl}/api/restore`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_id: userId,
+        backup_data: backupData
+      })
+    });
+
+    if (!restoreRes.ok) {
+      const errText = await restoreRes.text();
+      throw new Error(`Cloud server responded with status ${restoreRes.status}: ${errText}`);
+    }
+
+    const resJson = await restoreRes.json();
+    return {
+      success: true,
+      novelsCount: backupData.novels.length,
+      serverResult: resJson
+    };
   }
 };
 

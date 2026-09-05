@@ -237,5 +237,33 @@ class NovelReaderIntegrationTests(unittest.TestCase):
             for idx, ch in enumerate(novel_data["chapters"], 1):
                 self.assertEqual(ch["global_index"], idx)
 
+    def test_06_auto_primary_device_sync(self):
+        """Test that new/unpaired devices automatically link to the primary user library."""
+        # Device A registers without any sync key
+        req_a = urllib.request.Request(
+            f"{BASE_URL}/api/auth/register-device",
+            data=json.dumps({"sync_key": "", "device_name": "MacBook Air"}).encode('utf-8'),
+            headers={'Content-Type': 'application/json'}
+        )
+        with urllib.request.urlopen(req_a) as resp_a:
+            data_a = json.loads(resp_a.read().decode('utf-8'))
+            self.assertTrue(data_a.get("success"))
+            primary_key = data_a.get("sync_key")
+            user_id_a = data_a.get("user_id")
+            self.assertTrue(primary_key)
+
+        # Device B (iPhone) opens reader without any sync key
+        req_b = urllib.request.Request(
+            f"{BASE_URL}/api/auth/register-device",
+            data=json.dumps({"sync_key": "", "device_name": "iPhone Safari"}).encode('utf-8'),
+            headers={'Content-Type': 'application/json'}
+        )
+        with urllib.request.urlopen(req_b) as resp_b:
+            data_b = json.loads(resp_b.read().decode('utf-8'))
+            self.assertTrue(data_b.get("success"))
+            # Must automatically connect to Device A's primary library
+            self.assertEqual(data_b.get("sync_key"), primary_key)
+            self.assertEqual(data_b.get("user_id"), user_id_a)
+
 if __name__ == "__main__":
     unittest.main()

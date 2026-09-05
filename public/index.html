@@ -25,7 +25,7 @@
   </style>
 
   <!-- Styles -->
-  <link rel="stylesheet" href="/css/brutalist.css?v=13.0">
+  <link rel="stylesheet" href="/css/brutalist.css?v=14.0">
 </head>
 <body style="background-color: #141518; color: #f0f0f0;">
 
@@ -503,6 +503,27 @@
 
       <!-- Tab 5: Sync, Devices & Cloud Safeguard Backup -->
       <div class="master-tab-content" id="tabSync">
+        <!-- Live Cloud Sync Bridge (Render Cloud Server) -->
+        <div style="border: 1px solid var(--accent); border-radius: 6px; background: var(--bg-surface); padding: 14px; margin-bottom: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div style="font-size: 11px; color: var(--accent); font-weight: 700; text-transform: uppercase;">Cloud Server (Render)</div>
+            <span class="badge-brutal accent" style="font-size: 10px;">Always-On Cloud</span>
+          </div>
+          <p style="font-size: 11px; color: var(--text-muted); margin-top: 6px; margin-bottom: 8px; line-height: 1.4;">
+            Read from anywhere, even when your Mac is closed or sleeping:
+          </p>
+          <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 10px;">
+            <input type="text" id="cloudServerUrlInput" class="form-input" style="font-size: 11px; font-family: monospace;" value="https://kuroyomi-webnovel-reader.onrender.com" readonly />
+            <a href="https://kuroyomi-webnovel-reader.onrender.com" target="_blank" class="btn-brutal" style="white-space: nowrap; font-size: 11px; padding: 6px 10px; text-decoration: none; display: inline-flex; align-items: center;">Open Cloud</a>
+          </div>
+          <button class="btn-brutal btn-brutal-accent" id="pushToCloudBtn" style="width: 100%; font-size: 12px; padding: 10px; font-weight: 700;">
+            Push All Books &amp; Progress to Cloud
+          </button>
+          <div style="font-size: 10px; color: var(--text-muted); margin-top: 6px;" id="pushToCloudStatus">
+            Uploads all local books to Render so your phone can read them 24/7.
+          </div>
+        </div>
+
         <div style="border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-surface); padding: 14px; margin-bottom: 16px;">
           <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase;">Your Sync Key</div>
           <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">
@@ -637,11 +658,11 @@
   <input type="file" id="novelCoverInput" accept="image/*" style="display: none;" />
 
   <!-- Application Scripts -->
-  <script src="/js/storage.js?v=12.0"></script>
-  <script src="/js/sync.js?v=12.0"></script>
-  <script src="/js/autoscroll.js?v=12.0"></script>
-  <script src="/js/tts.js?v=12.0"></script>
-  <script src="/js/reader.js?v=12.0"></script>
-  <script src="/js/app.js?v=12.0"></script>
+  <script src="/js/storage.js?v=14.0"></script>
+  <script src="/js/sync.js?v=14.0"></script>
+  <script src="/js/autoscroll.js?v=14.0"></script>
+  <script src="/js/tts.js?v=14.0"></script>
+  <script src="/js/reader.js?v=14.0"></script>
+  <script src="/js/app.js?v=14.0"></script>
 </body>
 </html>

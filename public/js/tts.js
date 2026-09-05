@@ -15,6 +15,7 @@ const TTS_ICONS = {
 const TTSEngine = {
   audioElement: new Audio(),
   testAudioElement: new Audio(),
+  keepAliveAudio: null,
   blobCache: new Map(),
   
   isPlaying: false,
@@ -282,7 +283,7 @@ const TTSEngine = {
     return pct >= 0 ? `+${pct}%` : `${pct}%`;
   },
 
-  async getAudioBlobUrl(text, voiceId, rateVal) {
+  async getAudioBlobUrl(text, voiceId, rateVal, retries = 2) {
     const cacheKey = `${voiceId}_${rateVal}_${text}`;
     if (this.blobCache.has(cacheKey)) {
       return this.blobCache.get(cacheKey);
@@ -291,21 +292,24 @@ const TTSEngine = {
     const rateParam = this.getRateParam(rateVal);
     const url = `/api/tts/speak?text=${encodeURIComponent(text)}&voice=${encodeURIComponent(voiceId)}&rate=${encodeURIComponent(rateParam)}`;
     
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 14000);
-    try {
-      const res = await fetch(url, { signal: controller.signal });
-      clearTimeout(timer);
-      if (!res.ok) {
-        throw new Error(`Speech synthesis returned status ${res.status}`);
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 20000);
+      try {
+        const res = await fetch(url, { signal: controller.signal });
+        clearTimeout(timer);
+        if (!res.ok) {
+          throw new Error(`Speech synthesis returned status ${res.status}`);
+        }
+        const blob = await res.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        this.blobCache.set(cacheKey, blobUrl);
+        return blobUrl;
+      } catch (err) {
+        clearTimeout(timer);
+        if (attempt === retries) throw err;
+        await new Promise(r => setTimeout(r, 800));
       }
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      this.blobCache.set(cacheKey, blobUrl);
-      return blobUrl;
-    } catch (err) {
-      clearTimeout(timer);
-      throw err;
     }
   },
 
@@ -368,12 +372,34 @@ const TTSEngine = {
     this.paragraphs = Array.from(container.querySelectorAll('.reader-paragraph, .reader-heading'));
   },
 
+  startKeepAlive() {
+    if (!this.keepAliveAudio) {
+      this.keepAliveAudio = new Audio();
+    }
+    this.keepAliveAudio.loop = true;
+    this.keepAliveAudio.volume = 0.001; // Inaudible anchor for WebKit/iOS media session
+    if (!this.keepAliveAudio.src || this.keepAliveAudio.src === '') {
+      this.keepAliveAudio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+    }
+    this.keepAliveAudio.play().catch(() => {});
+  },
+
+  stopKeepAlive() {
+    if (this.keepAliveAudio) {
+      try {
+        this.keepAliveAudio.pause();
+        this.keepAliveAudio.src = '';
+      } catch (e) {}
+    }
+  },
+
   start(fromIndex = null) {
     this.refreshParagraphs();
     if (!this.paragraphs.length) return;
 
     // Always prioritize the main voice selected
     this.setDeviceVoiceMode(false);
+    this.startKeepAlive();
 
     if (fromIndex === null || fromIndex === undefined) {
       if (window.Reader && typeof window.Reader.getVisibleParagraphIndex === 'function') {
@@ -487,6 +513,7 @@ const TTSEngine = {
   pause() {
     if (this.isPlaying) {
       this.isPaused = true;
+      this.stopKeepAlive();
       this.audioElement.pause();
       if ('speechSynthesis' in window) {
         window.speechSynthesis.pause();
@@ -498,6 +525,7 @@ const TTSEngine = {
   resume() {
     if (this.isPlaying && this.isPaused) {
       this.isPaused = false;
+      this.startKeepAlive();
       if (this.isUsingDeviceVoice) {
         // Attempt recovery to selected cloud voice on resume
         this.setDeviceVoiceMode(false);
@@ -525,6 +553,7 @@ const TTSEngine = {
     this.playbackSessionId = (this.playbackSessionId || 0) + 1;
     this.isPlaying = false;
     this.isPaused = false;
+    this.stopKeepAlive();
     this.audioElement.pause();
     this.audioElement.loop = false;
     this.audioElement.src = '';

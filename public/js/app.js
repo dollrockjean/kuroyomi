@@ -60,6 +60,7 @@ const App = {
           this._wakePoller = null;
           console.log('[WakeUp] Backend server is now online!');
           SyncService.isOnline = true;
+          await SyncService.init();
           SyncService.updateStatus('synced', 'ONLINE');
           await this.loadLibrary(false);
           SyncService.flushOfflineQueue();
@@ -918,6 +919,36 @@ const App = {
         });
       });
     }
+
+    const pushToCloudBtn = document.getElementById('pushToCloudBtn');
+    if (pushToCloudBtn) {
+      pushToCloudBtn.addEventListener('click', async () => {
+        const statusEl = document.getElementById('pushToCloudStatus');
+        const origText = pushToCloudBtn.textContent;
+        try {
+          pushToCloudBtn.disabled = true;
+          pushToCloudBtn.textContent = 'Pushing to Cloud...';
+          if (statusEl) statusEl.textContent = 'Uploading all local books and reading positions to Render...';
+
+          const result = await SyncService.pushLibraryToCloud();
+          this.showToast(`Cloud Sync Complete: Pushed ${result.novelsCount} novel(s) to Render!`);
+          if (statusEl) {
+            statusEl.textContent = `Uploaded ${result.novelsCount} novel(s) to Render successfully! Available on your phone 24/7.`;
+            statusEl.style.color = 'var(--accent)';
+          }
+        } catch (err) {
+          console.error('Push to cloud error:', err);
+          alert('Could not push library to cloud: ' + err.message);
+          if (statusEl) {
+            statusEl.textContent = `Upload error: ${err.message}`;
+            statusEl.style.color = '#ef4444';
+          }
+        } finally {
+          pushToCloudBtn.disabled = false;
+          pushToCloudBtn.textContent = origText;
+        }
+      });
+    }
   },
 
   bindBackupRestoreEvents() {
@@ -1048,7 +1079,7 @@ const App = {
       if (navigator.onLine && userId && userId !== 'offline_user') {
         try {
           const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 4000);
+          const timer = setTimeout(() => controller.abort(), 20000);
 
           const [novelsRes, lastReadRes] = await Promise.all([
             fetch(`/api/novels?user_id=${encodeURIComponent(userId)}`, { signal: controller.signal }),
