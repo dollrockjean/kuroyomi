@@ -273,7 +273,7 @@ def export_backup_data(user_id: str):
     cur = conn.cursor()
 
     novels = []
-    if user_id:
+    if user_id and user_id not in ("universal_device_mirror", "READER-PRIMARY", "default_user"):
         cur.execute("SELECT * FROM novels WHERE user_id = ?", (user_id,))
         novels = [dict(r) for r in cur.fetchall()]
 
@@ -290,6 +290,9 @@ def export_backup_data(user_id: str):
         if top_u and top_u["id"]:
             fallback_uid = top_u["id"]
             cur.execute("SELECT * FROM novels WHERE user_id = ?", (fallback_uid,))
+            novels = [dict(r) for r in cur.fetchall()]
+        if not novels:
+            cur.execute("SELECT * FROM novels")
             novels = [dict(r) for r in cur.fetchall()]
 
     novel_ids = [n["id"] for n in novels]
