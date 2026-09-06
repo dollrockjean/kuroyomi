@@ -84,6 +84,40 @@ async def test_ui():
                 assert diff < 60, "Resume hero text is disproportionately taller than cover!"
                 assert resume_data["btnWidth"] >= resume_data["heroWidth"] * 0.8, "Resume button should be full-width on mobile!"
 
+            print("--- 1b. Testing Resume Chapter Tag Formatting ---")
+            tag_tests = await eval_js(ws, """
+            (() => {
+                return {
+                    basic: window.App.formatResumeChapterTag({
+                        volume_number: 1,
+                        volume_title: "Volume 1: The Beginning",
+                        chapter_title: "Chapter 20"
+                    }),
+                    withSubtitle: window.App.formatResumeChapterTag({
+                        volume_number: 1,
+                        volume_title: "Volume 1",
+                        chapter_title: "Chapter 20: The Awakening"
+                    }),
+                    numericPrefix: window.App.formatResumeChapterTag({
+                        volume_number: 2,
+                        volume_title: "Volume 2",
+                        chapter_title: "45. Battle for the Throne"
+                    }),
+                    noPrefix: window.App.formatResumeChapterTag({
+                        volume_number: 1,
+                        volume_title: "Volume 1",
+                        chapter_title: "Prologue",
+                        chapter_global_index: 1
+                    })
+                };
+            })()
+            """)
+            print("Resume tag formatting results:", tag_tests)
+            assert tag_tests["basic"] == "Vol. 1, Chap. 20", f"Unexpected: {tag_tests['basic']}"
+            assert tag_tests["withSubtitle"] == "Vol. 1, Chap. 20: The Awakening", f"Unexpected: {tag_tests['withSubtitle']}"
+            assert tag_tests["numericPrefix"] == "Vol. 2, Chap. 45: Battle for the Throne", f"Unexpected: {tag_tests['numericPrefix']}"
+            assert tag_tests["noPrefix"] == "Vol. 1, Chap. 1: Prologue", f"Unexpected: {tag_tests['noPrefix']}"
+
             print("--- 2. Testing Novel Loading and Reader View ---")
             opened = await eval_js(ws, """
             (() => {

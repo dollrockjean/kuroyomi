@@ -1307,7 +1307,10 @@ const App = {
                 novel_id: latest.novel_id,
                 novel_title: book ? book.title : 'Novel',
                 volume_title: vol ? vol.title : '',
+                volume_number: vol ? vol.volume_number : null,
                 chapter_title: ch ? ch.title : '',
+                chapter_index: ch ? ch.chapter_index : null,
+                chapter_global_index: ch ? (ch.global_index || ch.chapter_global_index) : null,
                 scroll_percent: latest.scroll_percent || 0,
                 cover_data: book ? book.cover_data : null
               };
@@ -1447,6 +1450,55 @@ const App = {
     }
   },
 
+  formatResumeChapterTag(lastRead) {
+    if (!lastRead) return '';
+
+    // 1. Determine volume number
+    let volNum = lastRead.volume_number;
+    if (!volNum && lastRead.volume_title) {
+      const vm = lastRead.volume_title.match(/vol(?:ume)?\.?\s*([0-9]+)/i);
+      if (vm) volNum = parseInt(vm[1], 10);
+    }
+    if (!volNum) volNum = 1;
+
+    // 2. Determine chapter number and subtitle
+    const rawTitle = (lastRead.chapter_title || '').trim();
+    let chNum = null;
+    let subtitle = '';
+
+    const prefixMatch = rawTitle.match(/\b(?:chapter|chap|ch|episode|ep|act)\b\.?\s*([0-9]+(?:\.[0-9]+)?)(?:[:\.\-\s]+(.*))?$/i);
+    const leadingNumMatch = !prefixMatch && rawTitle.match(/^([0-9]+(?:\.[0-9]+)?)(?:[:\.\-\s]+(.*))?$/);
+
+    if (prefixMatch) {
+      chNum = prefixMatch[1];
+      subtitle = (prefixMatch[2] || '').trim();
+    } else if (leadingNumMatch) {
+      chNum = leadingNumMatch[1];
+      subtitle = (leadingNumMatch[2] || '').trim();
+    } else {
+      if (lastRead.chapter_global_index !== undefined && lastRead.chapter_global_index !== null) {
+        chNum = lastRead.chapter_global_index;
+      } else if (lastRead.chapter_index !== undefined && lastRead.chapter_index !== null) {
+        chNum = Number(lastRead.chapter_index) + 1;
+      }
+      subtitle = rawTitle;
+    }
+
+    if (subtitle) {
+      subtitle = subtitle.replace(/^[:\.\-\s]+|[:\.\-\s]+$/g, '').trim();
+      const sLower = subtitle.toLowerCase();
+      if (lastRead.novel_title && sLower === lastRead.novel_title.toLowerCase()) subtitle = '';
+      if (lastRead.volume_title && sLower === lastRead.volume_title.toLowerCase()) subtitle = '';
+      if (sLower.startsWith('volume ') || sLower.startsWith('vol.') || sLower === 'chapter' || sLower === 'chap') subtitle = '';
+    }
+
+    let tag = `Vol. ${volNum}, Chap. ${chNum || 1}`;
+    if (subtitle && subtitle.length > 0) {
+      tag += `: ${subtitle}`;
+    }
+    return tag;
+  },
+
   renderResumeHero(lastRead) {
     const hero = document.getElementById('resumeHero');
     if (!lastRead) {
@@ -1461,7 +1513,7 @@ const App = {
     resumeTitle.onclick = () => {
       Reader.openNovel(lastRead.novel_id, true);
     };
-    document.getElementById('resumeChapterTag').textContent = `${lastRead.volume_title} · ${lastRead.chapter_title}`;
+    document.getElementById('resumeChapterTag').textContent = this.formatResumeChapterTag(lastRead);
     
     const pct = Math.round(lastRead.progress_overall_percent !== undefined ? lastRead.progress_overall_percent : (lastRead.scroll_percent || 0));
     document.getElementById('resumeProgressBar').style.width = `${pct}%`;

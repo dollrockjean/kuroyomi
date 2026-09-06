@@ -470,7 +470,7 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             if user_id and user_id not in ("universal_device_mirror", "READER-PRIMARY", "default_user"):
                 cur.execute("""
                     SELECT p.*, n.title as novel_title, n.cover_data, n.author as novel_author,
-                           c.title as chapter_title, c.global_index as chapter_global_index,
+                           c.title as chapter_title, c.chapter_index, c.global_index as chapter_global_index,
                            v.title as volume_title, v.volume_number
                     FROM reading_progress p
                     JOIN novels n ON p.novel_id = n.id
@@ -487,7 +487,7 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 # Fallback to the latest reading progress in the entire library
                 cur.execute("""
                     SELECT p.*, n.title as novel_title, n.cover_data, n.author as novel_author,
-                           c.title as chapter_title, c.global_index as chapter_global_index,
+                           c.title as chapter_title, c.chapter_index, c.global_index as chapter_global_index,
                            v.title as volume_title, v.volume_number
                     FROM reading_progress p
                     JOIN novels n ON p.novel_id = n.id
