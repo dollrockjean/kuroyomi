@@ -351,7 +351,8 @@ const SyncService = {
 
   async pushLibraryToCloud(targetRemoteUrl = null) {
     const cloudUrl = (targetRemoteUrl || this.cloudServerUrl).replace(/\/+$/, '');
-    const userId = this.currentUserId || Storage.getUserId() || 'universal_device_mirror';
+    const userId = this.currentUserId || Storage.getUserId() || 'READER-PRIMARY';
+    const syncKey = this.currentSyncKey || Storage.getSyncKey() || 'READER-PRIMARY';
 
     // 1. Fetch current full local backup from local server or IDB mirror
     let backupData = null;
@@ -361,26 +362,41 @@ const SyncService = {
         backupData = await res.json();
       }
     } catch (e) {
-      console.warn('Could not fetch from local /api/backup, checking IDB mirror:', e);
+      console.warn('Could not fetch from local /api/backup with user_id, trying root backup:', e);
+    }
+
+    if (!backupData || !backupData.novels || backupData.novels.length === 0) {
+      try {
+        const res2 = await fetch('/api/backup');
+        if (res2.ok) {
+          backupData = await res2.json();
+        }
+      } catch (e2) {
+        console.warn('Could not fetch root /api/backup, checking IDB mirror:', e2);
+      }
     }
 
     if ((!backupData || !backupData.novels || backupData.novels.length === 0) && typeof IDB !== 'undefined') {
       backupData = await IDB.getLibraryMirror(userId);
+      if (!backupData || !backupData.novels || backupData.novels.length === 0) {
+        backupData = await IDB.getLibraryMirror('universal_device_mirror');
+      }
     }
 
     if (!backupData || !backupData.novels || backupData.novels.length === 0) {
       throw new Error('No local novels found to push to cloud.');
     }
 
-    // 2. Transmit to remote Cloud Server (/api/restore)
-    const restoreRes = await fetch(`${cloudUrl}/api/restore`, {
+    // 2. Transmit to remote Cloud Server (/api/restore) with 60s timeout for large books
+    const restoreRes = await fetchWithTimeout(`${cloudUrl}/api/restore`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         user_id: userId,
+        sync_key: syncKey,
         backup_data: backupData
       })
-    });
+    }, 60000);
 
     if (!restoreRes.ok) {
       const errText = await restoreRes.text();

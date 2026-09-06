@@ -298,22 +298,50 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                     conn.close()
                     return
 
-            # Check if user needs demo novel seeded initially
-            database.ensure_user_exists(user_id)
-            cur.execute("SELECT demo_seeded, sync_key FROM users WHERE id = ?", (user_id,))
+            # Ensure user row exists in users table
+            cur.execute("SELECT id, demo_seeded, sync_key FROM users WHERE id = ?", (user_id,))
             user_row = cur.fetchone()
+            if not user_row:
+                conn.close()
+                database.ensure_user_exists(user_id)
+                conn = database.get_db()
+                cur = conn.cursor()
+                cur.execute("SELECT id, demo_seeded, sync_key FROM users WHERE id = ?", (user_id,))
+                user_row = cur.fetchone()
+
             if user_row and not user_row["demo_seeded"]:
                 cur.execute("SELECT COUNT(*) as cnt FROM novels WHERE user_id = ?", (user_id,))
-                if cur.fetchone()["cnt"] == 0:
+                cnt = cur.fetchone()["cnt"]
+                if cnt == 0:
                     if user_row["sync_key"] in ("DEFAULT_READER", "READER-PRIMARY") or user_id.startswith("test_user"):
+                        conn.close()
                         sample_books.seed_demo_novel(user_id)
-                        conn.commit()
+                        conn = database.get_db()
+                        cur = conn.cursor()
                     else:
                         cur.execute("UPDATE users SET demo_seeded = 1 WHERE id = ?", (user_id,))
                         conn.commit()
                 else:
                     cur.execute("UPDATE users SET demo_seeded = 1 WHERE id = ?", (user_id,))
                     conn.commit()
+
+            # Check if this user has novels
+            effective_user_id = user_id
+            cur.execute("SELECT COUNT(*) as cnt FROM novels WHERE user_id = ?", (user_id,))
+            if cur.fetchone()["cnt"] == 0:
+                # If user has no novels, only fallback to primary collection if on a shared default sync key
+                if user_row and (user_row["sync_key"].startswith("READER-") or user_row["sync_key"] in ("DEFAULT_READER", "OFFLINE")):
+                    cur.execute("""
+                        SELECT u.id FROM users u
+                        JOIN novels n ON u.id = n.user_id
+                        WHERE u.id != ?
+                        GROUP BY u.id
+                        ORDER BY COUNT(n.id) DESC, u.last_active DESC
+                        LIMIT 1
+                    """, (user_id,))
+                    p_user = cur.fetchone()
+                    if p_user and p_user["id"]:
+                        effective_user_id = p_user["id"]
 
             cur.execute("""
                 SELECT n.*,
@@ -328,12 +356,12 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 FROM novels n
                 LEFT JOIN volumes v ON n.id = v.novel_id
                 LEFT JOIN chapters c ON n.id = c.novel_id
-                LEFT JOIN reading_progress p ON n.id = p.novel_id AND p.user_id = n.user_id
+                LEFT JOIN reading_progress p ON n.id = p.novel_id AND (p.user_id = ? OR p.user_id = n.user_id)
                 LEFT JOIN chapters last_ch ON p.chapter_id = last_ch.id
                 WHERE n.user_id = ?
                 GROUP BY n.id
                 ORDER BY COALESCE(p.updated_at, n.created_at) DESC
-            """, (user_id,))
+            """, (user_id, effective_user_id))
             rows = [dict(r) for r in cur.fetchall()]
             for r in rows:
                 tot = r.get("total_chapters") or 0
@@ -437,32 +465,40 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         # 6. Last Read Novel / Quick Resume Hero
         if path == "/api/last-read":
             user_id = query.get("user_id", [""])[0]
-            if not user_id or user_id in ("universal_device_mirror", "READER-PRIMARY", "default_user"):
+            last_data = None
+
+            if user_id and user_id not in ("universal_device_mirror", "READER-PRIMARY", "default_user"):
                 cur.execute("""
-                    SELECT p.user_id FROM reading_progress p
+                    SELECT p.*, n.title as novel_title, n.cover_data, n.author as novel_author,
+                           c.title as chapter_title, c.global_index as chapter_global_index,
+                           v.title as volume_title, v.volume_number
+                    FROM reading_progress p
+                    JOIN novels n ON p.novel_id = n.id
+                    JOIN chapters c ON p.chapter_id = c.id
+                    JOIN volumes v ON p.volume_id = v.id
+                    WHERE p.user_id = ?
+                    ORDER BY p.updated_at DESC LIMIT 1
+                """, (user_id,))
+                last_row = cur.fetchone()
+                if last_row:
+                    last_data = dict(last_row)
+
+            if not last_data:
+                # Fallback to the latest reading progress in the entire library
+                cur.execute("""
+                    SELECT p.*, n.title as novel_title, n.cover_data, n.author as novel_author,
+                           c.title as chapter_title, c.global_index as chapter_global_index,
+                           v.title as volume_title, v.volume_number
+                    FROM reading_progress p
+                    JOIN novels n ON p.novel_id = n.id
+                    JOIN chapters c ON p.chapter_id = c.id
+                    JOIN volumes v ON p.volume_id = v.id
                     ORDER BY p.updated_at DESC LIMIT 1
                 """)
-                p_row = cur.fetchone()
-                if p_row and p_row["user_id"]:
-                    user_id = p_row["user_id"]
-                elif not user_id:
-                    self.send_json({"last_read": None})
-                    conn.close()
-                    return
+                last_row = cur.fetchone()
+                if last_row:
+                    last_data = dict(last_row)
 
-            cur.execute("""
-                SELECT p.*, n.title as novel_title, n.cover_data, n.author as novel_author,
-                       c.title as chapter_title, c.global_index as chapter_global_index,
-                       v.title as volume_title, v.volume_number
-                FROM reading_progress p
-                JOIN novels n ON p.novel_id = n.id
-                JOIN chapters c ON p.chapter_id = c.id
-                JOIN volumes v ON p.volume_id = v.id
-                WHERE p.user_id = ?
-                ORDER BY p.updated_at DESC LIMIT 1
-            """, (user_id,))
-            last_row = cur.fetchone()
-            last_data = dict(last_row) if last_row else None
             if last_data:
                 cur.execute("SELECT COUNT(*) as total_chapters FROM chapters WHERE novel_id = ?", (last_data["novel_id"],))
                 tot_row = cur.fetchone()
@@ -632,22 +668,27 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             remember = bool(body.get("remember", True))
 
             if not sync_key or sync_key in ("DEFAULT_READER", "OFFLINE", "READER-PRIMARY"):
-                if requested_user_id and requested_user_id.startswith("usr_"):
-                    cur.execute("SELECT sync_key FROM users WHERE id = ?", (requested_user_id,))
-                    u_row = cur.fetchone()
-                    if u_row and u_row["sync_key"]:
-                        sync_key = u_row["sync_key"]
+                cur.execute("""
+                    SELECT u.sync_key, u.id FROM users u 
+                    JOIN novels n ON u.id = n.user_id 
+                    WHERE u.sync_key NOT IN ('OFFLINE', 'DEFAULT_READER')
+                    GROUP BY u.id 
+                    ORDER BY COUNT(n.id) DESC, u.last_active DESC 
+                    LIMIT 1
+                """)
+                primary_user = cur.fetchone()
 
-                if not sync_key or sync_key in ("DEFAULT_READER", "OFFLINE", "READER-PRIMARY"):
-                    cur.execute("""
-                        SELECT u.sync_key, u.id FROM users u 
-                        JOIN novels n ON u.id = n.user_id 
-                        WHERE u.sync_key NOT IN ('OFFLINE', 'DEFAULT_READER')
-                        GROUP BY u.id 
-                        ORDER BY COUNT(n.id) DESC, u.last_active DESC 
-                        LIMIT 1
-                    """)
-                    primary_user = cur.fetchone()
+                has_own_books = False
+                if requested_user_id and requested_user_id.startswith("usr_"):
+                    cur.execute("SELECT COUNT(*) as cnt FROM novels WHERE user_id = ?", (requested_user_id,))
+                    has_own_books = cur.fetchone()["cnt"] > 0
+                    if has_own_books:
+                        cur.execute("SELECT sync_key FROM users WHERE id = ?", (requested_user_id,))
+                        u_row = cur.fetchone()
+                        if u_row and u_row["sync_key"]:
+                            sync_key = u_row["sync_key"]
+
+                if not has_own_books:
                     if primary_user and primary_user["sync_key"]:
                         sync_key = primary_user["sync_key"]
                         requested_user_id = primary_user["id"]

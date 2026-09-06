@@ -969,7 +969,13 @@ const App = {
       copyLinkBtn.addEventListener('click', () => {
         const key = SyncService.currentSyncKey;
         if (!key) return;
-        const link = `${window.location.origin}/?pair=${encodeURIComponent(key)}`;
+        const host = window.location.hostname;
+        const isLocal = host === 'localhost' || host === '127.0.0.1' || host.endsWith('.local') ||
+                        /^10\.\d+\.\d+\.\d+$/.test(host) ||
+                        /^192\.168\.\d+\.\d+$/.test(host) ||
+                        /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/.test(host);
+        const baseUrl = isLocal ? SyncService.cloudServerUrl : window.location.origin;
+        const link = `${baseUrl}/?pair=${encodeURIComponent(key)}`;
         navigator.clipboard.writeText(link).then(() => {
           this.showToast('1-Click Pairing Link copied!');
         }).catch(() => {
@@ -1136,6 +1142,28 @@ const App = {
       this.updateOfflineBadges(true);
       this.showToast('Offline Mode: Reading from local cache');
     });
+
+    // Auto-refresh when mobile reader wakes up or user returns to tab
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible' && navigator.onLine) {
+        if (!this._lastWakeCheck || (Date.now() - this._lastWakeCheck > 8000)) {
+          this._lastWakeCheck = Date.now();
+          if (this.currentView === 'library') {
+            this.loadLibrary(false);
+          }
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    window.addEventListener('focus', handleVisibilityOrFocus);
+
+    // Periodic background sync: check for new books and progress every 30s when active
+    setInterval(() => {
+      if (document.visibilityState === 'visible' && navigator.onLine && this.currentView === 'library') {
+        this.loadLibrary(false);
+      }
+    }, 30000);
   },
 
   async loadLibrary(allowAutoRestore = true) {
@@ -1772,6 +1800,23 @@ const App = {
 
       // Immediately mirror to IndexedDB so novel is bulletproof against any reload/restart
       await this.updateDeviceMirror();
+
+      // Automatic Cloud Push: If running locally on Mac, push novel to Render cloud in background
+      const host = window.location.hostname;
+      const isLocalHost = host === 'localhost' || host === '127.0.0.1' || host.endsWith('.local') ||
+                          /^10\.\d+\.\d+\.\d+$/.test(host) ||
+                          /^192\.168\.\d+\.\d+$/.test(host) ||
+                          /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/.test(host);
+
+      if (isLocalHost && navigator.onLine) {
+        this.showToast('Syncing novel to cloud for phone reader...');
+        SyncService.pushLibraryToCloud().then((res) => {
+          console.log('[CloudSync] Novel successfully pushed to cloud:', res);
+          this.showToast(`Cloud Sync Complete: Pushed ${res.novelsCount} novel(s) to cloud!`);
+        }).catch((err) => {
+          console.warn('[CloudSync] Automatic cloud push notice:', err);
+        });
+      }
 
       if (data.duplicates_skipped && data.duplicates_skipped > 0) {
         this.showToast(`Uploaded ${data.chapters_added} chapters across ${data.volumes_added} volume(s) (${data.duplicates_skipped} duplicates skipped)`);

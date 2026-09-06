@@ -13,12 +13,12 @@ def _resolve_db_path():
     return os.path.join(os.path.dirname(__file__), "reader.db")
 
 def get_db():
-    conn = sqlite3.connect(_resolve_db_path(), timeout=10.0)
+    conn = sqlite3.connect(_resolve_db_path(), timeout=30.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     try:
         conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA busy_timeout = 5000")
+        conn.execute("PRAGMA busy_timeout = 30000")
     except Exception:
         pass
     return conn
@@ -272,8 +272,25 @@ def export_backup_data(user_id: str):
     conn = get_db()
     cur = conn.cursor()
 
-    cur.execute("SELECT * FROM novels WHERE user_id = ?", (user_id,))
-    novels = [dict(r) for r in cur.fetchall()]
+    novels = []
+    if user_id:
+        cur.execute("SELECT * FROM novels WHERE user_id = ?", (user_id,))
+        novels = [dict(r) for r in cur.fetchall()]
+
+    if not novels:
+        # Fallback to export novels from primary user collection if user_id has no novels
+        cur.execute("""
+            SELECT u.id FROM users u
+            JOIN novels n ON u.id = n.user_id
+            GROUP BY u.id
+            ORDER BY COUNT(n.id) DESC, u.last_active DESC
+            LIMIT 1
+        """)
+        top_u = cur.fetchone()
+        if top_u and top_u["id"]:
+            fallback_uid = top_u["id"]
+            cur.execute("SELECT * FROM novels WHERE user_id = ?", (fallback_uid,))
+            novels = [dict(r) for r in cur.fetchall()]
 
     novel_ids = [n["id"] for n in novels]
     volumes = []
@@ -286,12 +303,23 @@ def export_backup_data(user_id: str):
         cur.execute(f"SELECT * FROM chapters WHERE novel_id IN ({placeholders})", novel_ids)
         chapters = [dict(r) for r in cur.fetchall()]
 
-    cur.execute("SELECT * FROM reading_progress WHERE user_id = ?", (user_id,))
-    progress = [dict(r) for r in cur.fetchall()]
+    progress = []
+    if user_id:
+        cur.execute("SELECT * FROM reading_progress WHERE user_id = ?", (user_id,))
+        progress = [dict(r) for r in cur.fetchall()]
+    if not progress and novel_ids:
+        cur.execute("SELECT * FROM reading_progress ORDER BY updated_at DESC")
+        progress = [dict(r) for r in cur.fetchall()]
 
-    cur.execute("SELECT * FROM user_settings WHERE user_id = ?", (user_id,))
-    settings_row = cur.fetchone()
-    settings = dict(settings_row) if settings_row else {}
+    settings = {}
+    if user_id:
+        cur.execute("SELECT * FROM user_settings WHERE user_id = ?", (user_id,))
+        settings_row = cur.fetchone()
+        settings = dict(settings_row) if settings_row else {}
+    if not settings:
+        cur.execute("SELECT * FROM user_settings ORDER BY updated_at DESC LIMIT 1")
+        settings_row = cur.fetchone()
+        settings = dict(settings_row) if settings_row else {}
 
     conn.close()
     return {
@@ -307,7 +335,14 @@ def export_backup_data(user_id: str):
     }
 
 def import_backup_data(data: dict, user_id: str):
-    ensure_user_exists(user_id)
+    primary_uid = get_or_create_user("READER-PRIMARY")
+    target_uids = [user_id]
+    if primary_uid and primary_uid != user_id:
+        target_uids.append(primary_uid)
+
+    for uid in target_uids:
+        ensure_user_exists(uid)
+
     conn = get_db()
     cur = conn.cursor()
     now = time.time()
@@ -320,16 +355,42 @@ def import_backup_data(data: dict, user_id: str):
 
     # If user backup has novels and demo novel is not in the backup, remove auto-seeded demo
     has_demo = any(n.get("id", "").startswith("nov_demo") or "Chronicles of the Aether" in n.get("title", "") for n in novels)
-    if not has_demo and len(novels) > 0:
-        cur.execute("DELETE FROM novels WHERE user_id = ? AND (id LIKE 'nov_demo%' OR title LIKE '%Chronicles of the Aether%')", (user_id,))
+    for uid in target_uids:
+        if not has_demo and len(novels) > 0:
+            cur.execute("DELETE FROM novels WHERE user_id = ? AND (id LIKE 'nov_demo%' OR title LIKE '%Chronicles of the Aether%')", (uid,))
+        cur.execute("UPDATE users SET demo_seeded = 1 WHERE id = ?", (uid,))
 
-    cur.execute("UPDATE users SET demo_seeded = 1 WHERE id = ?", (user_id,))
+        for n in novels:
+            cur.execute("""
+                INSERT OR REPLACE INTO novels (id, title, author, description, cover_data, user_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (n["id"], n["title"], n.get("author", "Unknown"), n.get("description", ""), n.get("cover_data"), uid, n.get("created_at", now), now))
 
-    for n in novels:
-        cur.execute("""
-            INSERT OR REPLACE INTO novels (id, title, author, description, cover_data, user_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (n["id"], n["title"], n.get("author", "Unknown"), n.get("description", ""), n.get("cover_data"), user_id, n.get("created_at", now), now))
+        for p in progress_list:
+            cur.execute("""
+                INSERT OR REPLACE INTO reading_progress (id, user_id, novel_id, volume_id, chapter_id, paragraph_index, scroll_percent, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (p.get("id") or f"prog_{uuid.uuid4().hex[:12]}", uid, p["novel_id"], p.get("volume_id", ""), p["chapter_id"], p.get("paragraph_index", 0), p.get("scroll_percent", 0.0), now))
+
+        if settings:
+            cur.execute("""
+                INSERT OR REPLACE INTO user_settings (user_id, theme, font_family, font_size, line_height, content_width, auto_scroll_speed, tts_voice, tts_rate, tts_pitch, library_view_mode, library_sort_by, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                uid,
+                settings.get("theme", "monochrome-dark"),
+                settings.get("font_family", "times"),
+                settings.get("font_size", 19),
+                settings.get("line_height", 1.85),
+                settings.get("content_width", "normal"),
+                settings.get("auto_scroll_speed", 35),
+                settings.get("tts_voice", "en-US-JennyNeural"),
+                settings.get("tts_rate", 1.0),
+                settings.get("tts_pitch", 1.0),
+                settings.get("library_view_mode", "tile"),
+                settings.get("library_sort_by", "last_read"),
+                now
+            ))
 
     for v in volumes:
         cur.execute("""
@@ -342,32 +403,6 @@ def import_backup_data(data: dict, user_id: str):
             INSERT OR REPLACE INTO chapters (id, novel_id, volume_id, chapter_index, global_index, title, content_html, word_count)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (c["id"], c["novel_id"], c["volume_id"], c.get("chapter_index", 1), c.get("global_index", 1), c.get("title", ""), c.get("content_html", ""), c.get("word_count", 0)))
-
-    for p in progress_list:
-        cur.execute("""
-            INSERT OR REPLACE INTO reading_progress (id, user_id, novel_id, volume_id, chapter_id, paragraph_index, scroll_percent, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (p.get("id") or f"prog_{uuid.uuid4().hex[:12]}", user_id, p["novel_id"], p.get("volume_id", ""), p["chapter_id"], p.get("paragraph_index", 0), p.get("scroll_percent", 0.0), now))
-
-    if settings:
-        cur.execute("""
-            INSERT OR REPLACE INTO user_settings (user_id, theme, font_family, font_size, line_height, content_width, auto_scroll_speed, tts_voice, tts_rate, tts_pitch, library_view_mode, library_sort_by, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            user_id,
-            settings.get("theme", "monochrome-dark"),
-            settings.get("font_family", "times"),
-            settings.get("font_size", 19),
-            settings.get("line_height", 1.85),
-            settings.get("content_width", "normal"),
-            settings.get("auto_scroll_speed", 35),
-            settings.get("tts_voice", "en-US-JennyNeural"),
-            settings.get("tts_rate", 1.0),
-            settings.get("tts_pitch", 1.0),
-            settings.get("library_view_mode", "tile"),
-            settings.get("library_sort_by", "last_read"),
-            now
-        ))
 
     conn.commit()
     conn.close()
