@@ -270,17 +270,24 @@ const App = {
     const fileInput = document.getElementById('epubFileInput');
     const addMoreBtn = document.getElementById('addMoreFilesBtn');
 
+    const triggerFilePicker = (forceAppend = false) => {
+      fileInput.value = '';
+      this.uploadAppendMode = forceAppend || (this.selectedUploadFiles && this.selectedUploadFiles.length > 0);
+      fileInput.click();
+    };
+
     if (addMoreBtn) {
-      addMoreBtn.addEventListener('click', () => {
-        this.uploadAppendMode = true;
-        fileInput.click();
+      addMoreBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        triggerFilePicker(true);
       });
     }
 
-    dropzone.addEventListener('click', () => {
-      this.uploadAppendMode = false;
-      fileInput.click();
+    dropzone.addEventListener('click', (e) => {
+      if (e.target.closest('#addMoreFilesBtn')) return;
+      triggerFilePicker();
     });
+
     dropzone.addEventListener('dragover', (e) => {
       e.preventDefault();
       dropzone.style.borderColor = 'var(--accent)';
@@ -299,8 +306,10 @@ const App = {
 
     fileInput.addEventListener('change', (e) => {
       if (e.target.files && e.target.files.length) {
-        this.handleSelectedFiles(e.target.files, this.uploadAppendMode || false);
+        const shouldAppend = this.uploadAppendMode || (this.selectedUploadFiles && this.selectedUploadFiles.length > 0);
+        this.handleSelectedFiles(e.target.files, shouldAppend);
         this.uploadAppendMode = false;
+        fileInput.value = '';
       }
     });
 

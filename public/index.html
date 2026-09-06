@@ -25,7 +25,7 @@
   </style>
 
   <!-- Styles -->
-  <link rel="stylesheet" href="/css/brutalist.css?v=15.0">
+  <link rel="stylesheet" href="/css/brutalist.css?v=16.0">
 </head>
 <body style="background-color: #141518; color: #f0f0f0;">
 
@@ -621,10 +621,12 @@
           <input type="text" id="seriesTitleInput" class="form-input" placeholder="Leave blank to auto-detect base title" />
         </div>
 
-        <div id="epubDropzone" style="border: 1px dashed var(--border-color); border-radius: 8px; background: var(--bg-surface); padding: 32px; text-align: center; cursor: pointer; margin-bottom: 14px;">
-          <div style="font-size: 14px; font-weight: 600;">Drag and drop .epub or .pdf files here or click to browse</div>
-          <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Supports EPUB &amp; PDF files (upload multiple volumes at once in order)</div>
-          <input type="file" id="epubFileInput" accept=".epub,.pdf,application/pdf,application/epub+zip" multiple style="display: none;" />
+        <div id="epubDropzone" style="border: 1px dashed var(--border-color); border-radius: 8px; background: var(--bg-surface); padding: 28px 20px; text-align: center; cursor: pointer; margin-bottom: 14px;">
+          <div style="font-size: 14px; font-weight: 700;">Drag and drop .epub or .pdf files here, or click to browse</div>
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 6px; line-height: 1.4;">
+            To select multiple files at once: hold <strong>Command (⌘)</strong> or <strong>Shift</strong> in the file chooser. You can also click browse repeatedly or use <strong>+ Add More Files</strong> to add them one by one.
+          </div>
+          <input type="file" id="epubFileInput" accept=".epub,.pdf" multiple style="display: none;" />
         </div>
 
         <div id="uploadQueueHeader" style="display: none; justify-content: space-between; align-items: center; margin-bottom: 8px;">
@@ -666,11 +668,11 @@
   <input type="file" id="novelCoverInput" accept="image/*" style="display: none;" />
 
   <!-- Application Scripts -->
-  <script src="/js/storage.js?v=15.0"></script>
-  <script src="/js/sync.js?v=15.0"></script>
-  <script src="/js/autoscroll.js?v=15.0"></script>
-  <script src="/js/tts.js?v=15.0"></script>
-  <script src="/js/reader.js?v=15.0"></script>
-  <script src="/js/app.js?v=15.0"></script>
+  <script src="/js/storage.js?v=16.0"></script>
+  <script src="/js/sync.js?v=16.0"></script>
+  <script src="/js/autoscroll.js?v=16.0"></script>
+  <script src="/js/tts.js?v=16.0"></script>
+  <script src="/js/reader.js?v=16.0"></script>
+  <script src="/js/app.js?v=16.0"></script>
 </body>
 </html>
