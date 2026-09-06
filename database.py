@@ -165,13 +165,29 @@ def get_or_create_user(sync_key: str, display_name: str = None, requested_user_i
         conn.commit()
         user_id = row["id"]
     else:
+        # Check if requested_user_id already exists in database
         if requested_user_id and requested_user_id.startswith("usr_"):
+            cur.execute("SELECT * FROM users WHERE id = ?", (requested_user_id,))
+            id_row = cur.fetchone()
+            if id_row:
+                cur.execute("UPDATE users SET last_active = ? WHERE id = ?", (now, requested_user_id))
+                conn.commit()
+                conn.close()
+                return requested_user_id
             user_id = requested_user_id
         else:
             det_hash = hashlib.sha256(sync_key.strip().upper().encode("utf-8")).hexdigest()[:12]
             user_id = f"usr_{det_hash}"
+            cur.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+            id_row = cur.fetchone()
+            if id_row:
+                cur.execute("UPDATE users SET last_active = ? WHERE id = ?", (now, user_id))
+                conn.commit()
+                conn.close()
+                return user_id
+
         cur.execute(
-            "INSERT INTO users (id, sync_key, display_name, created_at, last_active) VALUES (?, ?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO users (id, sync_key, display_name, created_at, last_active) VALUES (?, ?, ?, ?, ?)",
             (user_id, sync_key, display_name or f"Reader_{sync_key[:6]}", now, now)
         )
         cur.execute(

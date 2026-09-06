@@ -15,7 +15,6 @@ const TTS_ICONS = {
 const TTSEngine = {
   audioElement: new Audio(),
   testAudioElement: new Audio(),
-  keepAliveAudio: null,
   blobCache: new Map(),
   
   isPlaying: false,
@@ -64,6 +63,9 @@ const TTSEngine = {
       this.selectedVoice = window.ReaderSettings.tts_voice;
     }
     this.populateVoiceSelect();
+
+    this.audioElement.playsInline = true;
+    this.testAudioElement.playsInline = true;
 
     // iOS Audio Context Priming on any user touch/click
     const primeAudio = () => {
@@ -373,23 +375,12 @@ const TTSEngine = {
   },
 
   startKeepAlive() {
-    if (!this.keepAliveAudio) {
-      this.keepAliveAudio = new Audio();
-    }
-    this.keepAliveAudio.loop = true;
-    this.keepAliveAudio.volume = 0.001; // Inaudible anchor for WebKit/iOS media session
-    if (!this.keepAliveAudio.src || this.keepAliveAudio.src === '') {
-      this.keepAliveAudio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
-    }
-    this.keepAliveAudio.play().catch(() => {});
+    // Single-track iOS audio session management
   },
 
   stopKeepAlive() {
-    if (this.keepAliveAudio) {
-      try {
-        this.keepAliveAudio.pause();
-        this.keepAliveAudio.src = '';
-      } catch (e) {}
+    if (this.audioElement) {
+      this.audioElement.loop = false;
     }
   },
 
@@ -635,6 +626,11 @@ const TTSEngine = {
 
     // ALWAYS prioritize the main voice selected (realistic cloud neural TTS)
     try {
+      const cacheKey = `${this.selectedVoice}_${this.rate}_${textToSpeak}`;
+      if (!this.blobCache.has(cacheKey)) {
+        this.playKeepAliveSilence();
+      }
+
       const blobUrl = await this.getAudioBlobUrl(textToSpeak, this.selectedVoice, this.rate);
       // If user skipped or paused while fetching was in flight, discard cleanly
       if (this.playbackSessionId !== sessionId || !this.isPlaying || this.isPaused) return;

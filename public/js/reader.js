@@ -255,7 +255,7 @@ const Reader = {
       if (navigator.onLine && userId !== 'offline_user') {
         try {
           const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 4000);
+          const timer = setTimeout(() => controller.abort(), 15000);
           const res = await fetch(`/api/novels/${encodeURIComponent(novelId)}?user_id=${encodeURIComponent(userId)}`, { signal: controller.signal });
           clearTimeout(timer);
           if (res.ok) {
@@ -339,22 +339,25 @@ const Reader = {
       const userId = SyncService.currentUserId || Storage.getUserId() || 'universal_device_mirror';
       let ch = null;
 
-      // 1. Attempt network fetch if online
+      // 1. Attempt network fetch if online with 15s timeout
       if (navigator.onLine) {
         try {
           const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 4000);
+          const timer = setTimeout(() => controller.abort(), 15000);
           const res = await fetch(`/api/chapters/${encodeURIComponent(chapterId)}`, { signal: controller.signal });
           clearTimeout(timer);
           if (res.ok) {
             ch = await res.json();
+            if (ch && !ch.error && typeof IDB !== 'undefined') {
+              IDB.saveCachedChapter(ch);
+            }
           }
         } catch (netErr) {
           console.warn('Network chapter fetch failed, attempting offline cache:', netErr);
         }
       }
 
-      // 2. Fallback to local IndexedDB mirror
+      // 2. Fallback to local IndexedDB mirror & chapter cache
       if (!ch || ch.error) {
         if (typeof IDB !== 'undefined') {
           ch = await IDB.getChapter(userId, chapterId);
@@ -367,6 +370,10 @@ const Reader = {
 
       this.currentChapter = ch;
       this.currentVolumeId = ch.volume_id;
+      if (typeof IDB !== 'undefined') {
+        IDB.saveCachedChapter(ch);
+      }
+      this.prefetchUpcomingChapters(ch);
 
       // Update Top Bar
       const titleEl = document.getElementById('readerChapterTitle');
@@ -520,6 +527,34 @@ const Reader = {
       pid,
       scrollPercent
     );
+  },
+
+  async prefetchUpcomingChapters(ch) {
+    if (!ch || !ch.next_chapter || !navigator.onLine) return;
+    try {
+      let cur = ch;
+      for (let i = 0; i < 3; i++) {
+        if (!cur || !cur.next_chapter) break;
+        const nextId = cur.next_chapter.id;
+        if (typeof IDB !== 'undefined') {
+          const cached = await IDB.getCachedChapter(nextId);
+          if (cached && cached.content_html) {
+            cur = cached;
+            continue;
+          }
+        }
+        const res = await fetch(`/api/chapters/${encodeURIComponent(nextId)}`);
+        if (res.ok) {
+          const nextCh = await res.json();
+          if (nextCh && !nextCh.error && typeof IDB !== 'undefined') {
+            await IDB.saveCachedChapter(nextCh);
+          }
+          cur = nextCh;
+        } else {
+          break;
+        }
+      }
+    } catch {}
   },
 
   async loadNextChapter(isTtsAdvance = false) {

@@ -282,10 +282,21 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         # 3. Get Novels List
         if path == "/api/novels":
             user_id = query.get("user_id", [""])[0]
-            if not user_id:
-                self.send_json({"novels": []})
-                conn.close()
-                return
+            if not user_id or user_id in ("universal_device_mirror", "READER-PRIMARY", "default_user"):
+                cur.execute("""
+                    SELECT u.id FROM users u
+                    JOIN novels n ON u.id = n.user_id
+                    GROUP BY u.id
+                    ORDER BY COUNT(n.id) DESC, u.last_active DESC
+                    LIMIT 1
+                """)
+                primary_user = cur.fetchone()
+                if primary_user and primary_user["id"]:
+                    user_id = primary_user["id"]
+                elif not user_id:
+                    self.send_json({"novels": []})
+                    conn.close()
+                    return
 
             # Check if user needs demo novel seeded initially
             database.ensure_user_exists(user_id)
@@ -366,6 +377,11 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 prog_row = cur.fetchone()
                 if prog_row:
                     progress = dict(prog_row)
+            if not progress:
+                cur.execute("SELECT * FROM reading_progress WHERE novel_id = ? ORDER BY updated_at DESC LIMIT 1", (novel_id,))
+                prog_row = cur.fetchone()
+                if prog_row:
+                    progress = dict(prog_row)
 
             conn.close()
             self.send_json({
@@ -421,10 +437,18 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         # 6. Last Read Novel / Quick Resume Hero
         if path == "/api/last-read":
             user_id = query.get("user_id", [""])[0]
-            if not user_id:
-                self.send_json({"last_read": None})
-                conn.close()
-                return
+            if not user_id or user_id in ("universal_device_mirror", "READER-PRIMARY", "default_user"):
+                cur.execute("""
+                    SELECT p.user_id FROM reading_progress p
+                    ORDER BY p.updated_at DESC LIMIT 1
+                """)
+                p_row = cur.fetchone()
+                if p_row and p_row["user_id"]:
+                    user_id = p_row["user_id"]
+                elif not user_id:
+                    self.send_json({"last_read": None})
+                    conn.close()
+                    return
 
             cur.execute("""
                 SELECT p.*, n.title as novel_title, n.cover_data, n.author as novel_author,
@@ -457,6 +481,17 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         # 7. Get Settings
         if path == "/api/settings":
             user_id = query.get("user_id", [""])[0]
+            if not user_id or user_id in ("universal_device_mirror", "READER-PRIMARY", "default_user"):
+                cur.execute("""
+                    SELECT u.id FROM users u
+                    JOIN user_settings s ON u.id = s.user_id
+                    GROUP BY u.id
+                    ORDER BY u.last_active DESC
+                    LIMIT 1
+                """)
+                p_row = cur.fetchone()
+                if p_row and p_row["id"]:
+                    user_id = p_row["id"]
             if not user_id:
                 self.send_json({"settings": {}})
                 conn.close()
@@ -532,6 +567,17 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         # 11. Database Backup Export (Safeguard for Free Ephemeral Hosting)
         if path == "/api/backup":
             user_id = query.get("user_id", [""])[0]
+            if not user_id or user_id in ("universal_device_mirror", "READER-PRIMARY", "default_user"):
+                cur.execute("""
+                    SELECT u.id FROM users u
+                    JOIN novels n ON u.id = n.user_id
+                    GROUP BY u.id
+                    ORDER BY COUNT(n.id) DESC, u.last_active DESC
+                    LIMIT 1
+                """)
+                primary_user = cur.fetchone()
+                if primary_user and primary_user["id"]:
+                    user_id = primary_user["id"]
             conn.close()
             if not user_id:
                 self.send_json({"error": "user_id required"}, status=400)
@@ -585,17 +631,17 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             user_agent = self.headers.get("User-Agent", "")
             remember = bool(body.get("remember", True))
 
-            if not sync_key or sync_key in ("DEFAULT_READER", "OFFLINE"):
+            if not sync_key or sync_key in ("DEFAULT_READER", "OFFLINE", "READER-PRIMARY"):
                 if requested_user_id and requested_user_id.startswith("usr_"):
                     cur.execute("SELECT sync_key FROM users WHERE id = ?", (requested_user_id,))
                     u_row = cur.fetchone()
                     if u_row and u_row["sync_key"]:
                         sync_key = u_row["sync_key"]
 
-                if not sync_key or sync_key in ("DEFAULT_READER", "OFFLINE"):
+                if not sync_key or sync_key in ("DEFAULT_READER", "OFFLINE", "READER-PRIMARY"):
                     cur.execute("""
-                        SELECT u.sync_key FROM users u 
-                        LEFT JOIN novels n ON u.id = n.user_id 
+                        SELECT u.sync_key, u.id FROM users u 
+                        JOIN novels n ON u.id = n.user_id 
                         WHERE u.sync_key NOT IN ('OFFLINE', 'DEFAULT_READER')
                         GROUP BY u.id 
                         ORDER BY COUNT(n.id) DESC, u.last_active DESC 
@@ -604,6 +650,7 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                     primary_user = cur.fetchone()
                     if primary_user and primary_user["sync_key"]:
                         sync_key = primary_user["sync_key"]
+                        requested_user_id = primary_user["id"]
                     else:
                         sync_key = "READER-PRIMARY"
 

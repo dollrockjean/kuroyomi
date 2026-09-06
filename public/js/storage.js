@@ -129,19 +129,23 @@ const Storage = {
 
 // IndexedDB Persistent Device Storage (Survives server redeploys and cloud restarts)
 const IDB = {
-  dbName: 'kuroyomi_cache_v1',
+  dbName: 'kuroyomi_cache_v2',
   storeName: 'library_mirror',
+  chapterStore: 'chapter_cache',
 
   open() {
     return new Promise((resolve, reject) => {
       if (!window.indexedDB) {
         return reject(new Error('IndexedDB not supported'));
       }
-      const req = indexedDB.open(this.dbName, 1);
+      const req = indexedDB.open(this.dbName, 2);
       req.onupgradeneeded = (e) => {
         const db = e.target.result;
         if (!db.objectStoreNames.contains(this.storeName)) {
           db.createObjectStore(this.storeName, { keyPath: 'user_id' });
+        }
+        if (!db.objectStoreNames.contains(this.chapterStore)) {
+          db.createObjectStore(this.chapterStore, { keyPath: 'id' });
         }
       };
       req.onsuccess = () => resolve(req.result);
@@ -293,8 +297,60 @@ const IDB = {
     }
   },
 
+  async saveCachedChapter(chapter) {
+    if (!chapter || !chapter.id) return false;
+    try {
+      const db = await this.open();
+      return new Promise((resolve) => {
+        const tx = db.transaction(this.chapterStore, 'readwrite');
+        const store = tx.objectStore(this.chapterStore);
+        store.put({
+          id: chapter.id,
+          novel_id: chapter.novel_id,
+          volume_id: chapter.volume_id,
+          title: chapter.title,
+          content_html: chapter.content_html,
+          word_count: chapter.word_count,
+          order_index: chapter.order_index,
+          global_index: chapter.global_index,
+          novel_title: chapter.novel_title,
+          volume_title: chapter.volume_title,
+          prev_chapter: chapter.prev_chapter,
+          next_chapter: chapter.next_chapter,
+          saved_at: Date.now()
+        });
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      });
+    } catch {
+      return false;
+    }
+  },
+
+  async getCachedChapter(chapterId) {
+    if (!chapterId) return null;
+    try {
+      const db = await this.open();
+      return new Promise((resolve) => {
+        const tx = db.transaction(this.chapterStore, 'readonly');
+        const store = tx.objectStore(this.chapterStore);
+        const req = store.get(chapterId);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      });
+    } catch {
+      return null;
+    }
+  },
+
   async getChapter(userId, chapterId) {
     try {
+      // 1. Check dedicated instant chapter cache first
+      const cached = await this.getCachedChapter(chapterId);
+      if (cached && cached.content_html) {
+        return cached;
+      }
+
       const mirror = await this.getLibraryMirror(userId);
       if (!mirror || !mirror.chapters) return null;
 

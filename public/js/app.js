@@ -1152,7 +1152,11 @@ const App = {
         }
       }
 
-      this.novels = novelsData ? (novelsData.novels || []) : [];
+      if (novelsData && novelsData.novels && novelsData.novels.length > 0) {
+        this.novels = novelsData.novels;
+      } else if (!this.novels || this.novels.length === 0) {
+        this.novels = novelsData ? (novelsData.novels || []) : [];
+      }
 
       // Auto-Shield: Check if server is missing any books present in local device mirror
       if (allowAutoRestore && typeof IDB !== 'undefined') {

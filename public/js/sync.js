@@ -49,14 +49,46 @@ const SyncService = {
 
     this.updateStatus('syncing', 'CONNECTING...');
 
-    // 1. Detect 1-Click Pairing Link (?pair=READER-XXXXX)
+    // If loaded from a local private IP (e.g. 10.0.0.149 when Mac is closed in car)
+    const host = window.location.hostname;
+    const isPrivateLocal = host.endsWith('.local') ||
+                           /^10\.\d+\.\d+\.\d+$/.test(host) ||
+                           /^192\.168\.\d+\.\d+$/.test(host) ||
+                           /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/.test(host);
+
+    if (isPrivateLocal) {
+      try {
+        const healthRes = await fetchWithTimeout('/api/health', { cache: 'no-store' }, 1500);
+        if (!healthRes.ok) throw new Error('Local server offline');
+      } catch (localErr) {
+        if (navigator.onLine) {
+          console.warn('Local Mac server unreachable while online. Auto-redirecting to cloud:', localErr);
+          const params = new URLSearchParams(window.location.search);
+          const key = Storage.getSyncKey();
+          const uid = Storage.getUserId();
+          if (key && key !== 'OFFLINE' && key !== 'READER-PRIMARY') params.set('pair', key);
+          if (uid && uid !== 'universal_device_mirror') params.set('uid', uid);
+          const qs = params.toString() ? '?' + params.toString() : '';
+          window.location.replace(this.cloudServerUrl + window.location.pathname + qs + window.location.hash);
+          return { userId: uid, syncKey: key, settings: {} };
+        }
+      }
+    }
+
+    // 1. Detect 1-Click Pairing Link (?pair=READER-XXXXX or ?uid=usr_XXXX)
     let pairKeyDetected = null;
     try {
       const urlParams = new URLSearchParams(window.location.search);
       const pairParam = urlParams.get('pair') || urlParams.get('key');
+      const uidParam = urlParams.get('uid');
       if (pairParam) {
         pairKeyDetected = pairParam.trim().toUpperCase();
         Storage.setSyncKey(pairKeyDetected);
+      }
+      if (uidParam && uidParam.startsWith('usr_')) {
+        Storage.setUserId(uidParam.trim());
+      }
+      if (pairParam || uidParam) {
         window.history.replaceState({}, document.title, window.location.pathname);
       }
     } catch (e) {}
