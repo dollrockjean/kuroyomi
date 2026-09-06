@@ -16,13 +16,14 @@ const Reader = {
     this.bindCenterScreenTap();
     this.initOverscrollNavigation();
     this.bindDesktopHover();
+    this.bindKeyboardShortcuts();
   },
 
   bindDesktopHover() {
     window.addEventListener('mousemove', (e) => {
       if (!this.currentChapter || document.getElementById('readerView').style.display === 'none') return;
-      // Moving cursor to within 60px of the top edge un-hides top navigation bar on desktop
-      if (e.clientY <= 60) {
+      // Moving cursor to within 90px of the top edge un-hides top navigation bar on desktop
+      if (e.clientY <= 90) {
         const topBar = document.getElementById('readerTopBar');
         if (topBar && topBar.classList.contains('minimized')) {
           topBar.classList.remove('minimized');
@@ -30,6 +31,20 @@ const Reader = {
         }
       }
     }, { passive: true });
+  },
+
+  bindKeyboardShortcuts() {
+    window.addEventListener('keydown', (e) => {
+      if (document.getElementById('readerView').style.display === 'none') return;
+      if (e.target.closest('input, textarea, select')) return;
+
+      if (e.key === 'm' || e.key === 'M') {
+        e.preventDefault();
+        App.toggleMasterPanel('tabChapters');
+      } else if (e.key === 'Escape') {
+        App.closeMasterPanel();
+      }
+    });
   },
 
   bindScroll() {
@@ -110,14 +125,11 @@ const Reader = {
   },
 
   bindCenterScreenTap() {
-    // Tapping the reading text or screen center opens bottom quick sheet on mobile
+    // Tapping the reading text or screen center opens menu / controls
     const wrapper = document.getElementById('readerBodyWrapper');
     if (!wrapper) return;
 
     wrapper.addEventListener('pointerup', (e) => {
-      // On PC with a mouse click: do NOTHING
-      if (e.pointerType === 'mouse') return;
-
       // Don't trigger on buttons, links, or inputs
       if (e.target.closest('button, a, input, select')) return;
 
@@ -125,7 +137,7 @@ const Reader = {
       const selection = window.getSelection();
       if (selection && selection.toString().length > 0) return;
 
-      // Slide up bottom quick sheet on mobile
+      // Mobile: slide up quick sheet
       if (window.innerWidth <= 768) {
         if (window.App && typeof window.App.openMobileQuickSheet === 'function') {
           window.App.openMobileQuickSheet();
@@ -133,7 +145,14 @@ const Reader = {
           App.toggleMasterPanel();
         }
       } else {
-        App.toggleMasterPanel();
+        // Desktop Mac/PC: unhide top bar and toggle master panel
+        const topBar = document.getElementById('readerTopBar');
+        if (topBar && topBar.classList.contains('minimized')) {
+          topBar.classList.remove('minimized');
+          this.isControlsVisible = true;
+        } else {
+          App.toggleMasterPanel('tabChapters');
+        }
       }
     });
   },

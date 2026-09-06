@@ -144,7 +144,7 @@
         <div class="reader-ch-info" id="readerChapterTitle">
           <strong>Novel</strong> · Chapter
         </div>
-        <div style="display: flex; align-items: center; gap: 8px;">
+        <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0; position: relative; z-index: 160;">
           <span class="mobile-offline-badge" id="mobileOfflineBadge" style="display: none;">Offline</span>
           <span class="reader-progress-pill" id="readerProgressPill">0%</span>
           <button class="btn-brutal" id="readerMenuBtn">Menu</button>
@@ -623,8 +623,16 @@
 
         <div id="epubDropzone" style="border: 1px dashed var(--border-color); border-radius: 8px; background: var(--bg-surface); padding: 32px; text-align: center; cursor: pointer; margin-bottom: 14px;">
           <div style="font-size: 14px; font-weight: 600;">Drag and drop .epub or .pdf files here or click to browse</div>
-          <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Supports EPUB &amp; PDF files (including multiple volumes at once)</div>
+          <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Supports EPUB &amp; PDF files (upload multiple volumes at once in order)</div>
           <input type="file" id="epubFileInput" accept=".epub,.pdf,application/pdf,application/epub+zip" multiple style="display: none;" />
+        </div>
+
+        <div id="uploadQueueHeader" style="display: none; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <div style="font-size: 12px; font-weight: 700;">Volume &amp; File Order (<span id="uploadFileCount">0</span>)</div>
+          <button type="button" class="btn-brutal" id="addMoreFilesBtn" style="min-height: 28px; padding: 2px 10px; font-size: 11px;">+ Add More Files</button>
+        </div>
+        <div id="uploadOrderHint" style="display: none; font-size: 11px; color: var(--text-muted); margin-bottom: 10px; line-height: 1.4;">
+          Files merge into your novel in this exact top-to-bottom sequence. Use <strong>▲</strong> and <strong>▼</strong> to adjust the volume and chapter order.
         </div>
 
         <div id="uploadFileList"></div>

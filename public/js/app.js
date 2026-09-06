@@ -185,10 +185,22 @@ const App = {
     if (footerLib) footerLib.addEventListener('click', handleGoToLibrary);
 
     // Master Panel Triggers
-    document.getElementById('headerMenuBtn').addEventListener('click', () => this.openMasterPanel('tabSync'));
-    document.getElementById('readerMenuBtn').addEventListener('click', () => this.openMasterPanel('tabChapters'));
-    document.getElementById('footerMenuBtn').addEventListener('click', () => this.openMasterPanel('tabChapters'));
-    document.getElementById('floatingQuickMenuBtn').addEventListener('click', () => this.toggleMasterPanel('tabChapters'));
+    document.getElementById('headerMenuBtn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.toggleMasterPanel('tabSync');
+    });
+    document.getElementById('readerMenuBtn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.toggleMasterPanel('tabChapters');
+    });
+    document.getElementById('footerMenuBtn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.toggleMasterPanel('tabChapters');
+    });
+    document.getElementById('floatingQuickMenuBtn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.toggleMasterPanel('tabChapters');
+    });
 
     const chTitleBtn = document.getElementById('readerChapterTitle');
     if (chTitleBtn) {
@@ -256,8 +268,19 @@ const App = {
     // Upload Dropzone
     const dropzone = document.getElementById('epubDropzone');
     const fileInput = document.getElementById('epubFileInput');
+    const addMoreBtn = document.getElementById('addMoreFilesBtn');
 
-    dropzone.addEventListener('click', () => fileInput.click());
+    if (addMoreBtn) {
+      addMoreBtn.addEventListener('click', () => {
+        this.uploadAppendMode = true;
+        fileInput.click();
+      });
+    }
+
+    dropzone.addEventListener('click', () => {
+      this.uploadAppendMode = false;
+      fileInput.click();
+    });
     dropzone.addEventListener('dragover', (e) => {
       e.preventDefault();
       dropzone.style.borderColor = 'var(--accent)';
@@ -269,13 +292,15 @@ const App = {
       e.preventDefault();
       dropzone.style.borderColor = 'var(--border-color)';
       if (e.dataTransfer.files && e.dataTransfer.files.length) {
-        this.handleSelectedFiles(e.dataTransfer.files);
+        const shouldAppend = (this.selectedUploadFiles && this.selectedUploadFiles.length > 0);
+        this.handleSelectedFiles(e.dataTransfer.files, shouldAppend);
       }
     });
 
     fileInput.addEventListener('change', (e) => {
       if (e.target.files && e.target.files.length) {
-        this.handleSelectedFiles(e.target.files);
+        this.handleSelectedFiles(e.target.files, this.uploadAppendMode || false);
+        this.uploadAppendMode = false;
       }
     });
 
@@ -420,46 +445,69 @@ const App = {
   },
 
   openMasterPanel(tabName = null) {
-    const isReading = this.currentView === 'reader' && Reader.currentNovel;
-    const titleEl = document.getElementById('masterPanelTitle');
-    const subtitleEl = document.getElementById('masterPanelSubtitle');
-    const bookTabs = document.querySelectorAll('.master-tab-btn.book-tab');
+    try {
+      if (!Reader.currentNovel && Reader.currentChapter) {
+        Reader.currentNovel = {
+          id: Reader.currentChapter.novel_id,
+          title: Reader.currentChapter.novel_title || 'Novel'
+        };
+      }
 
-    if (isReading) {
-      // In-Book Context
-      titleEl.textContent = Reader.currentNovel.title;
-      if (Reader.currentChapter) {
-        subtitleEl.style.display = 'block';
-        subtitleEl.textContent = `${Reader.currentChapter.volume_title} · ${Reader.currentChapter.title}`;
+      const isReading = this.currentView === 'reader' && (Reader.currentNovel || Reader.currentChapter);
+      const titleEl = document.getElementById('masterPanelTitle');
+      const subtitleEl = document.getElementById('masterPanelSubtitle');
+      const bookTabs = document.querySelectorAll('.master-tab-btn.book-tab');
+
+      if (isReading) {
+        // In-Book Context
+        const nTitle = (Reader.currentNovel && Reader.currentNovel.title) || (Reader.currentChapter && Reader.currentChapter.novel_title) || 'Reading';
+        if (titleEl) titleEl.textContent = nTitle;
+        if (Reader.currentChapter && subtitleEl) {
+          subtitleEl.style.display = 'block';
+          const vTitle = Reader.currentChapter.volume_title || `Volume ${Reader.currentChapter.volume_number || 1}`;
+          subtitleEl.textContent = `${vTitle} · ${Reader.currentChapter.title || ''}`;
+        } else if (subtitleEl) {
+          subtitleEl.style.display = 'none';
+        }
+        bookTabs.forEach(t => t.style.display = 'block');
+        if (!tabName) tabName = 'tabChapters';
       } else {
-        subtitleEl.style.display = 'none';
+        // Library / Main Menu Context: Hide book options
+        if (titleEl) titleEl.textContent = 'Library Menu';
+        if (subtitleEl) subtitleEl.style.display = 'none';
+        bookTabs.forEach(t => t.style.display = 'none');
+        if (!tabName || tabName === 'tabChapters' || tabName === 'tabTTS' || tabName === 'tabScroll') {
+          tabName = 'tabSync';
+        }
       }
-      bookTabs.forEach(t => t.style.display = 'block');
-      if (!tabName) tabName = 'tabChapters';
-    } else {
-      // Library / Main Menu Context: Hide book options
-      titleEl.textContent = 'Library Menu';
-      subtitleEl.style.display = 'none';
-      bookTabs.forEach(t => t.style.display = 'none');
-      if (!tabName || tabName === 'tabChapters' || tabName === 'tabTTS' || tabName === 'tabScroll') {
-        tabName = 'tabSync';
+
+      this.switchMasterTab(tabName);
+
+      const ttsBtn = document.getElementById('ttsPlayToggleBtn');
+      if (ttsBtn) {
+        ttsBtn.textContent = (TTSEngine.isPlaying && !TTSEngine.isPaused) ? 'Pause Read Aloud' : 'Start Read Aloud';
       }
-    }
 
-    this.switchMasterTab(tabName);
+      const panel = document.getElementById('masterSidePanel');
+      const backdrop = document.getElementById('drawerBackdrop');
+      if (panel) panel.classList.add('open');
+      if (backdrop) backdrop.classList.add('open');
+      this.updateSyncDisplay();
 
-    const ttsBtn = document.getElementById('ttsPlayToggleBtn');
-    if (ttsBtn) {
-      ttsBtn.textContent = (TTSEngine.isPlaying && !TTSEngine.isPaused) ? 'Pause Read Aloud' : 'Start Read Aloud';
-    }
-
-    document.getElementById('masterSidePanel').classList.add('open');
-    document.getElementById('drawerBackdrop').classList.add('open');
-    this.updateSyncDisplay();
-
-    // Center on active chapter if opening chapters tab from within a book
-    if (tabName === 'tabChapters' && isReading) {
-      Reader.centerActiveChapterInTOC();
+      // Center on active chapter if opening chapters tab from within a book
+      if (tabName === 'tabChapters' && isReading && Reader && typeof Reader.centerActiveChapterInTOC === 'function') {
+        try {
+          Reader.centerActiveChapterInTOC();
+        } catch (tocErr) {
+          console.warn('Could not center active chapter in TOC:', tocErr);
+        }
+      }
+    } catch (err) {
+      console.warn('openMasterPanel error, forcing panel display:', err);
+      const panel = document.getElementById('masterSidePanel');
+      const backdrop = document.getElementById('drawerBackdrop');
+      if (panel) panel.classList.add('open');
+      if (backdrop) backdrop.classList.add('open');
     }
   },
 
@@ -1508,12 +1556,19 @@ const App = {
     }
   },
 
+  naturalSortFiles(files) {
+    return files.slice().sort((a, b) => {
+      return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+    });
+  },
+
   openUploadModal(targetNovelId = null, targetNovelTitle = null) {
     this.targetUploadNovelId = targetNovelId;
     this.selectedUploadFiles = [];
+    this.uploadAppendMode = false;
     document.getElementById('uploadModal').style.display = 'flex';
     document.getElementById('epubFileInput').value = '';
-    document.getElementById('uploadFileList').innerHTML = '';
+    this.renderUploadFileList();
     document.getElementById('uploadProgress').style.display = 'none';
 
     const targetNotice = document.getElementById('uploadTargetNotice');
@@ -1532,38 +1587,126 @@ const App = {
     document.getElementById('uploadModal').style.display = 'none';
   },
 
-  handleSelectedFiles(fileList) {
-    this.selectedUploadFiles = Array.from(fileList).filter(f => {
+  handleSelectedFiles(fileList, append = false) {
+    const valid = Array.from(fileList).filter(f => {
       const lower = f.name.toLowerCase();
       return lower.endsWith('.epub') || lower.endsWith('.pdf');
     });
-    if (!this.selectedUploadFiles.length) {
+    if (!valid.length) {
       alert('Please select .epub or .pdf files.');
       return;
     }
 
+    if (append && this.selectedUploadFiles && this.selectedUploadFiles.length > 0) {
+      const existingSignatures = new Set(this.selectedUploadFiles.map(f => `${f.name}:${f.size}`));
+      const newItems = valid.filter(f => !existingSignatures.has(`${f.name}:${f.size}`));
+      const sortedNew = this.naturalSortFiles(newItems);
+      this.selectedUploadFiles = this.selectedUploadFiles.concat(sortedNew);
+    } else {
+      this.selectedUploadFiles = this.naturalSortFiles(valid);
+    }
+
+    this.renderUploadFileList();
+  },
+
+  renderUploadFileList() {
     const listEl = document.getElementById('uploadFileList');
+    const queueHeader = document.getElementById('uploadQueueHeader');
+    const orderHint = document.getElementById('uploadOrderHint');
+    const countEl = document.getElementById('uploadFileCount');
+
+    if (!listEl) return;
     listEl.innerHTML = '';
-    this.selectedUploadFiles.forEach((file, idx) => {
+
+    const files = this.selectedUploadFiles || [];
+    if (queueHeader) queueHeader.style.display = files.length > 0 ? 'flex' : 'none';
+    if (orderHint) orderHint.style.display = files.length > 1 ? 'block' : 'none';
+    if (countEl) countEl.textContent = `${files.length} file${files.length === 1 ? '' : 's'}`;
+
+    files.forEach((file, idx) => {
       const item = document.createElement('div');
-      item.style.padding = '8px 12px';
-      item.style.borderRadius = '4px';
-      item.style.border = '1px solid var(--border-color)';
-      item.style.marginBottom = '6px';
-      item.style.background = 'var(--bg-surface)';
-      item.style.fontSize = '12px';
-      item.style.display = 'flex';
-      item.style.justifyContent = 'space-between';
-      item.innerHTML = `
-        <span style="font-weight: 600;">Volume ${idx + 1}: ${file.name}</span>
-        <span style="color: var(--text-muted);">${(file.size / 1024 / 1024).toFixed(2)} MB</span>
-      `;
+      item.className = 'upload-file-item';
+
+      const left = document.createElement('div');
+      left.className = 'upload-file-item-left';
+
+      const badge = document.createElement('span');
+      badge.className = 'upload-order-badge';
+      badge.textContent = `Vol ${idx + 1}`;
+
+      const details = document.createElement('div');
+      details.className = 'upload-file-details';
+
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'upload-file-name';
+      nameSpan.textContent = file.name;
+      nameSpan.title = file.name;
+
+      const metaSpan = document.createElement('span');
+      metaSpan.className = 'upload-file-meta';
+      const ext = file.name.toLowerCase().endsWith('.pdf') ? 'PDF' : 'EPUB';
+      metaSpan.textContent = `${ext} · ${(file.size / 1024 / 1024).toFixed(2)} MB`;
+
+      details.appendChild(nameSpan);
+      details.appendChild(metaSpan);
+      left.appendChild(badge);
+      left.appendChild(details);
+
+      const actions = document.createElement('div');
+      actions.className = 'upload-item-actions';
+
+      const upBtn = document.createElement('button');
+      upBtn.type = 'button';
+      upBtn.className = 'upload-reorder-btn move-up';
+      upBtn.title = 'Move volume up';
+      upBtn.textContent = '▲';
+      if (idx === 0) upBtn.disabled = true;
+      upBtn.addEventListener('click', () => {
+        if (idx > 0) {
+          const temp = this.selectedUploadFiles[idx];
+          this.selectedUploadFiles[idx] = this.selectedUploadFiles[idx - 1];
+          this.selectedUploadFiles[idx - 1] = temp;
+          this.renderUploadFileList();
+        }
+      });
+
+      const downBtn = document.createElement('button');
+      downBtn.type = 'button';
+      downBtn.className = 'upload-reorder-btn move-down';
+      downBtn.title = 'Move volume down';
+      downBtn.textContent = '▼';
+      if (idx === files.length - 1) downBtn.disabled = true;
+      downBtn.addEventListener('click', () => {
+        if (idx < this.selectedUploadFiles.length - 1) {
+          const temp = this.selectedUploadFiles[idx];
+          this.selectedUploadFiles[idx] = this.selectedUploadFiles[idx + 1];
+          this.selectedUploadFiles[idx + 1] = temp;
+          this.renderUploadFileList();
+        }
+      });
+
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'upload-remove-btn';
+      removeBtn.title = 'Remove file';
+      removeBtn.textContent = 'X';
+      removeBtn.addEventListener('click', () => {
+        this.selectedUploadFiles.splice(idx, 1);
+        this.renderUploadFileList();
+      });
+
+      actions.appendChild(upBtn);
+      actions.appendChild(downBtn);
+      actions.appendChild(removeBtn);
+
+      item.appendChild(left);
+      item.appendChild(actions);
       listEl.appendChild(item);
     });
   },
 
   async performUpload() {
-    if (!this.selectedUploadFiles.length) {
+    if (!this.selectedUploadFiles || !this.selectedUploadFiles.length) {
       alert('Please select at least one .epub or .pdf file.');
       return;
     }
@@ -1578,6 +1721,9 @@ const App = {
       formData.append('series_title', seriesTitle);
     }
 
+    const fileOrder = this.selectedUploadFiles.map(f => f.name);
+    formData.append('file_order', JSON.stringify(fileOrder));
+
     this.selectedUploadFiles.forEach(file => {
       formData.append('files', file);
     });
@@ -1587,7 +1733,7 @@ const App = {
     const progressText = document.getElementById('uploadProgressText');
     progressDiv.style.display = 'block';
     progressFill.style.width = '40%';
-    progressText.textContent = 'Processing files...';
+    progressText.textContent = `Processing ${this.selectedUploadFiles.length} file(s) in volume order...`;
 
     try {
       const res = await fetch('/api/upload', {
@@ -1606,7 +1752,9 @@ const App = {
       await this.updateDeviceMirror();
 
       if (data.duplicates_skipped && data.duplicates_skipped > 0) {
-        this.showToast(`Uploaded ${data.chapters_added} chapters (${data.duplicates_skipped} duplicates skipped)`);
+        this.showToast(`Uploaded ${data.chapters_added} chapters across ${data.volumes_added} volume(s) (${data.duplicates_skipped} duplicates skipped)`);
+      } else {
+        this.showToast(`Uploaded ${data.chapters_added} chapters across ${data.volumes_added} volume(s)`);
       }
 
       setTimeout(async () => {

@@ -851,6 +851,28 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             self.send_json({"error": "No EPUB or PDF files provided"}, status=400)
             return
 
+        # Determine client requested file order if provided
+        file_order_raw = fs.getvalue("file_order")
+        order_map = {}
+        if file_order_raw:
+            try:
+                order_list = json.loads(file_order_raw) if isinstance(file_order_raw, str) else file_order_raw
+                if isinstance(order_list, list):
+                    order_map = {name: idx for idx, name in enumerate(order_list)}
+            except Exception:
+                order_map = {}
+
+        def natural_sort_key(s):
+            return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', s or '')]
+
+        def file_item_sort_key(it):
+            fname = it.filename or ''
+            if fname in order_map:
+                return (0, order_map[fname])
+            return (1, natural_sort_key(fname))
+
+        file_items.sort(key=file_item_sort_key)
+
         # Parse each file
         parsed_files = []
         for it in file_items:
@@ -872,8 +894,9 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_json({"error": f"Failed to parse {fname}: {str(ex)}"}, status=400)
                 return
 
-        # Sort files by volume number
-        parsed_files.sort(key=lambda x: x['volume_number'])
+        # If client did not provide an explicit order_map, sort by detected volume number, then natural sort filename
+        if not order_map:
+            parsed_files.sort(key=lambda x: (x['volume_number'] if x['volume_number'] is not None else 9999, natural_sort_key(x['filename'])))
 
         conn = database.get_db()
         cur = conn.cursor()
@@ -922,14 +945,14 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         existing_chapters = [dict(r) for r in cur.fetchall()]
 
         # Build deduplication lookup maps
-        existing_ch_nums = {}
+        existing_vol_ch_nums = {}
         existing_norm_titles = {}
         existing_fingerprints = {}
 
         for ech in existing_chapters:
             c_num = epub_parser.extract_chapter_number(ech["title"])
             if c_num is not None:
-                existing_ch_nums[c_num] = ech
+                existing_vol_ch_nums[(ech["volume_id"], c_num)] = ech
             n_title = epub_parser.normalize_title(ech["title"])
             if n_title:
                 existing_norm_titles[n_title] = ech
@@ -964,11 +987,16 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
 
                 # Check if chapter is already in this novel
                 is_duplicate = False
-                if ch_num is not None and ch_num in existing_ch_nums:
+                if ch_fp and len(ch_fp) >= 30 and ch_fp in existing_fingerprints:
                     is_duplicate = True
                 elif ch_norm_title and ch_norm_title in existing_norm_titles:
-                    is_duplicate = True
-                elif ch_fp and len(ch_fp) >= 30 and ch_fp in existing_fingerprints:
+                    ech = existing_norm_titles[ch_norm_title]
+                    is_generic = bool(re.match(r'^(?:chapter|ch|c)[\s._-]*\d+$', ch_norm_title, re.I))
+                    if not is_generic:
+                        is_duplicate = True
+                    elif ech.get("volume_id") == vol_id:
+                        is_duplicate = True
+                elif ch_num is not None and (vol_id, ch_num) in existing_vol_ch_nums:
                     is_duplicate = True
 
                 if is_duplicate:
@@ -989,9 +1017,9 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                     ch['content_html'],
                     ch['word_count']
                 ))
-                new_ech = {"id": ch_id, "title": ch["title"], "content_html": ch["content_html"]}
+                new_ech = {"id": ch_id, "volume_id": vol_id, "title": ch["title"], "content_html": ch["content_html"]}
                 if ch_num is not None:
-                    existing_ch_nums[ch_num] = new_ech
+                    existing_vol_ch_nums[(vol_id, ch_num)] = new_ech
                 if ch_norm_title:
                     existing_norm_titles[ch_norm_title] = new_ech
                 if ch_fp and len(ch_fp) >= 30:
@@ -1004,20 +1032,21 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
 
         # Re-sequence all chapters for this novel to ensure clean, strictly continuous global_index 1..N
         cur.execute("""
-            SELECT c.id, c.title, c.chapter_index, c.volume_id, v.volume_number
+            SELECT c.id, c.title, c.chapter_index, c.volume_id, v.volume_number, c.rowid
             FROM chapters c
             LEFT JOIN volumes v ON c.volume_id = v.id
             WHERE c.novel_id = ?
+            ORDER BY v.volume_number ASC, c.rowid ASC
         """, (novel_id,))
         all_novel_chapters = [dict(r) for r in cur.fetchall()]
 
         def chapter_sort_key(item):
-            c_num = epub_parser.extract_chapter_number(item["title"])
-            if c_num is not None:
-                return (0, c_num)
             v_num = item.get("volume_number") or 1
-            c_idx = item.get("chapter_index") or 1
-            return (1, v_num, c_idx)
+            c_num = epub_parser.extract_chapter_number(item["title"])
+            rowid = item.get("rowid") or 0
+            if c_num is not None:
+                return (v_num, 0, c_num, rowid)
+            return (v_num, 1, rowid)
 
         all_novel_chapters.sort(key=chapter_sort_key)
 

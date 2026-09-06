@@ -445,5 +445,88 @@ class ApiDirectTests(unittest.TestCase):
         self.assertEqual(len(matched), 1)
         self.assertEqual(matched[0]["cover_data"], custom_cover)
 
+    def test_10_multi_file_ordered_upload_and_cross_volume_continuity(self):
+        user_id = database.get_or_create_user("ORDERED_MULTI_UPLOAD_USER")
+        
+        # Create Part A (Vol 1) and Part B (Vol 2)
+        # Note: both volumes have chapters starting at 1
+        part_a_data = create_sample_epub(
+            "Apex Legend Part A",
+            "Scribe Author",
+            [
+                ("Chapter 1: Awakening", "<p>Part A: The ancient power awakens.</p>"),
+                ("Chapter 2: The First Steps", "<p>Part A: Taking first steps out of the sanctuary.</p>")
+            ]
+        )
+        part_b_data = create_sample_epub(
+            "Apex Legend Part B",
+            "Scribe Author",
+            [
+                ("Chapter 1: The New Horizon", "<p>Part B: A brand new horizon greets the party.</p>"),
+                ("Chapter 2: The Trial Continues", "<p>Part B: Continuing the deadly trials.</p>")
+            ]
+        )
+
+        boundary = "---------------------------OrderedTestBoundary98765"
+        body = bytearray()
+        def add_f(b, name, val):
+            b.extend(f"--{boundary}\r\n".encode('utf-8'))
+            b.extend(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode('utf-8'))
+            b.extend(f"{val}\r\n".encode('utf-8'))
+        def add_fl(b, name, fname, data):
+            b.extend(f"--{boundary}\r\n".encode('utf-8'))
+            b.extend(f'Content-Disposition: form-data; name="{name}"; filename="{fname}"\r\n'.encode('utf-8'))
+            b.extend(b"Content-Type: application/epub+zip\r\n\r\n")
+            b.extend(data)
+            b.extend(b"\r\n")
+
+        add_f(body, "user_id", user_id)
+        add_f(body, "series_title", "Apex Legend Series")
+        # Intentionally provide file_order specifying PartA first, then PartB
+        add_f(body, "file_order", json.dumps(["Apex_PartA.epub", "Apex_PartB.epub"]))
+        
+        # But add files in reverse order in multipart body to test file_order prioritization
+        add_fl(body, "files", "Apex_PartB.epub", part_b_data)
+        add_fl(body, "files", "Apex_PartA.epub", part_a_data)
+        body.extend(f"--{boundary}--\r\n".encode('utf-8'))
+
+        handler = create_mock_handler("/api/upload", "POST", bytes(body), {
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "Content-Length": str(len(body))
+        })
+        handler.do_POST()
+        res = json.loads(handler.wfile.getvalue().decode('utf-8'))
+        self.assertTrue(res["success"])
+        self.assertEqual(res["volumes_added"], 2)
+        self.assertEqual(res["chapters_added"], 4)
+        self.assertEqual(res["duplicates_skipped"], 0)
+        novel_id = res["novel_id"]
+
+        # Fetch novel detail and verify volume and chapter sequencing
+        h_novel = create_mock_handler(f"/api/novels/{novel_id}?user_id={user_id}", "GET")
+        h_novel.do_GET()
+        novel_detail = json.loads(h_novel.wfile.getvalue().decode('utf-8'))
+        
+        # Volumes should be PartA as Vol 1, PartB as Vol 2
+        vols = novel_detail["volumes"]
+        self.assertEqual(len(vols), 2)
+        self.assertEqual(vols[0]["volume_number"], 1)
+        self.assertIn("PartA", vols[0]["file_name"])
+        self.assertEqual(vols[1]["volume_number"], 2)
+        self.assertIn("PartB", vols[1]["file_name"])
+
+        # Chapters must be ordered PartA Ch 1, PartA Ch 2, PartB Ch 1, PartB Ch 2
+        chs = novel_detail["chapters"]
+        self.assertEqual(len(chs), 4)
+        self.assertEqual(chs[0]["global_index"], 1)
+        self.assertEqual(chs[0]["title"], "Chapter 1: Awakening")
+        self.assertEqual(chs[1]["global_index"], 2)
+        self.assertEqual(chs[1]["title"], "Chapter 2: The First Steps")
+        self.assertEqual(chs[2]["global_index"], 3)
+        self.assertEqual(chs[2]["title"], "Chapter 1: The New Horizon")
+        self.assertEqual(chs[3]["global_index"], 4)
+        self.assertEqual(chs[3]["title"], "Chapter 2: The Trial Continues")
+
 if __name__ == "__main__":
     unittest.main()
+

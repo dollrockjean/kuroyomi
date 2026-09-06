@@ -864,7 +864,7 @@ body {
   position: fixed;
   top: 0;
   left: 0;
-  z-index: 90;
+  z-index: 150;
   width: 100%;
   background: var(--bg-primary);
   border-bottom: 1px solid var(--border-color);
@@ -884,16 +884,15 @@ body {
   pointer-events: none;
 }
 
-#backToLibraryBtn {
+#backToLibraryBtn,
+#readerMenuBtn,
+#drawerBackToLibraryBtn,
+#footerLibraryBtn,
+#footerMenuBtn,
+#floatingQuickMenuBtn {
   cursor: pointer;
   position: relative;
-  z-index: 105;
-  pointer-events: auto !important;
-}
-
-#drawerBackToLibraryBtn,
-#footerLibraryBtn {
-  cursor: pointer;
+  z-index: 160;
   pointer-events: auto !important;
 }
 
@@ -904,6 +903,8 @@ body {
   font-size: 13px;
   font-weight: 500;
   color: var(--text-secondary);
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .reader-ch-info strong {
@@ -1046,9 +1047,9 @@ body {
 /* Floating Discreet Menu Toggle Button (Always accessible) */
 .floating-quick-menu-btn {
   position: fixed;
-  bottom: calc(22px + var(--safe-bottom));
+  bottom: calc(20px + var(--safe-bottom));
   right: 20px;
-  z-index: 98;
+  z-index: 155;
   height: 40px;
   padding: 0 14px;
   border-radius: var(--radius-pill);
@@ -1099,9 +1100,9 @@ body {
    ========================================================================== */
 .tts-mini-badge {
   position: fixed;
-  bottom: 24px;
-  right: 28px;
-  z-index: 110;
+  bottom: 74px;
+  right: 20px;
+  z-index: 160;
   background: var(--bg-surface);
   border: 1px solid var(--border-active);
   border-radius: 30px;
@@ -1746,6 +1747,117 @@ body {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+
+/* Multi-File Upload Queue and Reordering */
+.upload-file-item {
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+  margin-bottom: 8px;
+  background: var(--bg-surface);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.upload-file-item:hover {
+  border-color: var(--border-active);
+}
+
+.upload-file-item-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.upload-order-badge {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--accent-text);
+  flex-shrink: 0;
+}
+
+.upload-file-details {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.upload-file-name {
+  font-weight: 600;
+  color: var(--text-primary);
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-file-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.upload-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.upload-reorder-btn {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.upload-reorder-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--border-active);
+}
+
+.upload-reorder-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.upload-remove-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: #ef4444;
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 26px;
+  transition: all 0.15s ease;
+}
+
+.upload-remove-btn:hover {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: #ef4444;
 }
 
 /* Forms & Settings */
