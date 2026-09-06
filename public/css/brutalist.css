@@ -23,8 +23,16 @@
   --radius-lg: 10px;
   --radius-pill: 9999px;
   
-  --font-times: "Times New Roman", Times, "Source Serif 4", "Merriweather", Georgia, serif;
+  --font-times: "Times New Roman", Times, serif;
+  --font-merriweather: "Merriweather", Georgia, serif;
+  --font-georgia: Georgia, "Times New Roman", serif;
+  --font-palatino: "Palatino Linotype", Palatino, "Book Antiqua", serif;
+  --font-lora: "Lora", Georgia, serif;
+  --font-ptserif: "PT Serif", Georgia, serif;
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Inter", sans-serif;
+  --font-roboto: "Roboto", -apple-system, sans-serif;
+  --font-opensans: "Open Sans", -apple-system, sans-serif;
+  --font-lato: "Lato", -apple-system, sans-serif;
   --font-mono: "JetBrains Mono", "SF Mono", "Space Mono", "Courier New", monospace;
   --font-dyslexic: "Atkinson Hyperlegible", -apple-system, sans-serif;
   
@@ -32,6 +40,7 @@
   --reader-font: var(--font-times);
   --reader-font-size: 19px;
   --reader-line-height: 1.85;
+  --reader-letter-spacing: 0px;
   --reader-width: 760px;
   
   --safe-top: env(safe-area-inset-top, 0px);
@@ -118,9 +127,97 @@
   --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.7);
 }
 
+/* 5. WebNovel Warm Paper */
+[data-theme="webnovel-paper"] {
+  --bg-primary: #f8f4e6;
+  --bg-surface: #eee5d5;
+  --bg-card: #f3ece0;
+  --bg-hover: #e5dac7;
+  --text-primary: #2c2c2c;
+  --text-secondary: #666055;
+  --text-muted: #8a8275;
+  --border-color: #dcd4c4;
+  --border-active: #3e3428;
+  --accent: #3e3428;
+  --accent-secondary: #574b3d;
+  --accent-text: #ffffff;
+  --highlight-bg: rgba(62, 52, 40, 0.12);
+  --highlight-border: #3e3428;
+  --shadow-subtle: 0 2px 8px rgba(50, 40, 30, 0.08);
+  --shadow-card: 0 4px 14px rgba(50, 40, 30, 0.1);
+}
+
+/* 6. WebNovel Eye-Protection Mint */
+[data-theme="webnovel-mint"] {
+  --bg-primary: #e8f5e9;
+  --bg-surface: #d8edd9;
+  --bg-card: #def2e0;
+  --bg-hover: #cbe6cd;
+  --text-primary: #1b4332;
+  --text-secondary: #2d6a4f;
+  --text-muted: #52796f;
+  --border-color: #b7dbba;
+  --border-active: #1b4332;
+  --accent: #1b4332;
+  --accent-secondary: #2d6a4f;
+  --accent-text: #ffffff;
+  --highlight-bg: rgba(27, 67, 50, 0.15);
+  --highlight-border: #1b4332;
+  --shadow-subtle: 0 2px 8px rgba(20, 50, 35, 0.08);
+  --shadow-card: 0 4px 14px rgba(20, 50, 35, 0.1);
+}
+
+/* 7. WebNovel Slate Dark */
+[data-theme="webnovel-dark"] {
+  --bg-primary: #23272e;
+  --bg-surface: #1e2227;
+  --bg-card: #282c34;
+  --bg-hover: #323842;
+  --text-primary: #e2e8f0;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --border-color: #3b4252;
+  --border-active: #ffffff;
+  --accent: #ffffff;
+  --accent-secondary: #cbd5e1;
+  --accent-text: #000000;
+  --highlight-bg: rgba(255, 255, 255, 0.14);
+  --highlight-border: #ffffff;
+  --shadow-subtle: 0 2px 10px rgba(0, 0, 0, 0.4);
+  --shadow-card: 0 4px 18px rgba(0, 0, 0, 0.45);
+}
+
+/* 8. WebNovel Midnight Ocean */
+[data-theme="webnovel-ocean"] {
+  --bg-primary: #0f172a;
+  --bg-surface: #162038;
+  --bg-card: #1e293b;
+  --bg-hover: #26354d;
+  --text-primary: #cbd5e1;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --border-color: #334155;
+  --border-active: #38bdf8;
+  --accent: #38bdf8;
+  --accent-secondary: #7dd3fc;
+  --accent-text: #0f172a;
+  --highlight-bg: rgba(56, 189, 248, 0.16);
+  --highlight-border: #38bdf8;
+  --shadow-subtle: 0 2px 10px rgba(0, 0, 0, 0.5);
+  --shadow-card: 0 4px 18px rgba(0, 0, 0, 0.6);
+}
+
 /* Font Choices */
 [data-font="times"], [data-font="serif"] { --reader-font: var(--font-times); }
+[data-font="merriweather"] { --reader-font: var(--font-merriweather); }
+[data-font="georgia"] { --reader-font: var(--font-georgia); }
+[data-font="palatino"] { --reader-font: var(--font-palatino); }
+[data-font="lora"] { --reader-font: var(--font-lora); }
+[data-font="ptserif"] { --reader-font: var(--font-ptserif); }
 [data-font="sans"] { --reader-font: var(--font-sans); }
+[data-font="roboto"] { --reader-font: var(--font-roboto); }
+[data-font="opensans"] { --reader-font: var(--font-opensans); }
+[data-font="lato"] { --reader-font: var(--font-lato); }
 [data-font="mono"] { --reader-font: var(--font-mono); }
 [data-font="dyslexic"] { --reader-font: var(--font-dyslexic); }
 
@@ -930,6 +1027,7 @@ body {
   font-family: var(--reader-font);
   font-size: var(--reader-font-size);
   line-height: var(--reader-line-height);
+  letter-spacing: var(--reader-letter-spacing, 0px);
   transition: max-width 0.2s ease, font-size 0.15s ease;
   box-sizing: border-box;
   cursor: pointer; /* Centerscreen tap indicator */
@@ -963,8 +1061,11 @@ body {
 
 .reader-paragraph {
   margin-bottom: 1.35em;
-  text-align: justify;
-  text-justify: inter-word;
+  text-align: left;
+  text-rendering: optimizeLegibility;
+  word-break: break-word;
+  letter-spacing: var(--reader-letter-spacing, 0px);
+  line-height: var(--reader-line-height, 1.85);
   position: relative;
   padding: 2px 2px;
   border-radius: var(--radius-sm);
@@ -998,16 +1099,27 @@ body {
 
 /* Chapter Bottom Navigation */
 .reader-footer-nav {
-  margin-top: 55px;
-  padding-top: 24px;
+  margin-top: 45px;
+  padding-top: 20px;
   border-top: 1px solid var(--border-color);
   display: flex;
-  gap: 12px;
+  gap: 8px;
   width: 100%;
+  justify-content: center;
+  align-items: center;
 }
 
-.reader-footer-nav .btn-brutal {
+.reader-footer-nav .btn-brutal,
+.btn-footer-nav {
   flex: 1;
+  font-size: 12px;
+  padding: 6px 10px;
+  min-height: 32px;
+  max-height: 36px;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* Floating Action Bar (Hides on scroll down) */
@@ -2047,19 +2159,40 @@ body {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 12px 16px;
+  padding: 10px 14px;
   font-size: 12px;
   font-weight: 600;
   color: var(--text-muted);
   border: 1px dashed var(--border-color);
   border-radius: 8px;
   background: var(--bg-surface);
-  margin: 14px 0;
+  margin: 10px 0;
   opacity: 0;
   transform: scale(0.98);
-  transition: opacity 0.2s ease, transform 0.2s ease, color 0.15s ease, border-color 0.15s ease;
+  transition: opacity 0.2s ease, transform 0.2s ease, color 0.15s ease, border-color 0.15s ease, max-height 0.2s ease;
   user-select: none;
   pointer-events: none;
+}
+
+/* Collapse top indicator to 0 height when idle so it leaves zero blank space above chapter title */
+.overscroll-indicator.top-indicator {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  border-color: transparent;
+  overflow: hidden;
+  opacity: 0;
+}
+
+.overscroll-indicator.top-indicator.pulling,
+.overscroll-indicator.top-indicator.armed {
+  max-height: 60px;
+  padding: 10px 14px;
+  margin: 8px 0;
+  border-color: var(--border-color);
+  opacity: 1;
 }
 
 .overscroll-indicator.armed {
@@ -2070,16 +2203,16 @@ body {
   transform: scale(1.02);
 }
 
-/* Mobile Slide-Up Quick Reader Sheet */
+/* Mobile Slide-Up Quick Reader Sheet (High z-index to never be overlapped) */
 .quick-sheet-backdrop {
   position: fixed;
   top: 0;
   left: 0;
   width: 100vw;
   height: 100vh;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.55);
   backdrop-filter: blur(4px);
-  z-index: 120;
+  z-index: 245;
   display: none;
   opacity: 0;
   transition: opacity 0.22s ease;
@@ -2095,7 +2228,7 @@ body {
   bottom: 0;
   left: 0;
   width: 100%;
-  z-index: 130;
+  z-index: 250;
   background: var(--bg-surface);
   border-top: 1px solid var(--border-color);
   border-top-left-radius: 20px;
@@ -2364,27 +2497,124 @@ body {
     font-size: 11.5px;
   }
 
-  /* Hide previous/next buttons on mobile - replaced by infinite/overscroll gesture */
+  /* Resume Hero Mobile Fit (Balanced cover and text height) */
+  .resume-hero {
+    grid-template-columns: 82px 1fr !important;
+    grid-template-rows: auto auto !important;
+    gap: 10px 14px !important;
+    padding: 14px 16px !important;
+    margin-bottom: 20px !important;
+    align-items: center !important;
+  }
+
+  .resume-cover {
+    width: 82px !important;
+    height: 118px !important;
+    grid-row: 1 !important;
+    grid-column: 1 !important;
+  }
+
+  .resume-info {
+    grid-row: 1 !important;
+    grid-column: 2 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: center !important;
+    min-width: 0 !important;
+    gap: 2px !important;
+  }
+
+  .resume-info h3 {
+    font-size: 10px !important;
+    margin-bottom: 2px !important;
+    letter-spacing: 0.5px !important;
+  }
+
+  .resume-info h2, #resumeNovelTitle {
+    font-size: 16px !important;
+    line-height: 1.22 !important;
+    margin-bottom: 4px !important;
+    display: -webkit-box !important;
+    -webkit-line-clamp: 2 !important;
+    -webkit-box-orient: vertical !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+
+  .resume-chapter-tag {
+    font-size: 11.5px !important;
+    margin-bottom: 6px !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+
+  .progress-bar-container {
+    max-width: 100% !important;
+  }
+
+  .resume-hero > div:last-child {
+    grid-row: 2 !important;
+    grid-column: 1 / -1 !important;
+    width: 100% !important;
+    margin-top: 2px !important;
+  }
+
+  #resumeReadBtn {
+    width: 100% !important;
+    padding: 9px 12px !important;
+    font-size: 13px !important;
+    justify-content: center !important;
+  }
+
+  /* Footer Previous/Next buttons are visible and compact on mobile */
   #footerPrevBtn,
-  #footerNextBtn,
+  #footerNextBtn {
+    display: inline-flex !important;
+    flex: 1;
+    font-size: 11.5px !important;
+    padding: 6px 8px !important;
+    min-height: 32px !important;
+  }
+
+  #footerMenuBtn,
+  #footerLibraryBtn {
+    flex: 1;
+    font-size: 11.5px !important;
+    padding: 6px 8px !important;
+    min-height: 32px !important;
+  }
+
+  .reader-footer-nav {
+    display: flex !important;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    margin-top: 36px;
+    padding-top: 16px;
+  }
+
+  /* Floating Bar button cleanup on mobile */
   #prevChapterBtn,
   #nextChapterBtn {
     display: none !important;
   }
 
-  .reader-footer-nav {
-    justify-content: center;
-    gap: 8px;
-  }
-
-  #footerMenuBtn,
-  #footerLibraryBtn {
-    max-width: 150px;
-    width: 100%;
-  }
-
+  /* Mobile Chapter Top: Eliminate blank gaps above text & volume banner */
   .reader-body-wrapper {
-    padding: calc(85px + var(--safe-top)) var(--reader-padding-x, 6px) calc(95px + var(--safe-bottom)) var(--reader-padding-x, 6px);
+    padding: calc(48px + var(--safe-top)) var(--reader-padding-x, 6px) calc(90px + var(--safe-bottom)) var(--reader-padding-x, 6px) !important;
+  }
+
+  .chapter-separator-banner {
+    margin: 6px 0 12px 0 !important;
+    padding: 8px 10px !important;
+    font-size: 11.5px !important;
+  }
+
+  .reader-heading {
+    margin: 10px 0 14px 0 !important;
+    font-size: 1.35em !important;
+    padding-bottom: 8px !important;
   }
 
   .reader-floating-bar {

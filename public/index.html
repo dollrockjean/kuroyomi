@@ -24,8 +24,13 @@
     }
   </style>
 
+  <!-- WebNovel & Reading Typography Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,300;0,400;0,700;1,300;1,400&family=Lora:ital,wght@0,400..700;1,400..700&family=Merriweather:ital,wght@0,300;0,400;0,700;1,300;1,400&family=Open+Sans:ital,wght@0,300..800;1,300..800&family=PT+Serif:ital,wght@0,400;0,700;1,400;1,700&family=Roboto:ital,wght@0,300;0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+
   <!-- Styles -->
-  <link rel="stylesheet" href="/css/brutalist.css?v=17.0">
+  <link rel="stylesheet" href="/css/brutalist.css?v=18.0">
 </head>
 <body style="background-color: #141518; color: #f0f0f0;">
 
@@ -131,7 +136,10 @@
 
       <!-- Novels Grid / List Container -->
       <div class="novel-grid" id="novelGrid">
-        <!-- Novel cards inserted dynamically -->
+        <div class="library-skeleton-loader" id="libraryInitLoader" style="grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 48px 20px; gap: 14px; color: var(--text-secondary);">
+          <div class="spinner-brutal" style="width: 28px; height: 28px; border: 3px solid var(--border-color); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
+          <span style="font-size: 13px; font-weight: 600; letter-spacing: 0.5px;">Loading your library...</span>
+        </div>
       </div>
     </div>
 
@@ -169,10 +177,10 @@
 
         <!-- Chapter Bottom Navigation -->
         <nav class="reader-footer-nav" id="readerFooterNav">
-          <button class="btn-brutal" id="footerPrevBtn">Previous Chapter</button>
-          <button class="btn-brutal" id="footerLibraryBtn">Library</button>
-          <button class="btn-brutal" id="footerMenuBtn">Menu</button>
-          <button class="btn-brutal btn-brutal-accent" id="footerNextBtn">Next Chapter</button>
+          <button class="btn-brutal btn-footer-nav" id="footerPrevBtn">&lt;- Prev</button>
+          <button class="btn-brutal btn-footer-nav" id="footerLibraryBtn">Library</button>
+          <button class="btn-brutal btn-footer-nav" id="footerMenuBtn">Menu</button>
+          <button class="btn-brutal btn-footer-nav btn-brutal-accent" id="footerNextBtn">Next -&gt;</button>
         </nav>
       </article>
 
@@ -333,6 +341,24 @@
         </div>
       </div>
 
+      <div class="quick-sheet-font-row">
+        <span class="quick-sheet-label">Line Spacing</span>
+        <div class="quick-sheet-font-controls">
+          <button class="btn-brutal quick-sheet-font-btn" id="quickSheetLineDown" title="Decrease line spacing">-</button>
+          <span class="quick-sheet-font-val" id="quickSheetLineVal">1.85</span>
+          <button class="btn-brutal quick-sheet-font-btn" id="quickSheetLineUp" title="Increase line spacing">+</button>
+        </div>
+      </div>
+
+      <div class="quick-sheet-font-row">
+        <span class="quick-sheet-label">Letter Spacing</span>
+        <div class="quick-sheet-font-controls">
+          <button class="btn-brutal quick-sheet-font-btn" id="quickSheetLetterDown" title="Decrease letter spacing">-</button>
+          <span class="quick-sheet-font-val" id="quickSheetLetterVal">0.0px</span>
+          <button class="btn-brutal quick-sheet-font-btn" id="quickSheetLetterUp" title="Increase letter spacing">+</button>
+        </div>
+      </div>
+
       <div class="quick-sheet-actions-row">
         <button class="btn-brutal quick-sheet-action" id="quickSheetMarginsBtn">
           Margin: <span id="quickSheetMarginVal" style="font-weight: 700; margin-left: 4px;">Edge</span>
@@ -450,8 +476,12 @@
           <div class="grid-choices">
             <button class="choice-btn theme-btn selected" data-theme="monochrome-dark">Monochrome Dark</button>
             <button class="choice-btn theme-btn" data-theme="monochrome-light">Monochrome Light</button>
+            <button class="choice-btn theme-btn" data-theme="webnovel-paper">Warm Paper</button>
+            <button class="choice-btn theme-btn" data-theme="webnovel-mint">Eye-Protection Mint</button>
             <button class="choice-btn theme-btn" data-theme="sepia-parchment">Warm Sepia</button>
-            <button class="choice-btn theme-btn" data-theme="oled-blackout">OLED Blackout</button>
+            <button class="choice-btn theme-btn" data-theme="webnovel-dark">Slate Dark</button>
+            <button class="choice-btn theme-btn" data-theme="webnovel-ocean">Midnight Ocean</button>
+            <button class="choice-btn theme-btn" data-theme="oled-blackout">AMOLED Black</button>
           </div>
         </div>
 
@@ -459,7 +489,15 @@
           <label class="form-label">Font Family</label>
           <div class="grid-choices">
             <button class="choice-btn font-btn selected" data-font="times">Times New Roman</button>
+            <button class="choice-btn font-btn" data-font="merriweather">Merriweather</button>
+            <button class="choice-btn font-btn" data-font="georgia">Georgia</button>
+            <button class="choice-btn font-btn" data-font="palatino">Palatino</button>
+            <button class="choice-btn font-btn" data-font="lora">Lora</button>
+            <button class="choice-btn font-btn" data-font="ptserif">PT Serif</button>
             <button class="choice-btn font-btn" data-font="sans">Clean Sans</button>
+            <button class="choice-btn font-btn" data-font="roboto">Roboto</button>
+            <button class="choice-btn font-btn" data-font="opensans">Open Sans</button>
+            <button class="choice-btn font-btn" data-font="lato">Lato</button>
             <button class="choice-btn font-btn" data-font="mono">Monospace</button>
             <button class="choice-btn font-btn" data-font="dyslexic">Dyslexic</button>
           </div>
@@ -478,7 +516,15 @@
             <label class="form-label">Line Spacing</label>
             <span id="lineHeightVal" style="font-size: 12px; font-weight: 600; color: var(--text-secondary);">1.85</span>
           </div>
-          <input type="range" id="lineHeightSlider" class="range-slider" min="1.3" max="2.4" step="0.05" value="1.85" />
+          <input type="range" id="lineHeightSlider" class="range-slider" min="1.3" max="2.6" step="0.05" value="1.85" />
+        </div>
+
+        <div class="form-group">
+          <div style="display: flex; justify-content: space-between;">
+            <label class="form-label">Letter Spacing</label>
+            <span id="letterSpacingVal" style="font-size: 12px; font-weight: 600; color: var(--text-secondary);">0.0px</span>
+          </div>
+          <input type="range" id="letterSpacingSlider" class="range-slider" min="-0.5" max="2.5" step="0.1" value="0.0" />
         </div>
 
         <div class="form-group">

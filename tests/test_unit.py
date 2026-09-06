@@ -186,5 +186,17 @@ class NovelReaderUnitTests(unittest.TestCase):
 
         conn.close()
 
+    def test_spacing_and_whitespace_sanitization(self):
+        """Verify that EPUB and PDF paragraph cleaners collapse multiple spaces and remove justify styles."""
+        raw_text = "<p style=\"text-align: justify; word-spacing: 10px;\">This   has&nbsp;&nbsp;weird    long \u00a0\u3000 spaces between   words.</p>"
+        cleaned = epub_parser.clean_paragraph_text(raw_text)
+        # Should not contain &nbsp; or \u00a0 or \u3000 or multiple spaces
+        self.assertNotIn("&nbsp;", cleaned)
+        self.assertNotIn("\u00a0", cleaned)
+        self.assertNotIn("\u3000", cleaned)
+        self.assertNotIn("text-align", cleaned)
+        self.assertNotIn("word-spacing", cleaned)
+        self.assertEqual(cleaned, "<p>This has weird long spaces between words.</p>")
+
 if __name__ == "__main__":
     unittest.main()

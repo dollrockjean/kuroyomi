@@ -167,12 +167,12 @@ const Reader = {
       if (e.touches.length !== 1) return;
       if (document.getElementById('readerView').style.display === 'none') return;
 
-      const scrollY = window.scrollY;
+      const scrollY = window.scrollY || window.pageYOffset;
       const docHeight = document.documentElement.scrollHeight;
       const winHeight = window.innerHeight;
 
-      atTop = scrollY <= 3;
-      atBottom = (scrollY + winHeight) >= (docHeight - 12);
+      atTop = scrollY <= 15;
+      atBottom = (scrollY + winHeight) >= (docHeight - 65);
 
       if (atTop || atBottom) {
         startY = e.touches[0].clientY;
@@ -183,17 +183,36 @@ const Reader = {
     }, { passive: true });
 
     window.addEventListener('touchmove', (e) => {
-      if (!isTracking) return;
       const currentY = e.touches[0].clientY;
+      const scrollY = window.scrollY || window.pageYOffset;
+      const docHeight = document.documentElement.scrollHeight;
+      const winHeight = window.innerHeight;
+
+      // Allow tracking even if bottom reached during active scroll
+      if (!isTracking) {
+        if ((scrollY + winHeight) >= (docHeight - 65) && currentY < startY) {
+          atBottom = true;
+          startY = currentY;
+          isTracking = true;
+        } else if (scrollY <= 15 && currentY > startY) {
+          atTop = true;
+          startY = currentY;
+          isTracking = true;
+        } else {
+          return;
+        }
+      }
+
       const diffY = currentY - startY;
 
       // Pull down at top -> previous chapter
-      if (atTop && diffY > 15) {
+      if (atTop && diffY > 10) {
         const topInd = document.getElementById('overscrollTopIndicator');
         const topText = document.getElementById('overscrollTopText');
         if (topInd) {
-          topInd.style.opacity = Math.min(1, diffY / 70);
-          if (diffY > 65) {
+          topInd.classList.add('pulling');
+          topInd.style.opacity = Math.min(1, diffY / 40);
+          if (diffY > 35) {
             topInd.classList.add('armed');
             if (topText) topText.textContent = 'Release to load previous chapter';
           } else {
@@ -204,13 +223,13 @@ const Reader = {
       }
 
       // Pull up at bottom -> next chapter
-      if (atBottom && diffY < -15) {
+      if (atBottom && diffY < -10) {
         const botInd = document.getElementById('overscrollBottomIndicator');
         const botText = document.getElementById('overscrollBottomText');
         const absDiff = Math.abs(diffY);
         if (botInd) {
-          botInd.style.opacity = Math.min(1, absDiff / 70);
-          if (absDiff > 65) {
+          botInd.style.opacity = Math.min(1, absDiff / 40);
+          if (absDiff > 35) {
             botInd.classList.add('armed');
             if (botText) botText.textContent = 'Release to load next chapter';
           } else {
@@ -229,12 +248,12 @@ const Reader = {
       const botInd = document.getElementById('overscrollBottomIndicator');
 
       if (topInd && topInd.classList.contains('armed')) {
-        topInd.classList.remove('armed');
+        topInd.classList.remove('armed', 'pulling');
         topInd.style.opacity = '0';
         this.loadPrevChapter();
       } else if (topInd) {
         topInd.style.opacity = '0';
-        topInd.classList.remove('armed');
+        topInd.classList.remove('armed', 'pulling');
       }
 
       if (botInd && botInd.classList.contains('armed')) {
@@ -246,6 +265,45 @@ const Reader = {
         botInd.classList.remove('armed');
       }
     });
+
+    // Wheel / trackpad scroll-to-next-chapter support
+    let wheelAtBottomCount = 0;
+    let wheelTimer = null;
+    window.addEventListener('wheel', (e) => {
+      if (document.getElementById('readerView').style.display === 'none') return;
+      const scrollY = window.scrollY || window.pageYOffset;
+      const docHeight = document.documentElement.scrollHeight;
+      const winHeight = window.innerHeight;
+
+      if (e.deltaY > 0 && (scrollY + winHeight) >= (docHeight - 20)) {
+        wheelAtBottomCount++;
+        const botInd = document.getElementById('overscrollBottomIndicator');
+        const botText = document.getElementById('overscrollBottomText');
+        if (botInd) {
+          botInd.style.opacity = '1';
+          botInd.classList.add('armed');
+          if (botText) botText.textContent = 'Continuing scroll loads next chapter...';
+        }
+
+        clearTimeout(wheelTimer);
+        wheelTimer = setTimeout(() => {
+          if (wheelAtBottomCount >= 2) {
+            wheelAtBottomCount = 0;
+            if (botInd) {
+              botInd.classList.remove('armed');
+              botInd.style.opacity = '0';
+            }
+            this.loadNextChapter();
+          } else {
+            wheelAtBottomCount = 0;
+            if (botInd) {
+              botInd.classList.remove('armed');
+              botInd.style.opacity = '0';
+            }
+          }
+        }, 280);
+      }
+    }, { passive: true });
   },
 
   toggleControls() {
@@ -400,9 +458,16 @@ const Reader = {
         titleEl.innerHTML = `<strong>${ch.novel_title || ''}</strong> · ${ch.title || ''}`;
       }
 
+      // Sanitize weird whitespace / non-breaking spaces on already-uploaded books
+      let cleanContentHtml = ch.content_html || '';
+      cleanContentHtml = cleanContentHtml
+        .replace(/(&nbsp;|&#160;|&#xa0;|\u00a0|[\u2000-\u200b\u3000])/g, ' ')
+        .replace(/\s+style=(["\'])[^"\']*\1/gi, '')
+        .replace(/([^\s>])\s{2,}([^\s<])/g, '$1 $2');
+
       // Check if content already starts with the chapter title or heading
       const tempDiv = document.createElement('div');
-      tempDiv.innerHTML = (ch.content_html || '').slice(0, 800);
+      tempDiv.innerHTML = cleanContentHtml.slice(0, 800);
       const firstHeading = tempDiv.querySelector('.reader-heading, h1, h2, h3, .reader-paragraph');
       const firstText = firstHeading ? firstHeading.textContent.trim().toLowerCase() : '';
       const cleanTitle = (ch.title || '').trim().toLowerCase();
@@ -423,7 +488,7 @@ const Reader = {
           ${ch.volume_title || ch.novel_title || ''}
         </div>
         ${headingHtml}
-        ${ch.content_html}
+        ${cleanContentHtml}
       `;
 
       // Update Nav Buttons
@@ -654,20 +719,27 @@ const Reader = {
       }
 
       if (activeItem) {
-        const itemTop = activeItem.offsetTop;
-        const itemHeight = activeItem.offsetHeight;
-        const listHeight = listEl.clientHeight;
-        if (listHeight > 0) {
-          listEl.scrollTop = Math.max(0, itemTop - (listHeight / 2) + (itemHeight / 2));
-        } else {
-          activeItem.scrollIntoView({ behavior: 'auto', block: 'center' });
+        try {
+          activeItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } catch (e) {
+          activeItem.scrollIntoView(true);
+        }
+
+        const masterBody = document.querySelector('.master-panel-body');
+        if (masterBody && masterBody.scrollHeight > masterBody.clientHeight) {
+          const bodyRect = masterBody.getBoundingClientRect();
+          const itemRect = activeItem.getBoundingClientRect();
+          const offsetDiff = itemRect.top - bodyRect.top - (masterBody.clientHeight / 2) + (activeItem.clientHeight / 2);
+          masterBody.scrollTop += offsetDiff;
         }
       }
     };
 
     doCenter();
     requestAnimationFrame(doCenter);
-    setTimeout(doCenter, 100);
+    setTimeout(doCenter, 60);
+    setTimeout(doCenter, 180);
+    setTimeout(doCenter, 300);
   },
 
   filterTOC(query) {

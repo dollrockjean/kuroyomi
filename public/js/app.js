@@ -16,6 +16,7 @@ window.ReaderSettings = {
   font_family: 'times',
   font_size: 19,
   line_height: 1.85,
+  letter_spacing: 0.0,
   content_width: 'normal',
   margin_width: 'edge',
   auto_scroll_speed: 35,
@@ -571,6 +572,12 @@ const App = {
     const fontVal = document.getElementById('quickSheetFontVal');
     if (fontVal) fontVal.textContent = `${cur.font_size || 19}px`;
 
+    const lineVal = document.getElementById('quickSheetLineVal');
+    if (lineVal) lineVal.textContent = (cur.line_height || 1.85).toFixed(2);
+
+    const letterVal = document.getElementById('quickSheetLetterVal');
+    if (letterVal) letterVal.textContent = `${(cur.letter_spacing || 0).toFixed(1)}px`;
+
     const marginVal = document.getElementById('quickSheetMarginVal');
     if (marginVal) {
       const labels = { edge: 'Edge', compact: 'Compact', comfortable: 'Relaxed' };
@@ -582,6 +589,14 @@ const App = {
       ttsText.textContent = (TTSEngine.isPlaying && !TTSEngine.isPaused) ? 'Pause' : 'Read Aloud';
     }
 
+    // Hide floating action buttons and top bar so they never overlap or clash with the sheet
+    const floatBar = document.getElementById('readerFloatingBar');
+    const floatBtn = document.getElementById('floatingQuickMenuBtn');
+    const topBar = document.getElementById('readerTopBar');
+    if (floatBar) floatBar.style.display = 'none';
+    if (floatBtn) floatBtn.style.display = 'none';
+    if (topBar) topBar.classList.add('minimized');
+
     sheet.classList.add('open');
     backdrop.classList.add('open');
   },
@@ -591,6 +606,12 @@ const App = {
     const backdrop = document.getElementById('quickSheetBackdrop');
     if (sheet) sheet.classList.remove('open');
     if (backdrop) backdrop.classList.remove('open');
+
+    // Restore floating controls smoothly
+    const floatBar = document.getElementById('readerFloatingBar');
+    const floatBtn = document.getElementById('floatingQuickMenuBtn');
+    if (floatBar) floatBar.style.display = '';
+    if (floatBtn) floatBtn.style.display = '';
   },
 
   toggleMobileQuickSheet() {
@@ -641,6 +662,42 @@ const App = {
         const curSize = parseInt(window.ReaderSettings.font_size || 19);
         const newSize = Math.min(36, curSize + 1);
         this.applySettings({ font_size: newSize });
+      });
+    }
+
+    const lineDownBtn = document.getElementById('quickSheetLineDown');
+    if (lineDownBtn) {
+      lineDownBtn.addEventListener('click', () => {
+        const curLh = parseFloat(window.ReaderSettings.line_height || 1.85);
+        const newLh = Math.max(1.3, parseFloat((curLh - 0.1).toFixed(2)));
+        this.applySettings({ line_height: newLh });
+      });
+    }
+
+    const lineUpBtn = document.getElementById('quickSheetLineUp');
+    if (lineUpBtn) {
+      lineUpBtn.addEventListener('click', () => {
+        const curLh = parseFloat(window.ReaderSettings.line_height || 1.85);
+        const newLh = Math.min(2.6, parseFloat((curLh + 0.1).toFixed(2)));
+        this.applySettings({ line_height: newLh });
+      });
+    }
+
+    const letterDownBtn = document.getElementById('quickSheetLetterDown');
+    if (letterDownBtn) {
+      letterDownBtn.addEventListener('click', () => {
+        const curLs = parseFloat(window.ReaderSettings.letter_spacing || 0);
+        const newLs = Math.max(-0.5, parseFloat((curLs - 0.2).toFixed(1)));
+        this.applySettings({ letter_spacing: newLs });
+      });
+    }
+
+    const letterUpBtn = document.getElementById('quickSheetLetterUp');
+    if (letterUpBtn) {
+      letterUpBtn.addEventListener('click', () => {
+        const curLs = parseFloat(window.ReaderSettings.letter_spacing || 0);
+        const newLs = Math.min(2.5, parseFloat((curLs + 0.2).toFixed(1)));
+        this.applySettings({ letter_spacing: newLs });
       });
     }
 
@@ -699,6 +756,14 @@ const App = {
       });
     }
 
+    const letterSpacingSlider = document.getElementById('letterSpacingSlider');
+    if (letterSpacingSlider) {
+      letterSpacingSlider.addEventListener('input', (e) => {
+        const ls = parseFloat(e.target.value);
+        this.applySettings({ letter_spacing: ls });
+      });
+    }
+
     document.querySelectorAll('.width-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         document.querySelectorAll('.width-btn').forEach(b => b.classList.remove('selected'));
@@ -733,9 +798,10 @@ const App = {
     const marginMode = cur.margin_width || 'edge';
     doc.setAttribute('data-margin', marginMode);
 
-    // 4. Font size & Line height
+    // 4. Font size, Line height & Letter spacing
     doc.style.setProperty('--reader-font-size', `${cur.font_size || 19}px`);
     doc.style.setProperty('--reader-line-height', `${cur.line_height || 1.85}`);
+    doc.style.setProperty('--reader-letter-spacing', `${cur.letter_spacing || 0}px`);
 
     // Update Theme buttons
     document.querySelectorAll('.theme-btn').forEach(b => {
@@ -766,6 +832,16 @@ const App = {
       quickFontVal.textContent = `${cur.font_size || 19}px`;
     }
 
+    const quickLineVal = document.getElementById('quickSheetLineVal');
+    if (quickLineVal) {
+      quickLineVal.textContent = (cur.line_height || 1.85).toFixed(2);
+    }
+
+    const quickLetterVal = document.getElementById('quickSheetLetterVal');
+    if (quickLetterVal) {
+      quickLetterVal.textContent = `${(cur.letter_spacing || 0).toFixed(1)}px`;
+    }
+
     const quickTtsText = document.getElementById('quickSheetTTSText');
     if (quickTtsText && typeof TTSEngine !== 'undefined') {
       quickTtsText.textContent = (TTSEngine.isPlaying && !TTSEngine.isPaused) ? 'Pause' : 'Read Aloud';
@@ -785,6 +861,14 @@ const App = {
       lhSlider.value = cur.line_height || 1.85;
       const lhVal = document.getElementById('lineHeightVal');
       if (lhVal) lhVal.textContent = (cur.line_height || 1.85).toFixed(2);
+    }
+
+    // Update Letter Spacing Slider
+    const lsSlider = document.getElementById('letterSpacingSlider');
+    if (lsSlider) {
+      lsSlider.value = cur.letter_spacing || 0.0;
+      const lsVal = document.getElementById('letterSpacingVal');
+      if (lsVal) lsVal.textContent = `${(cur.letter_spacing || 0).toFixed(1)}px`;
     }
 
     // 5. Read Speed (TTS Rate)
@@ -1169,6 +1253,19 @@ const App = {
   async loadLibrary(allowAutoRestore = true) {
     try {
       const userId = SyncService.currentUserId || Storage.getUserId() || 'universal_device_mirror';
+
+      // Immediate loading skeleton if library is empty to avoid any blank or frozen appearance
+      if (!this.novels || this.novels.length === 0) {
+        const grid = document.getElementById('novelGrid');
+        if (grid && !grid.querySelector('.library-skeleton-loader')) {
+          grid.innerHTML = `
+            <div class="library-skeleton-loader" style="grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 48px 20px; gap: 14px; color: var(--text-secondary);">
+              <div class="spinner-brutal" style="width: 28px; height: 28px; border: 3px solid var(--border-color); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
+              <span style="font-size: 13px; font-weight: 600; letter-spacing: 0.5px;">Loading your library...</span>
+            </div>
+          `;
+        }
+      }
 
       let novelsData = null;
       let lastReadData = null;

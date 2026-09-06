@@ -9,6 +9,7 @@ from pypdf import PdfReader
 from epub_parser import (
     clean_tag,
     sanitize_html,
+    clean_paragraph_text,
     extract_chapter_number,
     normalize_title,
     compute_chapter_fingerprint,
@@ -112,11 +113,14 @@ def format_paragraphs_html(paragraphs, chapter_title=""):
         pid += 1
 
     for p in paragraphs:
-        if chapter_title and p.strip().lower() == chapter_title.strip().lower():
+        cleaned_p = clean_paragraph_text(p)
+        if not cleaned_p:
+            continue
+        if chapter_title and cleaned_p.strip().lower() == chapter_title.strip().lower():
             continue
 
-        esc_p = html.escape(p)
-        if re.match(r'^(?:chapter|ch|act|part|volume|prologue|epilogue|interlude)', p, re.I) and len(p) < 80:
+        esc_p = html.escape(cleaned_p)
+        if re.match(r'^(?:chapter|ch|act|part|volume|prologue|epilogue|interlude) ', cleaned_p, re.I) and len(cleaned_p) < 80:
             blocks.append(f'<h2 class="reader-heading" data-pid="{pid}" id="p-{pid}">{esc_p}</h2>')
         else:
             blocks.append(f'<p class="reader-paragraph" data-pid="{pid}" id="p-{pid}">{esc_p}</p>')

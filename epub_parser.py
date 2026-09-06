@@ -26,6 +26,27 @@ def sanitize_html(raw_html):
     cleaned = re.sub(r'href\s*=\s*["\']\s*javascript:[^"\']*["\']', 'href="#"', cleaned, flags=re.I)
     return cleaned
 
+def clean_paragraph_text(text):
+    """Normalize weird spaces, unicode non-breaking spaces, and collapse consecutive whitespace."""
+    if not text:
+        return ""
+    # Normalize non-breaking spaces and unicode spaces to regular space
+    text = re.sub(r'(&nbsp;|&#160;|&#xa0;|\u00a0|[\u2000-\u200b\u3000])', ' ', text)
+    # Strip inline style attributes from spans or inner tags (removes hardcoded justify, word-spacing, etc.)
+    text = re.sub(r'\s+style=(["\'])[^"\']*\1', '', text, flags=re.I)
+    # Strip empty inline spans
+    text = re.sub(r'<(?:span|font)[^>]*>\s*</(?:span|font)>', '', text, flags=re.I)
+    # Collapse multiple consecutive whitespace characters without damaging HTML tags
+    parts = re.split(r'(<[^>]+>)', text)
+    cleaned_parts = []
+    for part in parts:
+        if part.startswith('<') and part.endswith('>'):
+            cleaned_parts.append(part)
+        else:
+            collapsed = re.sub(r'[ \t\r\n]+', ' ', part)
+            cleaned_parts.append(collapsed)
+    return "".join(cleaned_parts).strip()
+
 def extract_chapter_number(title):
     """Extract numeric chapter identifier if present (e.g. 'Chapter 42' -> 42.0)."""
     if not title:
@@ -202,33 +223,36 @@ def clean_html_content(raw_html, zf, base_dir):
                 for n_tag, n_inner in nested:
                     sub_parts = re.split(r'(?:<br\s*/?>\s*){2,}|\n\s*\n', n_inner, flags=re.I)
                     for sub in sub_parts:
-                        plain = re.sub(r'<[^>]+>', '', sub).strip()
+                        cleaned_sub = clean_paragraph_text(sub)
+                        plain = re.sub(r'<[^>]+>', '', cleaned_sub).strip()
                         plain = html.unescape(plain)
-                        if plain or ('<img' in sub.lower()):
+                        if plain or ('<img' in cleaned_sub.lower()):
                             is_heading = n_tag.lower().startswith('h')
                             p_class = "reader-heading" if is_heading else "reader-paragraph"
-                            clean_blocks.append(f'<{n_tag} class="{p_class}" data-pid="{pid}" id="p-{pid}">{sub.strip()}</{n_tag}>')
+                            clean_blocks.append(f'<{n_tag} class="{p_class}" data-pid="{pid}" id="p-{pid}">{cleaned_sub}</{n_tag}>')
                             pid += 1
                 continue
 
             # Check if this block contains multiple visual paragraphs separated by <br><br>
             sub_parts = re.split(r'(?:<br\s*/?>\s*){2,}|\n\s*\n', inner, flags=re.I)
             for sub in sub_parts:
-                plain = re.sub(r'<[^>]+>', '', sub).strip()
+                cleaned_sub = clean_paragraph_text(sub)
+                plain = re.sub(r'<[^>]+>', '', cleaned_sub).strip()
                 plain = html.unescape(plain)
-                if plain or ('<img' in sub.lower()):
+                if plain or ('<img' in cleaned_sub.lower()):
                     is_heading = tag.lower().startswith('h')
                     p_class = "reader-heading" if is_heading else "reader-paragraph"
-                    clean_blocks.append(f'<{tag} class="{p_class}" data-pid="{pid}" id="p-{pid}">{sub.strip()}</{tag}>')
+                    clean_blocks.append(f'<{tag} class="{p_class}" data-pid="{pid}" id="p-{pid}">{cleaned_sub}</{tag}>')
                     pid += 1
     else:
         # Fallback for EPUBs with only <div> or pure <br> text
         sub_parts = re.split(r'</?(?:div|section|article)[^>]*>|(?:<br\s*/?>\s*){1,}|\n\s*\n', content, flags=re.I)
         for sub in sub_parts:
-            plain = re.sub(r'<[^>]+>', '', sub).strip()
+            cleaned_sub = clean_paragraph_text(sub)
+            plain = re.sub(r'<[^>]+>', '', cleaned_sub).strip()
             plain = html.unescape(plain)
-            if plain or ('<img' in sub.lower()):
-                clean_blocks.append(f'<p class="reader-paragraph" data-pid="{pid}" id="p-{pid}">{sub.strip()}</p>')
+            if plain or ('<img' in cleaned_sub.lower()):
+                clean_blocks.append(f'<p class="reader-paragraph" data-pid="{pid}" id="p-{pid}">{cleaned_sub}</p>')
                 pid += 1
 
     formatted_html = sanitize_html("\n".join(clean_blocks))
