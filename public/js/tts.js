@@ -565,6 +565,13 @@ const TTSEngine = {
     this.clearWordHighlights();
   },
 
+  clearWordHighlights() {
+    this.activeWordIndex = -1;
+    document.querySelectorAll('.tts-word-active, .tts-word-spoken').forEach(el => {
+      el.classList.remove('tts-word-active', 'tts-word-spoken');
+    });
+  },
+
   async speakParagraph(index) {
     if (!this.isPlaying || this.isPaused) return;
 

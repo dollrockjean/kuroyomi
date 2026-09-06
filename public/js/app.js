@@ -167,12 +167,25 @@ const App = {
         e.preventDefault();
         e.stopPropagation();
       }
-      AutoScroll.stop();
-      TTSEngine.stop();
-      this.closeMasterPanel();
-      this.closeMobileQuickSheet();
+      try {
+        if (typeof AutoScroll !== 'undefined' && AutoScroll.stop) AutoScroll.stop();
+      } catch (err) {
+        console.warn('AutoScroll.stop warning:', err);
+      }
+      try {
+        if (typeof TTSEngine !== 'undefined' && TTSEngine.stop) TTSEngine.stop();
+      } catch (err) {
+        console.warn('TTSEngine.stop warning:', err);
+      }
+      try {
+        this.closeMasterPanel();
+      } catch (err) {}
+      try {
+        this.closeMobileQuickSheet();
+      } catch (err) {}
+
       this.switchView('library');
-      this.loadLibrary();
+      this.loadLibrary().catch(err => console.warn('loadLibrary warning:', err));
     };
 
     const backToLib = document.getElementById('backToLibraryBtn');
@@ -1785,15 +1798,15 @@ const App = {
 
     if (view === 'reader') {
       if (appHeader) appHeader.style.display = 'none';
-      libView.style.display = 'none';
-      readerView.style.display = 'flex';
+      if (libView) libView.style.display = 'none';
+      if (readerView) readerView.style.display = 'flex';
       if (resetScroll) window.scrollTo(0, 0);
     } else {
-      this.closeMasterPanel();
-      this.closeMobileQuickSheet();
+      try { this.closeMasterPanel(); } catch (e) {}
+      try { this.closeMobileQuickSheet(); } catch (e) {}
       if (appHeader) appHeader.style.display = 'flex';
-      libView.style.display = 'block';
-      readerView.style.display = 'none';
+      if (libView) libView.style.display = 'block';
+      if (readerView) readerView.style.display = 'none';
       if (resetScroll) window.scrollTo(0, 0);
     }
   },
