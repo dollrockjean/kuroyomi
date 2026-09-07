@@ -250,7 +250,7 @@ const Reader = {
       if (topInd && topInd.classList.contains('armed')) {
         topInd.classList.remove('armed', 'pulling');
         topInd.style.opacity = '0';
-        this.loadPrevChapter();
+        this.loadPrevChapter(false, true);
       } else if (topInd) {
         topInd.style.opacity = '0';
         topInd.classList.remove('armed', 'pulling');
@@ -266,15 +266,18 @@ const Reader = {
       }
     });
 
-    // Wheel / trackpad scroll-to-next-chapter support
+    // Wheel / trackpad scroll-to-next/prev-chapter support
     let wheelAtBottomCount = 0;
+    let wheelAtTopCount = 0;
     let wheelTimer = null;
+    let wheelTopTimer = null;
     window.addEventListener('wheel', (e) => {
       if (document.getElementById('readerView').style.display === 'none') return;
       const scrollY = window.scrollY || window.pageYOffset;
       const docHeight = document.documentElement.scrollHeight;
       const winHeight = window.innerHeight;
 
+      // Wheel down at bottom -> next chapter
       if (e.deltaY > 0 && (scrollY + winHeight) >= (docHeight - 20)) {
         wheelAtBottomCount++;
         const botInd = document.getElementById('overscrollBottomIndicator');
@@ -299,6 +302,36 @@ const Reader = {
             if (botInd) {
               botInd.classList.remove('armed');
               botInd.style.opacity = '0';
+            }
+          }
+        }, 280);
+      }
+
+      // Wheel up at top -> previous chapter positioned at bottom
+      if (e.deltaY < 0 && scrollY <= 5) {
+        wheelAtTopCount++;
+        const topInd = document.getElementById('overscrollTopIndicator');
+        const topText = document.getElementById('overscrollTopText');
+        if (topInd) {
+          topInd.style.opacity = '1';
+          topInd.classList.add('armed');
+          if (topText) topText.textContent = 'Continuing scroll loads previous chapter...';
+        }
+
+        clearTimeout(wheelTopTimer);
+        wheelTopTimer = setTimeout(() => {
+          if (wheelAtTopCount >= 2) {
+            wheelAtTopCount = 0;
+            if (topInd) {
+              topInd.classList.remove('armed');
+              topInd.style.opacity = '0';
+            }
+            this.loadPrevChapter(false, true);
+          } else {
+            wheelAtTopCount = 0;
+            if (topInd) {
+              topInd.classList.remove('armed');
+              topInd.style.opacity = '0';
             }
           }
         }, 280);
@@ -410,7 +443,7 @@ const Reader = {
     }
   },
 
-  async loadChapter(chapterId, scrollToTarget = false, isTtsAdvance = false) {
+  async loadChapter(chapterId, scrollToTarget = false, isTtsAdvance = false, scrollToBottom = false) {
     App.showLoading('Loading chapter...');
     try {
       const userId = SyncService.currentUserId || Storage.getUserId() || 'universal_device_mirror';
@@ -522,7 +555,20 @@ const Reader = {
       }
 
       // Reliable reading spot restoration
-      if (scrollToTarget && (this.targetParagraphIndex > 0 || this.targetScrollPercent > 0)) {
+      if (scrollToBottom) {
+        this.isRestoringScroll = true;
+        const performScrollBottom = () => {
+          const docH = document.documentElement.scrollHeight - window.innerHeight;
+          window.scrollTo(0, docH > 0 ? docH : 0);
+          setTimeout(() => {
+            this.isRestoringScroll = false;
+            this.saveCurrentProgress(null, 100);
+          }, 350);
+        };
+        requestAnimationFrame(() => {
+          setTimeout(performScrollBottom, 60);
+        });
+      } else if (scrollToTarget && (this.targetParagraphIndex > 0 || this.targetScrollPercent > 0)) {
         this.isRestoringScroll = true;
         const targetPid = this.targetParagraphIndex;
         const targetPct = this.targetScrollPercent;
@@ -648,9 +694,9 @@ const Reader = {
     return null;
   },
 
-  async loadPrevChapter(isTtsAdvance = false) {
+  async loadPrevChapter(isTtsAdvance = false, scrollToBottom = false) {
     if (this.currentChapter && this.currentChapter.prev_chapter) {
-      return await this.loadChapter(this.currentChapter.prev_chapter.id, false, isTtsAdvance);
+      return await this.loadChapter(this.currentChapter.prev_chapter.id, false, isTtsAdvance, scrollToBottom);
     }
     return null;
   },

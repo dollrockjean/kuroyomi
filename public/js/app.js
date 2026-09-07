@@ -589,6 +589,25 @@ const App = {
       ttsText.textContent = (TTSEngine.isPlaying && !TTSEngine.isPaused) ? 'Pause' : 'Read Aloud';
     }
 
+    // Update chapter navigation buttons inside quick sheet
+    const prevBtn = document.getElementById('quickSheetPrevChBtn');
+    const nextBtn = document.getElementById('quickSheetNextChBtn');
+    const currentCh = window.Reader ? window.Reader.currentChapter : null;
+    if (prevBtn) {
+      const hasPrev = !!(currentCh && currentCh.prev_chapter);
+      prevBtn.disabled = !hasPrev;
+      prevBtn.style.opacity = hasPrev ? '1' : '0.4';
+      prevBtn.style.cursor = hasPrev ? 'pointer' : 'default';
+      prevBtn.title = hasPrev ? (currentCh.prev_chapter.title || 'Previous Chapter') : 'No Previous Chapter';
+    }
+    if (nextBtn) {
+      const hasNext = !!(currentCh && currentCh.next_chapter);
+      nextBtn.disabled = !hasNext;
+      nextBtn.style.opacity = hasNext ? '1' : '0.4';
+      nextBtn.style.cursor = hasNext ? 'pointer' : 'default';
+      nextBtn.title = hasNext ? (currentCh.next_chapter.title || 'Next Chapter') : 'No Next Chapter';
+    }
+
     // Hide floating action buttons and top bar so they never overlap or clash with the sheet
     const floatBar = document.getElementById('readerFloatingBar');
     const floatBtn = document.getElementById('floatingQuickMenuBtn');
@@ -634,6 +653,26 @@ const App = {
       chaptersBtn.addEventListener('click', () => {
         this.closeMobileQuickSheet();
         this.openMasterPanel('tabChapters');
+      });
+    }
+
+    const prevChBtn = document.getElementById('quickSheetPrevChBtn');
+    if (prevChBtn) {
+      prevChBtn.addEventListener('click', () => {
+        if (window.Reader && window.Reader.currentChapter && window.Reader.currentChapter.prev_chapter) {
+          this.closeMobileQuickSheet();
+          window.Reader.loadPrevChapter(false, false);
+        }
+      });
+    }
+
+    const nextChBtn = document.getElementById('quickSheetNextChBtn');
+    if (nextChBtn) {
+      nextChBtn.addEventListener('click', () => {
+        if (window.Reader && window.Reader.currentChapter && window.Reader.currentChapter.next_chapter) {
+          this.closeMobileQuickSheet();
+          window.Reader.loadNextChapter(false);
+        }
       });
     }
 
@@ -1396,6 +1435,7 @@ const App = {
       this.renderLibraryGrid();
       this.updateMirrorStatus();
       this.updateOfflineBadges();
+      this.checkSleepTimerResume();
     } catch (e) {
       console.warn('Error loading library:', e);
     }
@@ -1523,6 +1563,90 @@ const App = {
     resumeBtn.onclick = () => {
       Reader.openNovel(lastRead.novel_id, true);
     };
+  },
+
+  checkSleepTimerResume() {
+    try {
+      const raw = localStorage.getItem('kuroyomi_pending_sleep_resume');
+      if (!raw) return;
+      const record = JSON.parse(raw);
+      if (!record || !record.finish) {
+        localStorage.removeItem('kuroyomi_pending_sleep_resume');
+        return;
+      }
+
+      const modal = document.getElementById('sleepResumeModal');
+      const backdrop = document.getElementById('sleepResumeBackdrop');
+      const desc = document.getElementById('sleepResumeDesc');
+      const finishSub = document.getElementById('sleepResumeFinishedSub');
+      const startedSub = document.getElementById('sleepResumeStartedSub');
+      const resumeFinBtn = document.getElementById('resumeWhereFinishedBtn');
+      const resumeStartBtn = document.getElementById('resumeWhereStartedBtn');
+      const closeBtn = document.getElementById('closeSleepResumeBtn');
+
+      if (!modal || !backdrop) return;
+
+      const title = record.novel_title || 'your novel';
+      if (desc) {
+        desc.innerHTML = `Your sleep timer finished while reading <strong>${title}</strong>. Where would you like to resume?`;
+      }
+
+      if (finishSub) {
+        const chTitle = record.finish.chapter_title || 'Chapter';
+        const pIdx = (record.finish.paragraph_index !== undefined) ? record.finish.paragraph_index + 1 : 1;
+        finishSub.textContent = `${chTitle} · Para ${pIdx}`;
+      }
+
+      if (startedSub) {
+        if (record.start) {
+          const chTitle = record.start.chapter_title || 'Chapter';
+          const pIdx = (record.start.paragraph_index !== undefined) ? record.start.paragraph_index + 1 : 1;
+          startedSub.textContent = `${chTitle} · Para ${pIdx}`;
+          if (resumeStartBtn) resumeStartBtn.style.display = 'block';
+        } else {
+          if (resumeStartBtn) resumeStartBtn.style.display = 'none';
+        }
+      }
+
+      const hide = () => {
+        modal.style.display = 'none';
+        backdrop.style.display = 'none';
+        localStorage.removeItem('kuroyomi_pending_sleep_resume');
+      };
+
+      if (closeBtn) closeBtn.onclick = hide;
+      if (backdrop) backdrop.onclick = hide;
+
+      if (resumeFinBtn) {
+        resumeFinBtn.onclick = async () => {
+          hide();
+          if (record.novel_id && record.finish.chapter_id) {
+            await Reader.openNovel(record.novel_id, false);
+            Reader.targetParagraphIndex = record.finish.paragraph_index;
+            Reader.targetScrollPercent = record.finish.scroll_percent || 0;
+            await Reader.loadChapter(record.finish.chapter_id, true);
+          }
+        };
+      }
+
+      if (resumeStartBtn) {
+        resumeStartBtn.onclick = async () => {
+          hide();
+          if (record.novel_id && record.start && record.start.chapter_id) {
+            await Reader.openNovel(record.novel_id, false);
+            Reader.targetParagraphIndex = record.start.paragraph_index;
+            Reader.targetScrollPercent = record.start.scroll_percent || 0;
+            await Reader.loadChapter(record.start.chapter_id, true);
+          }
+        };
+      }
+
+      modal.style.display = 'block';
+      backdrop.style.display = 'block';
+    } catch (e) {
+      console.warn('Error checking sleep timer resume:', e);
+      localStorage.removeItem('kuroyomi_pending_sleep_resume');
+    }
   },
 
   getSortedAndFilteredNovels() {

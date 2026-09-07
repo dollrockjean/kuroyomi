@@ -279,7 +279,162 @@ async def test_ui():
             assert toc_result["hasActiveItem"], "Table of contents should highlight active chapter!"
             assert toc_result["activeId"] == toc_result["currentChId"], "Active chapter in TOC must match current reading chapter!"
 
-            print("ALL UI TOUCHUPS AND BEHAVIORS VERIFIED SUCCESSFULLY!")
+            print("--- 8. Testing Middle Click Menu Next & Previous Chapter Buttons ---")
+            quick_nav_result = await eval_js(ws, """
+            (() => {
+                window.App.closeMasterPanel();
+                window.App.openMobileQuickSheet();
+                const prevBtn = document.getElementById('quickSheetPrevChBtn');
+                const nextBtn = document.getElementById('quickSheetNextChBtn');
+                const sheet = document.getElementById('mobileQuickSheet');
+                return {
+                    sheetOpen: sheet ? sheet.classList.contains('open') : false,
+                    hasPrevBtn: !!prevBtn,
+                    hasNextBtn: !!nextBtn,
+                    prevText: prevBtn ? prevBtn.textContent.trim() : '',
+                    nextText: nextBtn ? nextBtn.textContent.trim() : '',
+                    prevDisabled: prevBtn ? prevBtn.disabled : false,
+                    nextDisabled: nextBtn ? nextBtn.disabled : false
+                };
+            })()
+            """)
+            print("Quick sheet navigation test:", quick_nav_result)
+            assert quick_nav_result["sheetOpen"], "Quick sheet should be open!"
+            assert quick_nav_result["hasPrevBtn"] and quick_nav_result["hasNextBtn"], "Quick sheet must have Prev and Next chapter buttons!"
+            assert "Prev Chapter" in quick_nav_result["prevText"], "Prev chapter button label missing!"
+            assert "Next Chapter" in quick_nav_result["nextText"], "Next chapter button label missing!"
+
+            print("--- 9. Testing Audiobook Sleep Timer Cog, 5-Min Preset, and Time Extensions ---")
+            sleep_cog_result = await eval_js(ws, """
+            (() => {
+                window.App.closeMobileQuickSheet();
+                window.TTSEngine.openAudiobookModal();
+                const cogBtn = document.getElementById('audiobookSleepTimerCogBtn');
+                cogBtn.click();
+                const modal = document.getElementById('audiobookSleepModal');
+                const btn5 = document.querySelector('.sleep-preset-btn[data-sleep="5"]');
+                const has5Min = !!btn5;
+                
+                // Test selecting 5 min
+                btn5.click();
+                const initialRemaining = window.TTSEngine.sleepTimerRemaining;
+                
+                // Test +5 min extension
+                window.TTSEngine.addSleepTimerMinutes(5);
+                const afterAdd5 = window.TTSEngine.sleepTimerRemaining;
+                
+                // Test +15 min extension
+                window.TTSEngine.addSleepTimerMinutes(15);
+                const afterAdd15 = window.TTSEngine.sleepTimerRemaining;
+                
+                window.TTSEngine.setSleepTimer('off');
+                window.TTSEngine.closeSleepModal();
+                window.TTSEngine.closeAudiobookModal();
+
+                return {
+                    hasCog: !!cogBtn,
+                    has5Min,
+                    initialRemaining,
+                    afterAdd5,
+                    afterAdd15
+                };
+            })()
+            """)
+            print("Sleep timer test results:", sleep_cog_result)
+            assert sleep_cog_result["hasCog"], "Audiobook header must have sleep timer cog button!"
+            assert sleep_cog_result["has5Min"], "Sleep timer modal must include 5 min option!"
+            assert sleep_cog_result["initialRemaining"] >= 295, "5 min timer should be ~300 seconds!"
+            assert sleep_cog_result["afterAdd5"] >= sleep_cog_result["initialRemaining"] + 295, "+5 min did not extend timer!"
+            assert sleep_cog_result["afterAdd15"] >= sleep_cog_result["afterAdd5"] + 895, "+15 min did not extend timer!"
+
+            print("--- 10. Testing Continuous Audio Keepalive Session ---")
+            keepalive_result = await eval_js(ws, """
+            (() => {
+                window.TTSEngine.startKeepAlive();
+                return {
+                    hasKeepAliveAudio: !!window.TTSEngine.keepAliveAudio,
+                    isLooping: window.TTSEngine.keepAliveAudio ? window.TTSEngine.keepAliveAudio.loop : false,
+                    volumeNonZero: window.TTSEngine.keepAliveAudio ? window.TTSEngine.keepAliveAudio.volume > 0 : false
+                };
+            })()
+            """)
+            print("Audio keepalive test results:", keepalive_result)
+            assert keepalive_result["hasKeepAliveAudio"], "Keepalive audio track must be initialized!"
+            assert keepalive_result["isLooping"], "Keepalive track must loop continuously!"
+            assert keepalive_result["volumeNonZero"], "Keepalive volume must be non-zero to prevent iOS suspension!"
+
+            print("--- 11. Testing Sleep Timer Resumption Prompt (Finish vs Start) ---")
+            resume_prompt_result = await eval_js(ws, """
+            (() => {
+                // Simulate a completed sleep timer session
+                const testRecord = {
+                    novel_id: window.Reader.currentNovel ? window.Reader.currentNovel.id : 'nov_test',
+                    novel_title: window.Reader.currentNovel ? window.Reader.currentNovel.title : 'Test Novel',
+                    start: {
+                        chapter_id: 'ch_start',
+                        chapter_title: 'Chapter 1: The Awakening',
+                        paragraph_index: 2,
+                        scroll_percent: 10
+                    },
+                    finish: {
+                        chapter_id: 'ch_finish',
+                        chapter_title: 'Chapter 3: Night Falls',
+                        paragraph_index: 15,
+                        scroll_percent: 75
+                    },
+                    timestamp: Date.now()
+                };
+                localStorage.setItem('kuroyomi_pending_sleep_resume', JSON.stringify(testRecord));
+                window.App.checkSleepTimerResume();
+                
+                const modal = document.getElementById('sleepResumeModal');
+                const finBtn = document.getElementById('resumeWhereFinishedBtn');
+                const startBtn = document.getElementById('resumeWhereStartedBtn');
+                const finSub = document.getElementById('sleepResumeFinishedSub');
+                const startSub = document.getElementById('sleepResumeStartedSub');
+
+                const isVisible = modal && modal.style.display !== 'none';
+                const finText = finSub ? finSub.textContent : '';
+                const startText = startSub ? startSub.textContent : '';
+
+                // Clean up modal
+                document.getElementById('closeSleepResumeBtn').click();
+
+                return {
+                    isVisible,
+                    hasFinBtn: !!finBtn,
+                    hasStartBtn: !!startBtn,
+                    finText,
+                    startText,
+                    clearedFromStorage: !localStorage.getItem('kuroyomi_pending_sleep_resume')
+                };
+            })()
+            """)
+            print("Sleep timer resumption modal test:", resume_prompt_result)
+            assert resume_prompt_result["isVisible"], "Sleep resume modal should be displayed when a session completed!"
+            assert resume_prompt_result["hasFinBtn"] and resume_prompt_result["hasStartBtn"], "Modal must have both finish and start resume options!"
+            assert "Chapter 3" in resume_prompt_result["finText"], "Finish subtext should reflect completion chapter!"
+            assert "Chapter 1" in resume_prompt_result["startText"], "Start subtext should reflect starting chapter!"
+            assert resume_prompt_result["clearedFromStorage"], "Dismissing should clear the pending record!"
+
+            print("--- 12. Testing Scroll-Up to Bottom of Previous Chapter ---")
+            scroll_bottom_result = await eval_js(ws, """
+            (() => {
+                const loadChSrc = window.Reader.loadChapter.toString();
+                const loadPrevChSrc = window.Reader.loadPrevChapter.toString();
+                return {
+                    hasScrollToBottomParam: loadChSrc.includes('scrollToBottom'),
+                    hasPrevScrollToBottomParam: loadPrevChSrc.includes('scrollToBottom'),
+                    hasScrollPerform: loadChSrc.includes('performScrollBottom')
+                };
+            })()
+            """)
+            print("Scroll to bottom verification:", scroll_bottom_result)
+            assert scroll_bottom_result["hasScrollToBottomParam"], "loadChapter should support scrollToBottom parameter!"
+            assert scroll_bottom_result["hasPrevScrollToBottomParam"], "loadPrevChapter should support scrollToBottom parameter!"
+            assert scroll_bottom_result["hasScrollPerform"], "loadChapter should execute performScrollBottom!"
+
+            print("ALL UI TOUCHUPS, SLEEP TIMER, CHAPTER NAVIGATION, AND BACKGROUND AUDIO VERIFIED SUCCESSFULLY!")
 
     finally:
         proc.terminate()

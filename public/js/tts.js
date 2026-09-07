@@ -15,6 +15,8 @@ const TTS_ICONS = {
 const TTSEngine = {
   audioElement: new Audio(),
   testAudioElement: new Audio(),
+  keepAliveAudio: null,
+  audioContext: null,
   blobCache: new Map(),
   
   isPlaying: false,
@@ -41,6 +43,7 @@ const TTSEngine = {
   sleepTimerRemaining: 0,
   sleepTimerInterval: null,
   sleepMode: 'off',
+  sleepStartSnapshot: null,
   
   // Curated list of realistic narrative neural voices
   voices: [
@@ -71,6 +74,17 @@ const TTSEngine = {
     const primeAudio = () => {
       this.audioElement.load();
       this.testAudioElement.load();
+      try {
+        if (!this.keepAliveAudio) {
+          const SILENCE_DATA_URI = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+          this.keepAliveAudio = new Audio();
+          this.keepAliveAudio.loop = true;
+          this.keepAliveAudio.volume = 0.02;
+          this.keepAliveAudio.playsInline = true;
+          this.keepAliveAudio.src = SILENCE_DATA_URI;
+        }
+        this.keepAliveAudio.load();
+      } catch (e) {}
       window.removeEventListener('touchstart', primeAudio);
       window.removeEventListener('click', primeAudio);
     };
@@ -218,6 +232,40 @@ const TTSEngine = {
         this.speakParagraph(this.currentIndex);
       });
     }
+
+    // Wire Audiobook Sleep Timer Cog & Modal
+    const cogBtn = document.getElementById('audiobookSleepTimerCogBtn');
+    if (cogBtn) cogBtn.addEventListener('click', () => this.openSleepModal());
+
+    const sleepBadge = document.getElementById('audiobookModalSleepBadge');
+    if (sleepBadge) sleepBadge.addEventListener('click', () => this.openSleepModal());
+
+    const closeSleepBtn = document.getElementById('closeAudiobookSleepBtn');
+    if (closeSleepBtn) closeSleepBtn.addEventListener('click', () => this.closeSleepModal());
+
+    const sleepBackdrop = document.getElementById('audiobookSleepBackdrop');
+    if (sleepBackdrop) sleepBackdrop.addEventListener('click', () => this.closeSleepModal());
+
+    const presetBtns = document.querySelectorAll('.sleep-preset-btn');
+    presetBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const val = btn.getAttribute('data-sleep');
+        this.setSleepTimer(val);
+        this.closeSleepModal();
+      });
+    });
+
+    const add5Btn = document.getElementById('sleepAdd5Btn');
+    if (add5Btn) add5Btn.addEventListener('click', () => this.addSleepTimerMinutes(5));
+
+    const add15Btn = document.getElementById('sleepAdd15Btn');
+    if (add15Btn) add15Btn.addEventListener('click', () => this.addSleepTimerMinutes(15));
+
+    const turnOffBtn = document.getElementById('sleepTurnOffBtn');
+    if (turnOffBtn) turnOffBtn.addEventListener('click', () => {
+      this.setSleepTimer('off');
+      this.closeSleepModal();
+    });
 
     // Initialize draggable mobile corner badge
     this.initDraggableBadge();
@@ -375,13 +423,57 @@ const TTSEngine = {
   },
 
   startKeepAlive() {
-    // Single-track iOS audio session management
+    // 1. Silent looping audio track at low non-zero volume (iOS WebKit ignores volume 0 or muted audio)
+    const SILENCE_DATA_URI = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+    try {
+      if (!this.keepAliveAudio) {
+        this.keepAliveAudio = new Audio();
+        this.keepAliveAudio.loop = true;
+        this.keepAliveAudio.volume = 0.02;
+        this.keepAliveAudio.playsInline = true;
+        this.keepAliveAudio.src = SILENCE_DATA_URI;
+      }
+      if (this.keepAliveAudio.paused) {
+        this.keepAliveAudio.play().catch(() => {});
+      }
+    } catch (e) {
+      console.warn('Keepalive audio warning:', e);
+    }
+
+    // 2. Web Audio API AudioContext keepalive
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx && !this.audioContext) {
+        this.audioContext = new AudioCtx();
+        const buffer = this.audioContext.createBuffer(1, this.audioContext.sampleRate, this.audioContext.sampleRate);
+        const source = this.audioContext.createBufferSource();
+        source.buffer = buffer;
+        source.loop = true;
+        const gain = this.audioContext.createGain();
+        gain.gain.value = 0.001;
+        source.connect(gain);
+        gain.connect(this.audioContext.destination);
+        source.start(0);
+      }
+      if (this.audioContext && this.audioContext.state === 'suspended') {
+        this.audioContext.resume().catch(() => {});
+      }
+    } catch (e) {
+      console.warn('AudioContext keepalive warning:', e);
+    }
   },
 
   stopKeepAlive() {
-    if (this.audioElement) {
-      this.audioElement.loop = false;
-    }
+    try {
+      if (this.keepAliveAudio) {
+        this.keepAliveAudio.pause();
+      }
+    } catch {}
+    try {
+      if (this.audioContext && this.audioContext.state === 'running') {
+        this.audioContext.suspend().catch(() => {});
+      }
+    } catch {}
   },
 
   start(fromIndex = null) {
@@ -391,6 +483,9 @@ const TTSEngine = {
     // Always prioritize the main voice selected
     this.setDeviceVoiceMode(false);
     this.startKeepAlive();
+    if (this.sleepMode !== 'off' && !this.sleepStartSnapshot) {
+      this.recordSleepStartSnapshot();
+    }
 
     if (fromIndex === null || fromIndex === undefined) {
       if (window.Reader && typeof window.Reader.getVisibleParagraphIndex === 'function') {
@@ -663,13 +758,7 @@ const TTSEngine = {
   },
 
   playKeepAliveSilence() {
-    // 0.5s silent WAV loop to maintain WebKit background audio session during chapter transition
-    const SILENCE_DATA_URI = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
-    try {
-      this.audioElement.loop = true;
-      this.audioElement.src = SILENCE_DATA_URI;
-      this.audioElement.play().catch(() => {});
-    } catch {}
+    this.startKeepAlive();
   },
 
   async advanceToNextChapter() {
@@ -785,6 +874,21 @@ const TTSEngine = {
   },
 
   // === Sleep Timer ===
+  recordSleepStartSnapshot() {
+    if (this.sleepStartSnapshot) return;
+    const novel = window.Reader ? window.Reader.currentNovel : null;
+    const chapter = window.Reader ? window.Reader.currentChapter : null;
+    this.sleepStartSnapshot = {
+      novel_id: novel ? novel.id : null,
+      novel_title: novel ? novel.title : 'Novel',
+      chapter_id: chapter ? chapter.id : null,
+      chapter_title: chapter ? chapter.title : 'Chapter',
+      paragraph_index: this.currentIndex || 0,
+      scroll_percent: window.Reader ? Math.round((window.scrollY / Math.max(1, document.documentElement.scrollHeight - window.innerHeight)) * 100) : 0,
+      timestamp: Date.now()
+    };
+  },
+
   setSleepTimer(minutesOrMode) {
     if (this.sleepTimerInterval) clearInterval(this.sleepTimerInterval);
 
@@ -792,13 +896,21 @@ const TTSEngine = {
       this.sleepMode = 'off';
       this.sleepTimerDuration = 0;
       this.sleepTimerRemaining = 0;
+      this.sleepStartSnapshot = null;
       this.updateSleepBadge();
+      this.updateSleepModalUI();
       return;
     }
+
+    this.recordSleepStartSnapshot();
 
     if (minutesOrMode === 'chapter_end') {
       this.sleepMode = 'chapter_end';
       this.updateSleepBadge('End of Chapter');
+      this.updateSleepModalUI();
+      if (window.App && typeof window.App.showToast === 'function') {
+        window.App.showToast('Sleep timer: End of Chapter');
+      }
       return;
     }
 
@@ -807,6 +919,11 @@ const TTSEngine = {
     this.sleepTimerDuration = minutes * 60;
     this.sleepTimerRemaining = this.sleepTimerDuration;
     this.updateSleepBadge();
+    this.updateSleepModalUI();
+
+    if (window.App && typeof window.App.showToast === 'function') {
+      window.App.showToast(`Sleep timer set for ${minutes} minutes`);
+    }
 
     this.sleepTimerInterval = setInterval(() => {
       this.sleepTimerRemaining--;
@@ -815,18 +932,93 @@ const TTSEngine = {
         this.triggerSleepTimeout();
       } else {
         this.updateSleepBadge();
+        this.updateSleepModalUI();
       }
     }, 1000);
+  },
+
+  addSleepTimerMinutes(minutes) {
+    if (this.sleepMode === 'off' || this.sleepMode === 'chapter_end') {
+      this.setSleepTimer(minutes);
+      return;
+    }
+    this.sleepTimerRemaining += minutes * 60;
+    this.sleepTimerDuration += minutes * 60;
+    this.updateSleepBadge();
+    this.updateSleepModalUI();
+    if (window.App && typeof window.App.showToast === 'function') {
+      window.App.showToast(`Added ${minutes} min to sleep timer`);
+    }
   },
 
   triggerSleepTimeout() {
     this.sleepMode = 'off';
     this.updateSleepBadge();
+    this.updateSleepModalUI();
     this.stop();
     if (AutoScroll.isActive) AutoScroll.stop();
 
     if (window.Reader) {
       window.Reader.saveCurrentProgress();
+    }
+
+    // Save sleep session completion record for resume prompt
+    try {
+      const novel = window.Reader ? window.Reader.currentNovel : null;
+      const chapter = window.Reader ? window.Reader.currentChapter : null;
+      const resumeRecord = {
+        novel_id: novel ? novel.id : (this.sleepStartSnapshot ? this.sleepStartSnapshot.novel_id : null),
+        novel_title: novel ? novel.title : (this.sleepStartSnapshot ? this.sleepStartSnapshot.novel_title : 'Novel'),
+        start: this.sleepStartSnapshot || null,
+        finish: {
+          chapter_id: chapter ? chapter.id : null,
+          chapter_title: chapter ? chapter.title : 'Chapter',
+          paragraph_index: this.currentIndex,
+          scroll_percent: window.Reader ? Math.round((window.scrollY / Math.max(1, document.documentElement.scrollHeight - window.innerHeight)) * 100) : 0
+        },
+        timestamp: Date.now()
+      };
+      localStorage.setItem('kuroyomi_pending_sleep_resume', JSON.stringify(resumeRecord));
+    } catch (e) {
+      console.warn('Could not save sleep resume record:', e);
+    }
+    this.sleepStartSnapshot = null;
+  },
+
+  openSleepModal() {
+    const modal = document.getElementById('audiobookSleepModal');
+    const backdrop = document.getElementById('audiobookSleepBackdrop');
+    if (modal && backdrop) {
+      modal.style.display = 'block';
+      backdrop.style.display = 'block';
+      this.updateSleepModalUI();
+    }
+  },
+
+  closeSleepModal() {
+    const modal = document.getElementById('audiobookSleepModal');
+    const backdrop = document.getElementById('audiobookSleepBackdrop');
+    if (modal && backdrop) {
+      modal.style.display = 'none';
+      backdrop.style.display = 'none';
+    }
+  },
+
+  updateSleepModalUI() {
+    const activeStatus = document.getElementById('audiobookSleepActiveStatus');
+    const digits = document.getElementById('audiobookSleepDigits');
+    if (!activeStatus) return;
+
+    if (this.sleepMode === 'time' && this.sleepTimerRemaining > 0) {
+      activeStatus.style.display = 'flex';
+      const m = Math.floor(this.sleepTimerRemaining / 60);
+      const s = this.sleepTimerRemaining % 60;
+      if (digits) digits.textContent = `${m}:${s < 10 ? '0' : ''}${s}`;
+    } else if (this.sleepMode === 'chapter_end') {
+      activeStatus.style.display = 'flex';
+      if (digits) digits.textContent = 'End of Chapter';
+    } else {
+      activeStatus.style.display = 'none';
     }
   },
 

@@ -1400,6 +1400,28 @@ body {
   gap: 4px;
 }
 
+.audiobook-cog-btn {
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  transition: transform 0.12s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.audiobook-cog-btn:hover {
+  color: var(--accent);
+  background: var(--bg-card);
+}
+
+.audiobook-cog-btn:active {
+  transform: scale(0.94);
+}
+
 .audiobook-header-info {
   flex: 1;
   text-align: center;
@@ -2280,6 +2302,29 @@ body {
   border-radius: 8px;
 }
 
+.quick-sheet-nav-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.quick-sheet-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 8px;
+  min-height: 38px;
+  transition: transform 0.12s ease, opacity 0.15s ease, background 0.15s ease;
+}
+
+.quick-sheet-nav-btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
 .quick-sheet-font-row {
   display: flex;
   align-items: center;
@@ -2646,6 +2691,190 @@ body {
   .audiobook-offline-status {
     display: none !important;
   }
+}
+
+/* Audiobook Sleep Timer Modal */
+.audiobook-sleep-modal {
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 440px;
+  background: var(--bg-surface);
+  border: 2px solid var(--border-color);
+  border-bottom: none;
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
+  padding: 18px 20px calc(22px + var(--safe-bottom));
+  box-shadow: 0 -10px 36px rgba(0, 0, 0, 0.5);
+  z-index: 1060;
+  box-sizing: border-box;
+  animation: slideUpSleepModal 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes slideUpSleepModal {
+  from {
+    transform: translate(-50%, 100%);
+    opacity: 0.5;
+  }
+  to {
+    transform: translate(-50%, 0);
+    opacity: 1;
+  }
+}
+
+.audiobook-sleep-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.audiobook-sleep-active-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-card);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+}
+
+.audiobook-sleep-time-remaining {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sleep-time-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.sleep-time-digits {
+  font-family: var(--font-mono, monospace);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.audiobook-sleep-extend-btns {
+  display: flex;
+  gap: 6px;
+}
+
+.sleep-extend-btn {
+  font-size: 11px;
+  padding: 4px 10px;
+  min-height: 28px;
+  font-weight: 600;
+  border-radius: 6px;
+}
+
+.audiobook-sleep-presets-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.sleep-preset-btn {
+  padding: 11px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  justify-content: center;
+  border-radius: 8px;
+}
+
+.sleep-turn-off-btn {
+  width: 100%;
+  padding: 9px;
+  font-size: 12px;
+  color: var(--text-muted);
+  border: 1px dashed var(--border-color);
+  background: transparent;
+  justify-content: center;
+  border-radius: 8px;
+}
+.sleep-turn-off-btn:hover {
+  color: #ef4444;
+  border-color: #ef4444;
+}
+
+/* Sleep Timer Resumption Modal */
+.sleep-resume-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 90%;
+  max-width: 440px;
+  background: var(--bg-surface);
+  border: 2px solid var(--border-color);
+  border-radius: 14px;
+  padding: 20px 22px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+  z-index: 1110;
+  box-sizing: border-box;
+  animation: fadeInModal 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.sleep-resume-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.sleep-resume-desc {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+
+.sleep-resume-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sleep-resume-choice-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 12px 14px;
+  text-align: left;
+  width: 100%;
+  border-radius: 8px;
+  transition: transform 0.12s ease, border-color 0.15s ease;
+}
+
+.sleep-resume-choice-btn:active {
+  transform: scale(0.98);
+}
+
+.sleep-choice-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  margin-bottom: 3px;
+}
+
+.sleep-choice-sub {
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+/* Tactile button active feedback */
+.btn-brutal:active:not(:disabled) {
+  transform: scale(0.975);
 }
 
 
