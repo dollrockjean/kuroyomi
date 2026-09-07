@@ -12,6 +12,9 @@ const Reader = {
   lastScrollY: 0,
 
   init() {
+    if ('scrollRestoration' in history) {
+      history.scrollRestoration = 'manual';
+    }
     this.bindScroll();
     this.bindCenterScreenTap();
     this.initOverscrollNavigation();
@@ -171,7 +174,7 @@ const Reader = {
       const docHeight = document.documentElement.scrollHeight;
       const winHeight = window.innerHeight;
 
-      atTop = scrollY <= 15;
+      atTop = scrollY <= 25;
       atBottom = (scrollY + winHeight) >= (docHeight - 65);
 
       if (atTop || atBottom) {
@@ -188,13 +191,13 @@ const Reader = {
       const docHeight = document.documentElement.scrollHeight;
       const winHeight = window.innerHeight;
 
-      // Allow tracking even if bottom reached during active scroll
+      // Allow tracking even if top/bottom reached during active continuous scroll
       if (!isTracking) {
         if ((scrollY + winHeight) >= (docHeight - 65) && currentY < startY) {
           atBottom = true;
           startY = currentY;
           isTracking = true;
-        } else if (scrollY <= 15 && currentY > startY) {
+        } else if (scrollY <= 25 && currentY > startY) {
           atTop = true;
           startY = currentY;
           isTracking = true;
@@ -205,36 +208,36 @@ const Reader = {
 
       const diffY = currentY - startY;
 
-      // Pull down at top -> previous chapter
-      if (atTop && diffY > 10) {
+      // Pull down at top -> previous chapter positioned at bottom
+      if (atTop && diffY > 6) {
         const topInd = document.getElementById('overscrollTopIndicator');
         const topText = document.getElementById('overscrollTopText');
         if (topInd) {
           topInd.classList.add('pulling');
-          topInd.style.opacity = Math.min(1, diffY / 40);
-          if (diffY > 35) {
+          topInd.style.opacity = Math.min(1, diffY / 25);
+          if (diffY > 20) {
             topInd.classList.add('armed');
             if (topText) topText.textContent = 'Release to load previous chapter';
           } else {
             topInd.classList.remove('armed');
-            if (topText) topText.textContent = 'Pull down for previous chapter';
+            if (topText) topText.textContent = 'Scroll up for previous chapter';
           }
         }
       }
 
       // Pull up at bottom -> next chapter
-      if (atBottom && diffY < -10) {
+      if (atBottom && diffY < -6) {
         const botInd = document.getElementById('overscrollBottomIndicator');
         const botText = document.getElementById('overscrollBottomText');
         const absDiff = Math.abs(diffY);
         if (botInd) {
-          botInd.style.opacity = Math.min(1, absDiff / 40);
-          if (absDiff > 35) {
+          botInd.style.opacity = Math.min(1, absDiff / 25);
+          if (absDiff > 20) {
             botInd.classList.add('armed');
             if (botText) botText.textContent = 'Release to load next chapter';
           } else {
             botInd.classList.remove('armed');
-            if (botText) botText.textContent = 'Pull up for next chapter';
+            if (botText) botText.textContent = 'Scroll down for next chapter';
           }
         }
       }
@@ -269,6 +272,8 @@ const Reader = {
     // Wheel / trackpad scroll-to-next/prev-chapter support
     let wheelAtBottomCount = 0;
     let wheelAtTopCount = 0;
+    let wheelTopDelta = 0;
+    let wheelBottomDelta = 0;
     let wheelTimer = null;
     let wheelTopTimer = null;
     window.addEventListener('wheel', (e) => {
@@ -278,8 +283,9 @@ const Reader = {
       const winHeight = window.innerHeight;
 
       // Wheel down at bottom -> next chapter
-      if (e.deltaY > 0 && (scrollY + winHeight) >= (docHeight - 20)) {
+      if (e.deltaY > 0 && (scrollY + winHeight) >= (docHeight - 25)) {
         wheelAtBottomCount++;
+        wheelBottomDelta += Math.abs(e.deltaY);
         const botInd = document.getElementById('overscrollBottomIndicator');
         const botText = document.getElementById('overscrollBottomText');
         if (botInd) {
@@ -290,8 +296,9 @@ const Reader = {
 
         clearTimeout(wheelTimer);
         wheelTimer = setTimeout(() => {
-          if (wheelAtBottomCount >= 2) {
+          if (wheelAtBottomCount >= 2 || wheelBottomDelta >= 40) {
             wheelAtBottomCount = 0;
+            wheelBottomDelta = 0;
             if (botInd) {
               botInd.classList.remove('armed');
               botInd.style.opacity = '0';
@@ -299,17 +306,19 @@ const Reader = {
             this.loadNextChapter();
           } else {
             wheelAtBottomCount = 0;
+            wheelBottomDelta = 0;
             if (botInd) {
               botInd.classList.remove('armed');
               botInd.style.opacity = '0';
             }
           }
-        }, 280);
+        }, 220);
       }
 
       // Wheel up at top -> previous chapter positioned at bottom
-      if (e.deltaY < 0 && scrollY <= 5) {
+      if (e.deltaY < 0 && scrollY <= 25) {
         wheelAtTopCount++;
+        wheelTopDelta += Math.abs(e.deltaY);
         const topInd = document.getElementById('overscrollTopIndicator');
         const topText = document.getElementById('overscrollTopText');
         if (topInd) {
@@ -320,8 +329,9 @@ const Reader = {
 
         clearTimeout(wheelTopTimer);
         wheelTopTimer = setTimeout(() => {
-          if (wheelAtTopCount >= 2) {
+          if (wheelAtTopCount >= 2 || wheelTopDelta >= 40) {
             wheelAtTopCount = 0;
+            wheelTopDelta = 0;
             if (topInd) {
               topInd.classList.remove('armed');
               topInd.style.opacity = '0';
@@ -329,12 +339,13 @@ const Reader = {
             this.loadPrevChapter(false, true);
           } else {
             wheelAtTopCount = 0;
+            wheelTopDelta = 0;
             if (topInd) {
               topInd.classList.remove('armed');
               topInd.style.opacity = '0';
             }
           }
-        }, 280);
+        }, 220);
       }
     }, { passive: true });
   },
@@ -530,21 +541,21 @@ const Reader = {
       const footerPrevBtn = document.getElementById('footerPrevBtn');
       const footerNextBtn = document.getElementById('footerNextBtn');
 
-      const setupBtn = (btn, target) => {
+      const setupBtn = (btn, target, isPrev = false) => {
         if (!btn) return;
         if (target) {
           btn.style.display = 'inline-flex';
-          btn.onclick = () => this.loadChapter(target.id, false);
+          btn.onclick = () => this.loadChapter(target.id, false, false, isPrev);
           btn.title = target.title;
         } else {
           btn.style.display = 'none';
         }
       };
 
-      setupBtn(prevBtn, ch.prev_chapter);
-      setupBtn(nextBtn, ch.next_chapter);
-      setupBtn(footerPrevBtn, ch.prev_chapter);
-      setupBtn(footerNextBtn, ch.next_chapter);
+      setupBtn(prevBtn, ch.prev_chapter, true);
+      setupBtn(nextBtn, ch.next_chapter, false);
+      setupBtn(footerPrevBtn, ch.prev_chapter, true);
+      setupBtn(footerNextBtn, ch.next_chapter, false);
 
       // Update mobile quick sheet title and navigation buttons
       const qsPrevBtn = document.getElementById('quickSheetPrevChBtn');
@@ -582,36 +593,35 @@ const Reader = {
       if (scrollToBottom) {
         this.isRestoringScroll = true;
         const performScrollBottom = () => {
-          const docH = document.documentElement.scrollHeight - window.innerHeight;
-          window.scrollTo(0, docH > 0 ? docH : 0);
-          const footer = document.getElementById('readerChapterFooter');
-          if (footer && footer.scrollIntoView) {
+          const docEl = document.documentElement;
+          const bodyEl = document.body;
+          const totalHeight = Math.max(docEl.scrollHeight, bodyEl ? bodyEl.scrollHeight : 0);
+          const maxScroll = Math.max(0, totalHeight - window.innerHeight);
+
+          window.scrollTo(0, maxScroll);
+          if (docEl) docEl.scrollTop = maxScroll;
+          if (bodyEl) bodyEl.scrollTop = maxScroll;
+
+          const footerNav = document.getElementById('readerFooterNav');
+          if (footerNav && footerNav.scrollIntoView) {
             try {
-              footer.scrollIntoView({ block: 'end', behavior: 'instant' });
+              footerNav.scrollIntoView({ block: 'end', behavior: 'instant' });
             } catch (e) {
-              footer.scrollIntoView(false);
-            }
-          } else {
-            const lastP = document.querySelector('#readerContent .reader-paragraph:last-of-type, #readerContent .reader-heading:last-of-type');
-            if (lastP && lastP.scrollIntoView) {
-              try {
-                lastP.scrollIntoView({ block: 'end', behavior: 'instant' });
-              } catch (e) {
-                lastP.scrollIntoView(false);
-              }
+              footerNav.scrollIntoView(false);
             }
           }
         };
         performScrollBottom();
         requestAnimationFrame(performScrollBottom);
-        setTimeout(performScrollBottom, 40);
-        setTimeout(performScrollBottom, 120);
-        setTimeout(performScrollBottom, 260);
+        setTimeout(performScrollBottom, 30);
+        setTimeout(performScrollBottom, 80);
+        setTimeout(performScrollBottom, 180);
+        setTimeout(performScrollBottom, 320);
         setTimeout(() => {
           performScrollBottom();
           this.isRestoringScroll = false;
           this.saveCurrentProgress(null, 100);
-        }, 400);
+        }, 450);
       } else if (scrollToTarget && (this.targetParagraphIndex > 0 || this.targetScrollPercent > 0)) {
         this.isRestoringScroll = true;
         const targetPid = this.targetParagraphIndex;
@@ -738,7 +748,7 @@ const Reader = {
     return null;
   },
 
-  async loadPrevChapter(isTtsAdvance = false, scrollToBottom = false) {
+  async loadPrevChapter(isTtsAdvance = false, scrollToBottom = true) {
     if (this.currentChapter && this.currentChapter.prev_chapter) {
       return await this.loadChapter(this.currentChapter.prev_chapter.id, false, isTtsAdvance, scrollToBottom);
     }

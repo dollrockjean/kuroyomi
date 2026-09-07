@@ -710,7 +710,7 @@ const App = {
       prevChBtn.addEventListener('click', () => {
         if (window.Reader && window.Reader.currentChapter && window.Reader.currentChapter.prev_chapter) {
           this.closeMobileQuickSheet();
-          window.Reader.loadPrevChapter(false, false);
+          window.Reader.loadPrevChapter(false, true);
         }
       });
     }

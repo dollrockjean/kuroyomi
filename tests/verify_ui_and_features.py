@@ -423,13 +423,57 @@ async def test_ui():
 
             print("--- 12. Testing Scroll-Up to Bottom of Previous Chapter ---")
             scroll_bottom_result = await eval_js(ws, """
-            (() => {
+            (async () => {
                 const loadChSrc = window.Reader.loadChapter.toString();
                 const loadPrevChSrc = window.Reader.loadPrevChapter.toString();
+                const hasScrollToBottomParam = loadChSrc.includes('scrollToBottom');
+                const hasPrevScrollToBottomParam = loadPrevChSrc.includes('scrollToBottom');
+                const hasScrollPerform = loadChSrc.includes('performScrollBottom');
+
+                // Advance to chapter 2 so a previous chapter exists to navigate back to
+                if (window.Reader.currentChapter && window.Reader.currentChapter.next_chapter) {
+                    await window.Reader.loadChapter(window.Reader.currentChapter.next_chapter.id, false);
+                    await new Promise(r => setTimeout(r, 400));
+                }
+
+                // Ensure previous chapter has plenty of content for scroll testing
+                const origFetch = window.fetch;
+                window.fetch = async function(...args) {
+                    const res = await origFetch.apply(this, args);
+                    if (typeof args[0] === "string" && args[0].includes("/api/chapters/")) {
+                        const clone = res.clone();
+                        const data = await clone.json();
+                        if (data && data.content_html) {
+                            let longHtml = "";
+                            for (let i = 0; i < 35; i++) {
+                                longHtml += `<p class="reader-paragraph" data-pid="${i}">Paragraph ${i} of chapter content taking vertical height.</p>`;
+                            }
+                            data.content_html = longHtml;
+                            return new Response(JSON.stringify(data), {
+                                status: 200,
+                                headers: { "Content-Type": "application/json" }
+                            });
+                        }
+                    }
+                    return res;
+                };
+
+                await window.Reader.loadPrevChapter(false, true);
+                window.fetch = origFetch;
+                await new Promise(r => setTimeout(r, 600));
+
+                const scrollY = window.scrollY;
+                const docH = document.documentElement.scrollHeight;
+                const maxScroll = docH - window.innerHeight;
+                const isAtBottom = maxScroll > 0 && scrollY >= (maxScroll - 150);
+
                 return {
-                    hasScrollToBottomParam: loadChSrc.includes('scrollToBottom'),
-                    hasPrevScrollToBottomParam: loadPrevChSrc.includes('scrollToBottom'),
-                    hasScrollPerform: loadChSrc.includes('performScrollBottom')
+                    hasScrollToBottomParam,
+                    hasPrevScrollToBottomParam,
+                    hasScrollPerform,
+                    scrollY,
+                    maxScroll,
+                    isAtBottom
                 };
             })()
             """)
@@ -437,6 +481,7 @@ async def test_ui():
             assert scroll_bottom_result["hasScrollToBottomParam"], "loadChapter should support scrollToBottom parameter!"
             assert scroll_bottom_result["hasPrevScrollToBottomParam"], "loadPrevChapter should support scrollToBottom parameter!"
             assert scroll_bottom_result["hasScrollPerform"], "loadChapter should execute performScrollBottom!"
+            assert scroll_bottom_result["isAtBottom"], f"Reader must be at the bottom of the previous chapter! Got scrollY {scroll_bottom_result['scrollY']} of max {scroll_bottom_result['maxScroll']}"
 
             print("--- 13. Testing Quick Sheet Speed Selection Chips ---")
             speed_chips_result = await eval_js(ws, """

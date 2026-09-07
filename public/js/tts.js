@@ -1115,7 +1115,7 @@ const TTSEngine = {
       this.clearHighlight();
       this.clearWordHighlights();
       this.playKeepAliveSilence();
-      await window.Reader.loadChapter(prevId, false, true);
+      await window.Reader.loadChapter(prevId, false, true, true);
       this.refreshParagraphs();
       this.start(0);
       if (wasModalOpen) {
