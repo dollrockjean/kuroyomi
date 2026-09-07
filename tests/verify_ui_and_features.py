@@ -23,6 +23,8 @@ async def eval_js(ws, expr):
         "returnByValue": True,
         "awaitPromise": True
     })
+    if "exceptionDetails" in res:
+        print("CDP Exception Details:", res["exceptionDetails"])
     return res.get("result", {}).get("value")
 
 async def test_ui():
@@ -210,8 +212,10 @@ async def test_ui():
             print("--- 5. Testing Line Spacing & Letter Spacing Steppers ---")
             spacing_stepper_result = await eval_js(ws, """
             (() => {
-                const initialLs = parseFloat(window.ReaderSettings.letter_spacing || 0);
-                const initialLh = parseFloat(window.ReaderSettings.line_height || 1.85);
+                window.ReaderSettings.line_height = 2.0;
+                window.ReaderSettings.letter_spacing = 0;
+                const initialLs = 0;
+                const initialLh = 2.0;
                 
                 // Click letter spacing up
                 document.getElementById('quickSheetLetterUp').click();
@@ -684,7 +688,83 @@ async def test_ui():
             print("Edge margin test results:", edge_margin_result)
             assert edge_margin_result["paddingVar"] == "2px", f"Edge margin --reader-padding-x should be '2px', got '{edge_margin_result['paddingVar']}'"
 
-            print("ALL UI TOUCHUPS, SLEEP TIMER, CHAPTER NAVIGATION, BACKGROUND AUDIO, PITCH, AUTO-SCROLL, SOUNDBARS, AND SPEED CHIPS VERIFIED SUCCESSFULLY!")
+            print("--- 20. Testing Continuous Narration Buffer Engine & Zero-Skip Recovery ---")
+            narration_engine_result = await eval_js(ws, """
+            (async () => {
+                const tts = window.TTSEngine;
+                // Ensure paragraphs are populated
+                tts.refreshParagraphs();
+                const readerText = document.getElementById('readerText');
+                while (tts.paragraphs.length < 6) {
+                    const p = document.createElement('p');
+                    p.className = 'reader-paragraph';
+                    p.innerText = 'Continuous narration test paragraph number ' + (tts.paragraphs.length + 1);
+                    if (readerText) readerText.appendChild(p);
+                    tts.paragraphs.push(p);
+                }
+                const totalParagraphs = tts.paragraphs.length;
+
+                // 1. Verify pendingFetches map exists
+                const hasPendingFetches = tts.pendingFetches instanceof Map;
+
+                // 2. Test lookahead prefetchAhead
+                tts.blobCache.clear();
+                tts.pendingFetches.clear();
+                
+                // Pre-populate dummy cache for index 0 and 1 only
+                const p0Text = tts.paragraphs[0].innerText.trim();
+                const p1Text = tts.paragraphs[1].innerText.trim();
+                const key0 = `${tts.selectedVoice}_${tts.rate}_${tts.pitch}_${p0Text}`;
+                const key1 = `${tts.selectedVoice}_${tts.rate}_${tts.pitch}_${p1Text}`;
+                
+                const dummyBlob = new Blob(['RIFF....WAVEfmt '], { type: 'audio/wav' });
+                const dummyUrl = URL.createObjectURL(dummyBlob);
+                tts.blobCache.set(key0, dummyUrl);
+                tts.blobCache.set(key1, dummyUrl);
+
+                // 3. Test prefetchAhead triggers fetches for lookahead items (paragraphs 2, 3, 4)
+                let triggeredCount = 0;
+                const origGetBlob = tts.getAudioBlobUrl;
+                tts.getAudioBlobUrl = async function(text, voice, rate, pitch) {
+                    triggeredCount++;
+                    const k = `${voice}_${rate}_${pitch}_${text}`;
+                    tts.blobCache.set(k, dummyUrl);
+                    return dummyUrl;
+                };
+
+                await tts.prefetchAhead(0, 4);
+                tts.getAudioBlobUrl = origGetBlob;
+
+                // 4. Test zero-skip error safety:
+                // An audio error should NOT skip to currentIndex + 1
+                tts.currentIndex = 2;
+                tts.isPlaying = true;
+                tts.isPaused = false;
+                tts.isLoading = true;
+
+                // Simulate audio element error event
+                const errEvent = new Event('error');
+                tts.audioElement.dispatchEvent(errEvent);
+                
+                // Wait 700ms to guarantee no delayed skip fires
+                await new Promise(r => setTimeout(r, 700));
+                const indexAfterError = tts.currentIndex;
+
+                return {
+                    totalParagraphs,
+                    hasPendingFetches,
+                    triggeredPrefetchCount: triggeredCount,
+                    indexAfterError,
+                    preservedCurrentIndex: indexAfterError === 2
+                };
+            })()
+            """)
+            print("Continuous narration buffer engine test results:", narration_engine_result)
+            assert narration_engine_result["hasPendingFetches"], "TTSEngine must have pendingFetches map for deduplication!"
+            assert narration_engine_result["preservedCurrentIndex"], f"Playback must NOT skip on audio error! Expected index 2, got {narration_engine_result['indexAfterError']}"
+            assert narration_engine_result["triggeredPrefetchCount"] >= 1, "prefetchAhead must buffer upcoming paragraphs!"
+
+            print("ALL UI TOUCHUPS, SLEEP TIMER, CHAPTER NAVIGATION, BACKGROUND AUDIO, PITCH, AUTO-SCROLL, SOUNDBARS, AND CONTINUOUS NARRATION ENGINE VERIFIED SUCCESSFULLY!")
 
     finally:
         proc.terminate()
