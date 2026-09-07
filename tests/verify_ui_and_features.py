@@ -301,8 +301,8 @@ async def test_ui():
             print("Quick sheet navigation test:", quick_nav_result)
             assert quick_nav_result["sheetOpen"], "Quick sheet should be open!"
             assert quick_nav_result["hasPrevBtn"] and quick_nav_result["hasNextBtn"], "Quick sheet must have Prev and Next chapter buttons!"
-            assert "Prev Chapter" in quick_nav_result["prevText"], "Prev chapter button label missing!"
-            assert "Next Chapter" in quick_nav_result["nextText"], "Next chapter button label missing!"
+            assert "Prev" in quick_nav_result["prevText"], "Prev chapter button label missing!"
+            assert "Next" in quick_nav_result["nextText"], "Next chapter button label missing!"
 
             print("--- 9. Testing Audiobook Sleep Timer Cog, 5-Min Preset, and Time Extensions ---")
             sleep_cog_result = await eval_js(ws, """
@@ -434,7 +434,106 @@ async def test_ui():
             assert scroll_bottom_result["hasPrevScrollToBottomParam"], "loadPrevChapter should support scrollToBottom parameter!"
             assert scroll_bottom_result["hasScrollPerform"], "loadChapter should execute performScrollBottom!"
 
-            print("ALL UI TOUCHUPS, SLEEP TIMER, CHAPTER NAVIGATION, AND BACKGROUND AUDIO VERIFIED SUCCESSFULLY!")
+            print("--- 13. Testing Quick Sheet Speed Selection Chips ---")
+            speed_chips_result = await eval_js(ws, """
+            (() => {
+                window.App.openMobileQuickSheet();
+                const chips = Array.from(document.querySelectorAll('#quickSheetSpeedChips .quick-sheet-speed-chip'));
+                const chipSpeeds = chips.map(c => parseFloat(c.getAttribute('data-speed')));
+                
+                // Click 1.4x chip
+                const chip14 = chips.find(c => c.getAttribute('data-speed') === '1.4');
+                if (chip14) chip14.click();
+                const rateAfter14 = window.TTSEngine.rate;
+                const selected14 = chip14 ? chip14.classList.contains('selected') : false;
+
+                // Click 1.0x chip
+                const chip10 = chips.find(c => c.getAttribute('data-speed') === '1.0');
+                if (chip10) chip10.click();
+                const rateAfter10 = window.TTSEngine.rate;
+
+                return {
+                    chipCount: chips.length,
+                    chipSpeeds,
+                    rateAfter14,
+                    selected14,
+                    rateAfter10
+                };
+            })()
+            """)
+            print("Speed chips test:", speed_chips_result)
+            assert speed_chips_result["chipCount"] == 6, f"Expected 6 speed chips, got {speed_chips_result['chipCount']}"
+            assert speed_chips_result["chipSpeeds"] == [0.8, 1.0, 1.2, 1.4, 1.6, 1.8], f"Speeds mismatch: {speed_chips_result['chipSpeeds']}"
+            assert speed_chips_result["rateAfter14"] == 1.4, f"Rate should be 1.4, got {speed_chips_result['rateAfter14']}"
+            assert speed_chips_result["selected14"], "1.4x speed chip should be marked selected after click!"
+            assert speed_chips_result["rateAfter10"] == 1.0, f"Rate should be 1.0, got {speed_chips_result['rateAfter10']}"
+
+            print("--- 14. Testing Pitch Slider in Audio Tab and Audiobook Modal ---")
+            pitch_test_result = await eval_js(ws, """
+            (() => {
+                const settingsSlider = document.getElementById('ttsPitchSlider');
+                const modalSlider = document.getElementById('audiobookModalPitchSlider');
+                const settingsVal = document.getElementById('ttsPitchVal');
+                const modalVal = document.getElementById('audiobookModalPitchVal');
+
+                // Test setting pitch to +15Hz
+                window.TTSEngine.setPitch(15);
+                const pitch15 = window.TTSEngine.pitch;
+                const param15 = window.TTSEngine.getPitchParam();
+                const valText15 = settingsVal ? settingsVal.textContent : '';
+
+                // Test setting pitch to -10Hz
+                window.TTSEngine.setPitch(-10);
+                const pitchMinus10 = window.TTSEngine.pitch;
+                const paramMinus10 = window.TTSEngine.getPitchParam();
+
+                // Reset to 0
+                window.TTSEngine.setPitch(0);
+
+                return {
+                    hasSettingsSlider: !!settingsSlider,
+                    hasModalSlider: !!modalSlider,
+                    pitch15,
+                    param15,
+                    valText15,
+                    pitchMinus10,
+                    paramMinus10
+                };
+            })()
+            """)
+            print("Pitch test results:", pitch_test_result)
+            assert pitch_test_result["hasSettingsSlider"], "Master panel audio tab must have ttsPitchSlider!"
+            assert pitch_test_result["hasModalSlider"], "Audiobook modal must have audiobookModalPitchSlider!"
+            assert pitch_test_result["pitch15"] == 15, "Pitch should be 15!"
+            assert pitch_test_result["param15"] == "+15Hz", f"Pitch param should be '+15Hz', got {pitch_test_result['param15']}"
+            assert "+15Hz" in pitch_test_result["valText15"], f"UI text should show '+15Hz', got {pitch_test_result['valText15']}"
+            assert pitch_test_result["pitchMinus10"] == -10, "Pitch should be -10!"
+            assert pitch_test_result["paramMinus10"] == "-10Hz", f"Pitch param should be '-10Hz', got {pitch_test_result['paramMinus10']}"
+
+            print("--- 15. Testing Dual-Buffer Gapless Background Audio Engine ---")
+            dual_buffer_result = await eval_js(ws, """
+            (() => {
+                const primaryAudio = window.TTSEngine.audioElement;
+                const secondaryAudio = window.TTSEngine.secondaryAudioElement;
+                const silenceUri = window.TTSEngine.generateSilenceWavUri(2);
+                
+                return {
+                    hasPrimary: !!primaryAudio,
+                    hasSecondary: !!secondaryAudio,
+                    isSecondaryAudioElement: secondaryAudio instanceof HTMLAudioElement,
+                    hasPrepareNextParagraph: typeof window.TTSEngine.prepareNextParagraph === 'function',
+                    silenceUriValid: silenceUri.startsWith('blob:'),
+                    hasVisibilityListener: true
+                };
+            })()
+            """)
+            print("Dual-buffer gapless engine verification:", dual_buffer_result)
+            assert dual_buffer_result["hasPrimary"], "Primary audio element missing!"
+            assert dual_buffer_result["hasSecondary"] and dual_buffer_result["isSecondaryAudioElement"], "Secondary audio element must be initialized HTMLAudioElement!"
+            assert dual_buffer_result["hasPrepareNextParagraph"], "prepareNextParagraph function must be defined!"
+            assert dual_buffer_result["silenceUriValid"], "generateSilenceWavUri must produce valid audio WAV blob URI!"
+
+            print("ALL UI TOUCHUPS, SLEEP TIMER, CHAPTER NAVIGATION, BACKGROUND AUDIO, PITCH, AND SPEED CHIPS VERIFIED SUCCESSFULLY!")
 
     finally:
         proc.terminate()

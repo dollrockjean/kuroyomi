@@ -317,6 +317,14 @@
         </div>
 
         <div class="audiobook-compact-row">
+          <span class="audiobook-compact-label">Pitch:</span>
+          <div style="display: flex; align-items: center; gap: 8px; flex: 1;">
+            <input type="range" id="audiobookModalPitchSlider" class="range-slider" min="-20" max="20" step="2" value="0" style="flex: 1;" />
+            <span id="audiobookModalPitchVal" style="font-size: 11px; font-weight: 600; min-width: 44px; text-align: right; color: var(--text-secondary);">0Hz</span>
+          </div>
+        </div>
+
+        <div class="audiobook-compact-row">
           <span class="audiobook-compact-label">Voice:</span>
           <select id="audiobookModalVoiceSelect" class="form-select audiobook-compact-select"></select>
         </div>
@@ -357,66 +365,137 @@
     </div>
   </div>
 
-  <!-- Mobile Slide-Up Quick Reader Sheet (Tapped from Middle of Reading View) -->
+  <!-- Mobile Slide-Up Quick Reader Sheet (WebNovel-Style Bottom Sheet) -->
   <div class="quick-sheet-backdrop" id="quickSheetBackdrop"></div>
   <aside class="mobile-quick-sheet" id="mobileQuickSheet">
     <div class="quick-sheet-handle"></div>
     <div class="quick-sheet-body">
-      <div class="quick-sheet-grid">
-        <button class="btn-brutal quick-sheet-btn" id="quickSheetChaptersBtn">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/></svg>
-          Chapters
-        </button>
-        <button class="btn-brutal btn-brutal-accent quick-sheet-btn" id="quickSheetTTSBtn">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
-          <span id="quickSheetTTSText">Read Aloud</span>
-        </button>
-      </div>
-
-      <div class="quick-sheet-nav-row">
+      <!-- 1. Chapter Navigation & Progress Bar -->
+      <div class="quick-sheet-nav-bar">
         <button class="btn-brutal quick-sheet-nav-btn" id="quickSheetPrevChBtn" title="Previous Chapter">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
-          <span>Prev Chapter</span>
+          <svg class="quick-sheet-clipart" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 18 9 12 15 6"></polyline>
+          </svg>
+          <span>Prev</span>
         </button>
+        <div class="quick-sheet-chapter-info" id="quickSheetChapterInfo">
+          <div class="quick-sheet-chapter-title" id="quickSheetChapterTitle">Chapter</div>
+        </div>
         <button class="btn-brutal quick-sheet-nav-btn" id="quickSheetNextChBtn" title="Next Chapter">
-          <span>Next Chapter</span>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
+          <span>Next</span>
+          <svg class="quick-sheet-clipart" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
         </button>
       </div>
 
-      <div class="quick-sheet-font-row">
-        <span class="quick-sheet-label">Font Size</span>
-        <div class="quick-sheet-font-controls">
-          <button class="btn-brutal quick-sheet-font-btn" id="quickSheetFontDown" title="Decrease font size">A-</button>
-          <span class="quick-sheet-font-val" id="quickSheetFontVal">19px</span>
-          <button class="btn-brutal quick-sheet-font-btn" id="quickSheetFontUp" title="Increase font size">A+</button>
+      <!-- 2. WebNovel-Style 4-Item Quick Action Clipart Grid -->
+      <div class="quick-sheet-action-grid">
+        <button class="quick-action-tile" id="quickSheetChaptersBtn" title="Table of Contents">
+          <div class="quick-tile-icon-wrap">
+            <svg class="quick-sheet-clipart" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+              <line x1="8" y1="6" x2="16" y2="6"></line>
+              <line x1="8" y1="10" x2="16" y2="10"></line>
+              <line x1="8" y1="14" x2="13" y2="14"></line>
+            </svg>
+          </div>
+          <span class="quick-tile-label">Chapters</span>
+        </button>
+
+        <button class="quick-action-tile" id="quickSheetTTSBtn" title="Read Aloud Voice Narration">
+          <div class="quick-tile-icon-wrap">
+            <svg class="quick-sheet-clipart" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 18v-6a9 9 0 0 1 18 0v6"></path>
+              <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"></path>
+            </svg>
+          </div>
+          <span class="quick-tile-label" id="quickSheetTTSText">Read Aloud</span>
+        </button>
+
+        <button class="quick-action-tile" id="quickSheetAutoScrollBtn" title="Hands-Free Auto-Scroll">
+          <div class="quick-tile-icon-wrap">
+            <svg class="quick-sheet-clipart" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="5" y="2" width="14" height="20" rx="3"></rect>
+              <polyline points="9 11 12 14 15 11"></polyline>
+              <polyline points="9 15 12 18 15 15"></polyline>
+            </svg>
+          </div>
+          <span class="quick-tile-label" id="quickSheetAutoScrollText">Auto-Scroll</span>
+        </button>
+
+        <button class="quick-action-tile" id="quickSheetSettingsBtn" title="Typography & Theme Settings">
+          <div class="quick-tile-icon-wrap">
+            <svg class="quick-sheet-clipart" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 7V4h16v3"></path>
+              <path d="M9 20h6"></path>
+              <path d="M12 4v16"></path>
+            </svg>
+          </div>
+          <span class="quick-tile-label">Settings</span>
+        </button>
+      </div>
+
+      <!-- 3. Narration Speed Chips Row (Identical presets as Audiobook Modal) -->
+      <div class="quick-sheet-speed-row">
+        <div class="quick-sheet-speed-header">
+          <div class="quick-sheet-speed-title">
+            <svg class="quick-sheet-clipart" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <polyline points="12 6 12 12 16 14"></polyline>
+            </svg>
+            <span>Narration Speed</span>
+          </div>
+          <span class="quick-sheet-speed-val" id="quickSheetSpeedVal">1.0x</span>
+        </div>
+        <div class="quick-sheet-speed-chips" id="quickSheetSpeedChips">
+          <button class="speed-chip quick-sheet-speed-chip" data-speed="0.8">0.8x</button>
+          <button class="speed-chip quick-sheet-speed-chip selected" data-speed="1.0">1.0x</button>
+          <button class="speed-chip quick-sheet-speed-chip" data-speed="1.2">1.2x</button>
+          <button class="speed-chip quick-sheet-speed-chip" data-speed="1.4">1.4x</button>
+          <button class="speed-chip quick-sheet-speed-chip" data-speed="1.6">1.6x</button>
+          <button class="speed-chip quick-sheet-speed-chip" data-speed="1.8">1.8x</button>
         </div>
       </div>
 
-      <div class="quick-sheet-font-row">
-        <span class="quick-sheet-label">Line Spacing</span>
-        <div class="quick-sheet-font-controls">
-          <button class="btn-brutal quick-sheet-font-btn" id="quickSheetLineDown" title="Decrease line spacing">-</button>
-          <span class="quick-sheet-font-val" id="quickSheetLineVal">1.85</span>
-          <button class="btn-brutal quick-sheet-font-btn" id="quickSheetLineUp" title="Increase line spacing">+</button>
+      <!-- 4. Typography & Spacing Steppers -->
+      <div class="quick-sheet-steppers">
+        <div class="quick-sheet-stepper-row">
+          <span class="quick-stepper-label">Font Size</span>
+          <div class="quick-stepper-controls">
+            <button class="btn-brutal quick-stepper-btn" id="quickSheetFontDown" title="Decrease font size">A-</button>
+            <span class="quick-stepper-val" id="quickSheetFontVal">19px</span>
+            <button class="btn-brutal quick-stepper-btn" id="quickSheetFontUp" title="Increase font size">A+</button>
+          </div>
+        </div>
+
+        <div class="quick-sheet-stepper-row">
+          <span class="quick-stepper-label">Line Spacing</span>
+          <div class="quick-stepper-controls">
+            <button class="btn-brutal quick-stepper-btn" id="quickSheetLineDown" title="Decrease line spacing">-</button>
+            <span class="quick-stepper-val" id="quickSheetLineVal">1.85</span>
+            <button class="btn-brutal quick-stepper-btn" id="quickSheetLineUp" title="Increase line spacing">+</button>
+          </div>
+        </div>
+
+        <div class="quick-sheet-stepper-row">
+          <span class="quick-stepper-label">Letter Spacing</span>
+          <div class="quick-stepper-controls">
+            <button class="btn-brutal quick-stepper-btn" id="quickSheetLetterDown" title="Decrease letter spacing">-</button>
+            <span class="quick-stepper-val" id="quickSheetLetterVal">0.0px</span>
+            <button class="btn-brutal quick-stepper-btn" id="quickSheetLetterUp" title="Increase letter spacing">+</button>
+          </div>
         </div>
       </div>
 
-      <div class="quick-sheet-font-row">
-        <span class="quick-sheet-label">Letter Spacing</span>
-        <div class="quick-sheet-font-controls">
-          <button class="btn-brutal quick-sheet-font-btn" id="quickSheetLetterDown" title="Decrease letter spacing">-</button>
-          <span class="quick-sheet-font-val" id="quickSheetLetterVal">0.0px</span>
-          <button class="btn-brutal quick-sheet-font-btn" id="quickSheetLetterUp" title="Increase letter spacing">+</button>
-        </div>
-      </div>
-
-      <div class="quick-sheet-actions-row">
-        <button class="btn-brutal quick-sheet-action" id="quickSheetMarginsBtn">
+      <!-- 5. Quick Toggles Row (Margin & Theme Switch) -->
+      <div class="quick-sheet-footer-row">
+        <button class="btn-brutal quick-sheet-footer-btn" id="quickSheetMarginsBtn">
           Margin: <span id="quickSheetMarginVal" style="font-weight: 700; margin-left: 4px;">Edge</span>
         </button>
-        <button class="btn-brutal quick-sheet-action" id="quickSheetSettingsBtn">
-          Display Settings
+        <button class="btn-brutal quick-sheet-footer-btn" id="quickSheetThemeToggleBtn">
+          Theme: <span id="quickSheetThemeVal" style="font-weight: 700; margin-left: 4px;">Dark</span>
         </button>
       </div>
     </div>
@@ -484,6 +563,14 @@
             <span id="ttsRateVal" style="font-size: 12px; font-weight: 600; color: var(--text-secondary);">1.0x</span>
           </div>
           <input type="range" id="ttsRateSlider" class="range-slider" min="0.6" max="1.8" step="0.05" value="1.0" />
+        </div>
+
+        <div class="form-group">
+          <div style="display: flex; justify-content: space-between;">
+            <label class="form-label">Voice Pitch</label>
+            <span id="ttsPitchVal" style="font-size: 12px; font-weight: 600; color: var(--text-secondary);">0Hz (Normal)</span>
+          </div>
+          <input type="range" id="ttsPitchSlider" class="range-slider" min="-20" max="20" step="2" value="0" />
         </div>
 
         <div class="form-group" style="margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--border-color);">

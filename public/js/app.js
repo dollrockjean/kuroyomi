@@ -584,15 +584,41 @@ const App = {
       marginVal.textContent = labels[cur.margin_width || 'edge'] || 'Edge';
     }
 
+    const themeVal = document.getElementById('quickSheetThemeVal');
+    if (themeVal) {
+      const isDark = (cur.theme || 'monochrome-dark').includes('dark') || (cur.theme || '').includes('black');
+      themeVal.textContent = isDark ? 'Dark' : 'Light';
+    }
+
     const ttsText = document.getElementById('quickSheetTTSText');
     if (ttsText && typeof TTSEngine !== 'undefined') {
       ttsText.textContent = (TTSEngine.isPlaying && !TTSEngine.isPaused) ? 'Pause' : 'Read Aloud';
     }
 
-    // Update chapter navigation buttons inside quick sheet
+    const autoScrollText = document.getElementById('quickSheetAutoScrollText');
+    if (autoScrollText && typeof AutoScroll !== 'undefined') {
+      autoScrollText.textContent = AutoScroll.isRunning ? 'Pause Scroll' : 'Auto-Scroll';
+    }
+
+    // Update speed chips in quick sheet
+    const curSpeed = (typeof TTSEngine !== 'undefined') ? TTSEngine.rate : 1.0;
+    const qsSpeedVal = document.getElementById('quickSheetSpeedVal');
+    if (qsSpeedVal) qsSpeedVal.textContent = `${curSpeed}x`;
+    document.querySelectorAll('.quick-sheet-speed-chip').forEach(chip => {
+      const s = parseFloat(chip.getAttribute('data-speed'));
+      chip.classList.toggle('selected', Math.abs(s - curSpeed) < 0.05);
+    });
+
+    // Update chapter navigation buttons & title inside quick sheet
     const prevBtn = document.getElementById('quickSheetPrevChBtn');
     const nextBtn = document.getElementById('quickSheetNextChBtn');
+    const chTitleEl = document.getElementById('quickSheetChapterTitle');
     const currentCh = window.Reader ? window.Reader.currentChapter : null;
+    if (chTitleEl && currentCh) {
+      const volNum = currentCh.volume_number || 1;
+      const chNum = currentCh.chapter_index || currentCh.global_index || 1;
+      chTitleEl.textContent = `Vol. ${volNum}, Chap. ${chNum}`;
+    }
     if (prevBtn) {
       const hasPrev = !!(currentCh && currentCh.prev_chapter);
       prevBtn.disabled = !hasPrev;
@@ -686,6 +712,26 @@ const App = {
       });
     }
 
+    const autoScrollBtn = document.getElementById('quickSheetAutoScrollBtn');
+    if (autoScrollBtn) {
+      autoScrollBtn.addEventListener('click', () => {
+        this.closeMobileQuickSheet();
+        if (typeof AutoScroll !== 'undefined') {
+          AutoScroll.toggle();
+        }
+      });
+    }
+
+    // Wire quick sheet speed chips
+    document.querySelectorAll('.quick-sheet-speed-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const s = parseFloat(chip.getAttribute('data-speed'));
+        if (!isNaN(s) && typeof TTSEngine !== 'undefined') {
+          TTSEngine.setRate(s);
+        }
+      });
+    });
+
     const fontDownBtn = document.getElementById('quickSheetFontDown');
     if (fontDownBtn) {
       fontDownBtn.addEventListener('click', () => {
@@ -748,6 +794,16 @@ const App = {
         const nextIdx = (order.indexOf(curMargin) + 1) % order.length;
         const nextMargin = order[nextIdx];
         this.applySettings({ margin_width: nextMargin });
+      });
+    }
+
+    const themeToggleBtn = document.getElementById('quickSheetThemeToggleBtn');
+    if (themeToggleBtn) {
+      themeToggleBtn.addEventListener('click', () => {
+        const themes = ['monochrome-dark', 'monochrome-light', 'webnovel-paper', 'webnovel-mint', 'sepia-parchment', 'webnovel-dark', 'oled-blackout'];
+        const curTheme = window.ReaderSettings.theme || 'monochrome-dark';
+        const nextIdx = (themes.indexOf(curTheme) + 1) % themes.length;
+        this.applySettings({ theme: themes[nextIdx] });
       });
     }
 
@@ -884,6 +940,12 @@ const App = {
     const quickTtsText = document.getElementById('quickSheetTTSText');
     if (quickTtsText && typeof TTSEngine !== 'undefined') {
       quickTtsText.textContent = (TTSEngine.isPlaying && !TTSEngine.isPaused) ? 'Pause' : 'Read Aloud';
+    }
+
+    const quickThemeVal = document.getElementById('quickSheetThemeVal');
+    if (quickThemeVal) {
+      const isDark = (cur.theme || 'monochrome-dark').includes('dark') || (cur.theme || '').includes('black');
+      quickThemeVal.textContent = isDark ? 'Dark' : 'Light';
     }
 
     // Update Font Size Slider

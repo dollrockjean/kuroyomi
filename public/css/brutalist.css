@@ -2282,97 +2282,241 @@ body {
 .quick-sheet-body {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-}
-
-.quick-sheet-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
   gap: 10px;
 }
 
-.quick-sheet-btn {
-  display: inline-flex;
+/* Chapter Progress Bar */
+.quick-sheet-nav-bar {
+  display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
   gap: 8px;
-  padding: 12px;
-  font-size: 13px;
-  font-weight: 600;
-  border-radius: 8px;
-}
-
-.quick-sheet-nav-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .quick-sheet-nav-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 9px 12px;
-  font-size: 12px;
+  gap: 4px;
+  padding: 6px 12px;
+  font-size: 11px;
   font-weight: 600;
-  border-radius: 8px;
-  min-height: 38px;
-  transition: transform 0.12s ease, opacity 0.15s ease, background 0.15s ease;
+  border-radius: 6px;
+  min-height: 32px;
+  white-space: nowrap;
+  transition: transform 0.12s ease, opacity 0.15s ease;
 }
 
 .quick-sheet-nav-btn:active:not(:disabled) {
-  transform: scale(0.97);
+  transform: scale(0.96);
 }
 
-.quick-sheet-font-row {
+.quick-sheet-chapter-info {
+  flex: 1;
+  text-align: center;
+  overflow: hidden;
+  padding: 0 4px;
+}
+
+.quick-sheet-chapter-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: 0.3px;
+}
+
+/* 4-Item Quick Action Clipart Grid */
+.quick-sheet-action-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.quick-action-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 8px 4px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: transform 0.12s ease, border-color 0.15s ease, background 0.15s ease;
+  min-height: 58px;
+  color: var(--text-primary);
+}
+
+.quick-action-tile:hover {
+  border-color: var(--accent);
+  background: var(--bg-surface);
+}
+
+.quick-action-tile:active {
+  transform: scale(0.95);
+}
+
+.quick-tile-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  color: var(--text-primary);
+}
+
+.quick-tile-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  color: var(--text-secondary);
+}
+
+.quick-action-tile:hover .quick-tile-label {
+  color: var(--text-primary);
+}
+
+/* Narration Speed Chips Row */
+.quick-sheet-speed-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.quick-sheet-speed-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.quick-sheet-speed-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.quick-sheet-speed-val {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.quick-sheet-speed-chips {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 5px;
+}
+
+.quick-sheet-speed-chip {
+  padding: 5px 2px;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.quick-sheet-speed-chip:hover {
+  border-color: var(--text-secondary);
+  color: var(--text-primary);
+}
+
+.quick-sheet-speed-chip.selected {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-contrast, #000);
+  font-weight: 800;
+}
+
+/* Typography & Spacing Steppers */
+.quick-sheet-steppers {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.quick-sheet-stepper-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: 8px;
-  padding: 8px 14px;
+  padding: 5px 12px;
 }
 
-.quick-sheet-label {
-  font-size: 12px;
+.quick-stepper-label {
+  font-size: 11px;
   font-weight: 600;
   color: var(--text-secondary);
 }
 
-.quick-sheet-font-controls {
+.quick-stepper-controls {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
-.quick-sheet-font-btn {
-  min-width: 40px;
-  min-height: 32px;
-  padding: 4px 10px;
+.quick-stepper-btn {
+  min-width: 36px;
+  min-height: 28px;
+  padding: 2px 8px;
   font-weight: 700;
-  font-size: 13px;
+  font-size: 12px;
+  border-radius: 5px;
 }
 
-.quick-sheet-font-val {
-  font-size: 13px;
+.quick-stepper-val {
+  font-size: 12px;
   font-weight: 700;
   min-width: 38px;
   text-align: center;
   color: var(--text-primary);
 }
 
-.quick-sheet-actions-row {
+/* Quick Footer Toggles */
+.quick-sheet-footer-row {
   display: flex;
-  gap: 10px;
+  gap: 8px;
 }
 
-.quick-sheet-action {
+.quick-sheet-footer-btn {
   flex: 1;
-  font-size: 12px;
-  padding: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 8px;
   text-align: center;
+  border-radius: 6px;
+  min-height: 34px;
+}
+
+.quick-sheet-clipart {
+  stroke: currentColor;
+  vertical-align: middle;
+  flex-shrink: 0;
 }
 
 /* Responsive adjustments & Overlap Prevention */

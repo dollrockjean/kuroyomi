@@ -80,6 +80,23 @@ def normalize_rate(rate_str):
             return f"+{val}%"
     return "+0%"
 
+def normalize_pitch(pitch_str):
+    if not pitch_str:
+        return "+0Hz"
+    pitch_str = str(pitch_str).strip()
+    m = re.match(r'^[+\-]?\s*(\d+)\s*Hz$', pitch_str, re.IGNORECASE)
+    if m:
+        val = int(m.group(1))
+        val = max(-50, min(50, val))
+        return f"-{val}Hz" if pitch_str.strip().startswith('-') else f"+{val}Hz"
+    try:
+        val = int(round(float(pitch_str.replace('Hz', '').replace('hz', ''))))
+        val = max(-50, min(50, val))
+        return f"+{val}Hz" if val >= 0 else f"{val}Hz"
+    except ValueError:
+        pass
+    return "+0Hz"
+
 VALID_VOICES = {
     "en-US-BrianNeural",
     "en-US-AvaNeural",
@@ -91,7 +108,7 @@ VALID_VOICES = {
     "en-AU-WilliamMultilingualNeural"
 }
 
-def synthesize_speech(text, voice="en-US-BrianNeural", rate="+0%"):
+def synthesize_speech(text, voice="en-US-BrianNeural", rate="+0%", pitch="+0Hz"):
     clean_text = normalize_text_for_narration(text)
     if not clean_text:
         return None
@@ -101,8 +118,9 @@ def synthesize_speech(text, voice="en-US-BrianNeural", rate="+0%"):
         voice = "en-US-BrianNeural"
 
     norm_rate = normalize_rate(rate)
+    norm_pitch = normalize_pitch(pitch)
 
-    cache_key = hashlib.sha256(f"{voice}_{norm_rate}_{clean_text}".encode('utf-8')).hexdigest()
+    cache_key = hashlib.sha256(f"{voice}_{norm_rate}_{norm_pitch}_{clean_text}".encode('utf-8')).hexdigest()
     cache_file = os.path.join(TTS_CACHE_DIR, f"{cache_key}.mp3")
     if os.path.exists(cache_file) and os.path.getsize(cache_file) > 0:
         with open(cache_file, "rb") as f:
@@ -111,7 +129,7 @@ def synthesize_speech(text, voice="en-US-BrianNeural", rate="+0%"):
     try:
         import edge_tts
         async def _run():
-            comm = edge_tts.Communicate(clean_text, voice, rate=norm_rate)
+            comm = edge_tts.Communicate(clean_text, voice, rate=norm_rate, pitch=norm_pitch)
             buf = io.BytesIO()
             async for chunk in comm.stream():
                 if chunk['type'] == 'audio':
@@ -125,15 +143,15 @@ def synthesize_speech(text, voice="en-US-BrianNeural", rate="+0%"):
             return data
     except Exception as e:
         import traceback
-        print(f"[TTS] Neural TTS synthesis error for voice='{voice}' rate='{norm_rate}': {e}")
+        print(f"[TTS] Neural TTS synthesis error for voice='{voice}' rate='{norm_rate}' pitch='{norm_pitch}': {e}")
         traceback.print_exc()
 
         # Resilient fallback retry with default Brian voice if custom voice/rate had an edge error
-        if voice != "en-US-BrianNeural" or norm_rate != "+0%":
+        if voice != "en-US-BrianNeural" or norm_rate != "+0%" or norm_pitch != "+0Hz":
             try:
                 print("[TTS] Retrying synthesis with default Brian voice...")
                 async def _fallback_run():
-                    comm = edge_tts.Communicate(clean_text, "en-US-BrianNeural", rate="+0%")
+                    comm = edge_tts.Communicate(clean_text, "en-US-BrianNeural", rate="+0%", pitch="+0Hz")
                     buf = io.BytesIO()
                     async for chunk in comm.stream():
                         if chunk['type'] == 'audio':
@@ -543,13 +561,14 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             text = query.get("text", [""])[0]
             voice = query.get("voice", ["en-US-BrianNeural"])[0]
             rate = query.get("rate", ["+0%"])[0]
+            pitch = query.get("pitch", ["+0Hz"])[0]
 
             if not text:
                 conn.close()
                 self.send_json({"error": "text query param required"}, status=400)
                 return
 
-            audio_data = synthesize_speech(text, voice, rate)
+            audio_data = synthesize_speech(text, voice, rate, pitch)
             conn.close()
             if not audio_data:
                 self.send_json({"error": "Neural TTS unavailable"}, status=503)

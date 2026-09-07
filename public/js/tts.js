@@ -14,6 +14,7 @@ const TTS_ICONS = {
 
 const TTSEngine = {
   audioElement: new Audio(),
+  secondaryAudioElement: new Audio(),
   testAudioElement: new Audio(),
   keepAliveAudio: null,
   audioContext: null,
@@ -25,6 +26,7 @@ const TTSEngine = {
   
   selectedVoice: 'en-US-BrianNeural',
   rate: 1.0,
+  pitch: 0,
   isUsingDeviceVoice: false,
   deviceUtterance: null,
   
@@ -32,6 +34,16 @@ const TTSEngine = {
   currentIndex: 0,
   playbackSessionId: 0,
   onChapterEndCallback: null,
+
+  // Dual-buffer gapless handoff tracking
+  preloadedIndex: -1,
+  preloadedBlobUrl: null,
+  isTransitioning: false,
+
+  // Event handlers
+  _onEndedHandler: null,
+  _onTimeUpdateHandler: null,
+  _onErrorHandler: null,
 
   // Real-time word-by-word highlight tracking
   currentWordList: [],
@@ -57,56 +69,120 @@ const TTSEngine = {
     { id: 'en-AU-WilliamMultilingualNeural', name: 'William', desc: 'Smooth Australian' }
   ],
 
+  generateSilenceWavUri(seconds = 4) {
+    const sampleRate = 22050;
+    const numChannels = 1;
+    const bitsPerSample = 16;
+    const byteRate = sampleRate * numChannels * (bitsPerSample / 8);
+    const blockAlign = numChannels * (bitsPerSample / 8);
+    const dataSize = seconds * byteRate;
+    const buffer = new ArrayBuffer(44 + dataSize);
+    const view = new DataView(buffer);
+
+    const writeStr = (offset, str) => {
+      for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+    };
+
+    writeStr(0, 'RIFF');
+    view.setUint32(4, 36 + dataSize, true);
+    writeStr(8, 'WAVE');
+    writeStr(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, byteRate, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, bitsPerSample, true);
+    writeStr(36, 'data');
+    view.setUint32(40, dataSize, true);
+
+    const blob = new Blob([buffer], { type: 'audio/wav' });
+    return URL.createObjectURL(blob);
+  },
+
+  bindAudioElementEvents() {
+    if (this._onEndedHandler) {
+      this.audioElement.removeEventListener('ended', this._onEndedHandler);
+    }
+    if (this._onTimeUpdateHandler) {
+      this.audioElement.removeEventListener('timeupdate', this._onTimeUpdateHandler);
+    }
+    if (this._onErrorHandler) {
+      this.audioElement.removeEventListener('error', this._onErrorHandler);
+    }
+
+    this._onEndedHandler = () => {
+      if (this.isPlaying && !this.isPaused && !this.audioElement.loop && !this.isTransitioning) {
+        this.speakParagraph(this.currentIndex + 1);
+      }
+    };
+
+    this._onTimeUpdateHandler = () => {
+      this.syncWordHighlight();
+      if (this.isPlaying && !this.isPaused && !this.isTransitioning && this.preloadedIndex === this.currentIndex + 1) {
+        const d = this.audioElement.duration;
+        const ct = this.audioElement.currentTime;
+        if (d && !isNaN(d) && d > 0.6 && ct >= d - 0.25) {
+          this.handoffToSecondary();
+        }
+      }
+    };
+
+    this._onErrorHandler = (e) => {
+      console.warn('Audio playback error:', e);
+      if (this.isPlaying && !this.isPaused && !this.audioElement.loop && !this.isTransitioning) {
+        setTimeout(() => this.speakParagraph(this.currentIndex + 1), 600);
+      }
+    };
+
+    this.audioElement.addEventListener('ended', this._onEndedHandler);
+    this.audioElement.addEventListener('timeupdate', this._onTimeUpdateHandler);
+    this.audioElement.addEventListener('error', this._onErrorHandler);
+  },
+
   init(onChapterEnd) {
     this.onChapterEndCallback = onChapterEnd;
     if (window.ReaderSettings && window.ReaderSettings.tts_rate) {
       this.rate = parseFloat(window.ReaderSettings.tts_rate);
     }
+    if (window.ReaderSettings && window.ReaderSettings.tts_pitch !== undefined) {
+      this.pitch = parseInt(window.ReaderSettings.tts_pitch, 10) || 0;
+    }
     if (window.ReaderSettings && window.ReaderSettings.tts_voice) {
       this.selectedVoice = window.ReaderSettings.tts_voice;
     }
     this.populateVoiceSelect();
+    this.updatePitchUI();
 
     this.audioElement.playsInline = true;
+    this.secondaryAudioElement.playsInline = true;
     this.testAudioElement.playsInline = true;
+
+    this.bindAudioElementEvents();
 
     // iOS Audio Context Priming on any user touch/click
     const primeAudio = () => {
       this.audioElement.load();
+      this.secondaryAudioElement.load();
       this.testAudioElement.load();
-      try {
-        if (!this.keepAliveAudio) {
-          const SILENCE_DATA_URI = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
-          this.keepAliveAudio = new Audio();
-          this.keepAliveAudio.loop = true;
-          this.keepAliveAudio.volume = 0.02;
-          this.keepAliveAudio.playsInline = true;
-          this.keepAliveAudio.src = SILENCE_DATA_URI;
-        }
-        this.keepAliveAudio.load();
-      } catch (e) {}
+      this.startKeepAlive();
       window.removeEventListener('touchstart', primeAudio);
       window.removeEventListener('click', primeAudio);
     };
     window.addEventListener('touchstart', primeAudio, { passive: true, once: true });
     window.addEventListener('click', primeAudio, { passive: true, once: true });
 
-    // Handle audio completion -> move to next paragraph
-    this.audioElement.addEventListener('ended', () => {
-      if (this.isPlaying && !this.isPaused && !this.audioElement.loop) {
-        this.speakParagraph(this.currentIndex + 1);
-      }
-    });
-
-    // Real-time word-by-word highlight synchronization
-    this.audioElement.addEventListener('timeupdate', () => {
-      this.syncWordHighlight();
-    });
-
-    this.audioElement.addEventListener('error', (e) => {
-      console.warn('Audio playback error:', e);
-      if (this.isPlaying && !this.isPaused && !this.audioElement.loop) {
-        setTimeout(() => this.speakParagraph(this.currentIndex + 1), 600);
+    // Handle tab visibility changes: restore smooth scrolling & wake suspended audio
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && this.isPlaying) {
+        const curEl = this.paragraphs[this.currentIndex];
+        if (curEl && curEl.scrollIntoView) {
+          curEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        if (!this.isPaused && this.audioElement && this.audioElement.paused) {
+          this.audioElement.play().catch(() => {});
+        }
       }
     });
 
@@ -210,14 +286,24 @@ const TTSEngine = {
     setBtnIcon('modalNextParaBtn', TTS_ICONS.nextPara);
     setBtnIcon('modalNextChapterBtn', TTS_ICONS.nextCh);
 
-    // Wire modal speed preset chips
-    const speedChips = document.querySelectorAll('.speed-chip');
+    // Wire speed preset chips across audiobook modal and middle quick sheet
+    const speedChips = document.querySelectorAll('.speed-chip, .quick-sheet-speed-chip');
     speedChips.forEach(chip => {
       chip.addEventListener('click', () => {
         const s = parseFloat(chip.getAttribute('data-speed'));
         if (!isNaN(s)) this.setRate(s);
       });
     });
+
+    // Wire pitch sliders
+    const pitchSlider1 = document.getElementById('ttsPitchSlider');
+    if (pitchSlider1) {
+      pitchSlider1.addEventListener('input', (e) => this.setPitch(e.target.value));
+    }
+    const pitchSlider2 = document.getElementById('audiobookModalPitchSlider');
+    if (pitchSlider2) {
+      pitchSlider2.addEventListener('input', (e) => this.setPitch(e.target.value));
+    }
 
     // Wire retry on offline badge tap
     const offlineStatusBadge = document.getElementById('audiobookOfflineStatus');
@@ -333,14 +419,51 @@ const TTSEngine = {
     return pct >= 0 ? `+${pct}%` : `${pct}%`;
   },
 
-  async getAudioBlobUrl(text, voiceId, rateVal, retries = 2) {
-    const cacheKey = `${voiceId}_${rateVal}_${text}`;
+  getPitchParam(pitchVal) {
+    const p = pitchVal !== undefined ? pitchVal : this.pitch;
+    return p >= 0 ? `+${p}Hz` : `${p}Hz`;
+  },
+
+  setPitch(val) {
+    this.pitch = parseInt(val, 10) || 0;
+    this.blobCache.clear();
+    if (window.ReaderSettings) {
+      window.ReaderSettings.tts_pitch = this.pitch;
+      if (window.SyncService) {
+        window.SyncService.syncSettings(window.ReaderSettings);
+      }
+    }
+    this.updatePitchUI();
+    if (this.isPlaying && !this.isPaused) {
+      this.speakParagraph(this.currentIndex);
+    }
+  },
+
+  updatePitchUI() {
+    const pStr = `${this.pitch >= 0 ? '+' : ''}${this.pitch}Hz`;
+    const labelStr = this.pitch === 0 ? '0Hz (Normal)' : pStr;
+
+    const slider1 = document.getElementById('ttsPitchSlider');
+    if (slider1) slider1.value = this.pitch;
+    const val1 = document.getElementById('ttsPitchVal');
+    if (val1) val1.textContent = labelStr;
+
+    const slider2 = document.getElementById('audiobookModalPitchSlider');
+    if (slider2) slider2.value = this.pitch;
+    const val2 = document.getElementById('audiobookModalPitchVal');
+    if (val2) val2.textContent = pStr;
+  },
+
+  async getAudioBlobUrl(text, voiceId, rateVal, pitchVal, retries = 2) {
+    const pVal = pitchVal !== undefined ? pitchVal : this.pitch;
+    const cacheKey = `${voiceId}_${rateVal}_${pVal}_${text}`;
     if (this.blobCache.has(cacheKey)) {
       return this.blobCache.get(cacheKey);
     }
 
     const rateParam = this.getRateParam(rateVal);
-    const url = `/api/tts/speak?text=${encodeURIComponent(text)}&voice=${encodeURIComponent(voiceId)}&rate=${encodeURIComponent(rateParam)}`;
+    const pitchParam = this.getPitchParam(pVal);
+    const url = `/api/tts/speak?text=${encodeURIComponent(text)}&voice=${encodeURIComponent(voiceId)}&rate=${encodeURIComponent(rateParam)}&pitch=${encodeURIComponent(pitchParam)}`;
     
     for (let attempt = 0; attempt <= retries; attempt++) {
       const controller = new AbortController();
@@ -374,7 +497,7 @@ const TTSEngine = {
 
     try {
       this.testAudioElement.pause();
-      const blobUrl = await this.getAudioBlobUrl(testSentence, voiceId, this.rate);
+      const blobUrl = await this.getAudioBlobUrl(testSentence, voiceId, this.rate, this.pitch);
       this.testAudioElement.src = blobUrl;
       await this.testAudioElement.play();
     } catch (err) {
@@ -399,18 +522,23 @@ const TTSEngine = {
     const rateVal = document.getElementById('ttsRateVal');
     if (rateVal) rateVal.textContent = `${this.rate}x`;
 
-    // Update speed chips UI
-    document.querySelectorAll('.speed-chip').forEach(chip => {
+    // Update speed chips UI across audiobook modal and middle quick sheet
+    document.querySelectorAll('.speed-chip, .quick-sheet-speed-chip').forEach(chip => {
       const s = parseFloat(chip.getAttribute('data-speed'));
       chip.classList.toggle('selected', Math.abs(s - this.rate) < 0.05);
     });
+    const qsSpeedVal = document.getElementById('quickSheetSpeedVal');
+    if (qsSpeedVal) qsSpeedVal.textContent = `${this.rate}x`;
 
     this.updateAudioUI();
     if (this.isPlaying && !this.isPaused) {
-      // If audio is actively playing, immediately adjust playback tempo in real-time
       if (this.audioElement && !this.audioElement.paused) {
         this.audioElement.playbackRate = this.rate;
-      } else if (this.isUsingDeviceVoice) {
+      }
+      if (this.secondaryAudioElement && !this.secondaryAudioElement.paused) {
+        this.secondaryAudioElement.playbackRate = this.rate;
+      }
+      if (this.isUsingDeviceVoice) {
         this.speakParagraph(this.currentIndex);
       }
     }
@@ -423,15 +551,14 @@ const TTSEngine = {
   },
 
   startKeepAlive() {
-    // 1. Silent looping audio track at low non-zero volume (iOS WebKit ignores volume 0 or muted audio)
-    const SILENCE_DATA_URI = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+    // 1. Continuous silent PCM WAV looping track at low volume (keeps iOS AVAudioSession active)
     try {
       if (!this.keepAliveAudio) {
         this.keepAliveAudio = new Audio();
         this.keepAliveAudio.loop = true;
         this.keepAliveAudio.volume = 0.02;
         this.keepAliveAudio.playsInline = true;
-        this.keepAliveAudio.src = SILENCE_DATA_URI;
+        this.keepAliveAudio.src = this.generateSilenceWavUri(4);
       }
       if (this.keepAliveAudio.paused) {
         this.keepAliveAudio.play().catch(() => {});
@@ -551,6 +678,7 @@ const TTSEngine = {
 
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.rate = Math.min(2.0, Math.max(0.5, this.rate));
+    utterance.pitch = Math.max(0.5, Math.min(1.5, 1.0 + (this.pitch / 40.0)));
 
     // Choose best English system voice (e.g. Siri, Samantha, Daniel, etc.)
     const voices = window.speechSynthesis.getVoices();
@@ -601,6 +729,7 @@ const TTSEngine = {
       this.isPaused = true;
       this.stopKeepAlive();
       this.audioElement.pause();
+      this.secondaryAudioElement.pause();
       if ('speechSynthesis' in window) {
         window.speechSynthesis.pause();
       }
@@ -643,6 +772,14 @@ const TTSEngine = {
     this.audioElement.pause();
     this.audioElement.loop = false;
     this.audioElement.src = '';
+    try {
+      this.secondaryAudioElement.pause();
+      this.secondaryAudioElement.loop = false;
+      this.secondaryAudioElement.removeAttribute('src');
+    } catch (e) {}
+    this.preloadedIndex = -1;
+    this.preloadedBlobUrl = null;
+    this.isTransitioning = false;
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
@@ -676,6 +813,11 @@ const TTSEngine = {
     // 1. Immediately pause prior playback & cancel speech synthesis so skipping is instantaneous
     this.audioElement.pause();
     this.audioElement.loop = false;
+    try {
+      this.secondaryAudioElement.pause();
+      this.secondaryAudioElement.removeAttribute('src');
+    } catch (e) {}
+    this.isTransitioning = false;
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
@@ -696,10 +838,12 @@ const TTSEngine = {
     const el = this.paragraphs[index];
     if (!el) return;
 
-    // Visual highlight on reader text
+    // Visual highlight on reader text (bypass smooth scroll in background to prevent animation frame freeze)
     this.clearHighlight();
     el.classList.add('speaking-active');
-    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (!document.hidden && el.scrollIntoView) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
 
     // Update audiobook modal content and audio UI immediately
     this.updateAudiobookModalContent();
@@ -728,12 +872,17 @@ const TTSEngine = {
 
     // ALWAYS prioritize the main voice selected (realistic cloud neural TTS)
     try {
-      const cacheKey = `${this.selectedVoice}_${this.rate}_${textToSpeak}`;
-      if (!this.blobCache.has(cacheKey)) {
-        this.playKeepAliveSilence();
-      }
+      this.playKeepAliveSilence();
 
-      const blobUrl = await this.getAudioBlobUrl(textToSpeak, this.selectedVoice, this.rate);
+      let blobUrl;
+      if (this.preloadedIndex === index && this.preloadedBlobUrl) {
+        blobUrl = this.preloadedBlobUrl;
+      } else {
+        blobUrl = await this.getAudioBlobUrl(textToSpeak, this.selectedVoice, this.rate, this.pitch);
+      }
+      this.preloadedIndex = -1;
+      this.preloadedBlobUrl = null;
+
       // If user skipped or paused while fetching was in flight, discard cleanly
       if (this.playbackSessionId !== sessionId || !this.isPlaying || this.isPaused) return;
 
@@ -744,16 +893,95 @@ const TTSEngine = {
 
       this.audioElement.loop = false;
       this.audioElement.src = blobUrl;
+      this.audioElement.playbackRate = this.rate;
       await this.audioElement.play();
       this.updateAudioUI();
 
-      // Pre-fetch next paragraph into memory for seamless instant playback
-      this.prefetchNext(index + 1);
+      // Proactively prepare next paragraph on secondary element for gapless handoff
+      this.prepareNextParagraph(index + 1);
+      // Pre-fetch following paragraphs into cache
+      this.prefetchNext(index + 2);
     } catch (err) {
       if (this.playbackSessionId !== sessionId || !this.isPlaying || this.isPaused) return;
       console.warn('Cloud TTS synthesis failed, using device voice fallback for this paragraph:', err);
       this.setDeviceVoiceMode(true);
       this.speakWithDeviceVoice(textToSpeak, index);
+    }
+  },
+
+  async prepareNextParagraph(nextIndex) {
+    if (nextIndex >= this.paragraphs.length) return;
+    const el = this.paragraphs[nextIndex];
+    const text = el ? el.innerText.trim() : '';
+    if (!text) {
+      this.prepareNextParagraph(nextIndex + 1);
+      return;
+    }
+    try {
+      const blobUrl = await this.getAudioBlobUrl(text, this.selectedVoice, this.rate, this.pitch);
+      if (this.isPlaying && !this.isPaused && this.currentIndex === nextIndex - 1) {
+        this.preloadedIndex = nextIndex;
+        this.preloadedBlobUrl = blobUrl;
+        this.secondaryAudioElement.src = blobUrl;
+        this.secondaryAudioElement.playbackRate = this.rate;
+        this.secondaryAudioElement.load();
+      }
+    } catch (e) {
+      console.warn('Preload next paragraph warning:', e);
+    }
+  },
+
+  handoffToSecondary() {
+    if (this.isTransitioning) return;
+    this.isTransitioning = true;
+    const nextIdx = this.preloadedIndex;
+    try {
+      this.secondaryAudioElement.playbackRate = this.rate;
+      const playPromise = this.secondaryAudioElement.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(e => console.warn('Secondary player start warning:', e));
+      }
+
+      const oldActive = this.audioElement;
+      this.audioElement = this.secondaryAudioElement;
+      this.secondaryAudioElement = oldActive;
+
+      setTimeout(() => {
+        try {
+          this.secondaryAudioElement.pause();
+          this.secondaryAudioElement.removeAttribute('src');
+        } catch (e) {}
+        this.isTransitioning = false;
+      }, 80);
+
+      this.bindAudioElementEvents();
+
+      this.currentIndex = nextIdx;
+      const nextEl = this.paragraphs[nextIdx];
+      if (nextEl) {
+        this.clearHighlight();
+        nextEl.classList.add('speaking-active');
+        if (!document.hidden && nextEl.scrollIntoView) {
+          nextEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }
+
+      this.updateAudiobookModalContent();
+      this.updateAudioUI();
+      this.updateMediaSessionMetadata();
+
+      if (window.Reader) {
+        const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+        const scrollPct = docHeight > 0 ? Math.round((window.scrollY / docHeight) * 100) : 0;
+        window.Reader.saveCurrentProgress(nextIdx, scrollPct);
+      }
+
+      this.prepareNextParagraph(nextIdx + 1);
+      this.prefetchNext(nextIdx + 2);
+    } catch (err) {
+      console.warn('Gapless handoff failed, fallback:', err);
+      this.isTransitioning = false;
+      this.speakParagraph(nextIdx);
     }
   },
 
@@ -799,7 +1027,7 @@ const TTSEngine = {
           const text = el ? el.innerText.trim() : '';
           if (text) {
             try {
-              await this.getAudioBlobUrl(text, this.selectedVoice, this.rate);
+              await this.getAudioBlobUrl(text, this.selectedVoice, this.rate, this.pitch);
             } catch {}
           }
         }
@@ -818,7 +1046,7 @@ const TTSEngine = {
               const firstP = div.querySelector('.reader-paragraph, .reader-heading');
               const firstText = firstP ? firstP.textContent.trim() : '';
               if (firstText) {
-                await this.getAudioBlobUrl(firstText, this.selectedVoice, this.rate);
+                await this.getAudioBlobUrl(firstText, this.selectedVoice, this.rate, this.pitch);
               }
             }
           }

@@ -546,6 +546,30 @@ const Reader = {
       setupBtn(footerPrevBtn, ch.prev_chapter);
       setupBtn(footerNextBtn, ch.next_chapter);
 
+      // Update mobile quick sheet title and navigation buttons
+      const qsPrevBtn = document.getElementById('quickSheetPrevChBtn');
+      const qsNextBtn = document.getElementById('quickSheetNextChBtn');
+      const qsTitle = document.getElementById('quickSheetChapterTitle');
+      if (qsTitle) {
+        const volNum = ch.volume_number || 1;
+        const chNum = ch.chapter_index || ch.global_index || 1;
+        qsTitle.textContent = `Vol. ${volNum}, Chap. ${chNum}`;
+      }
+      if (qsPrevBtn) {
+        const hasPrev = !!ch.prev_chapter;
+        qsPrevBtn.disabled = !hasPrev;
+        qsPrevBtn.style.opacity = hasPrev ? '1' : '0.4';
+        qsPrevBtn.style.cursor = hasPrev ? 'pointer' : 'default';
+        qsPrevBtn.title = hasPrev ? (ch.prev_chapter.title || 'Previous Chapter') : 'No Previous Chapter';
+      }
+      if (qsNextBtn) {
+        const hasNext = !!ch.next_chapter;
+        qsNextBtn.disabled = !hasNext;
+        qsNextBtn.style.opacity = hasNext ? '1' : '0.4';
+        qsNextBtn.style.cursor = hasNext ? 'pointer' : 'default';
+        qsNextBtn.title = hasNext ? (ch.next_chapter.title || 'Next Chapter') : 'No Next Chapter';
+      }
+
       App.hideLoading();
       this.updateProgressPill();
 
