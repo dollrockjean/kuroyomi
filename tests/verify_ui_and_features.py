@@ -533,7 +533,158 @@ async def test_ui():
             assert dual_buffer_result["hasPrepareNextParagraph"], "prepareNextParagraph function must be defined!"
             assert dual_buffer_result["silenceUriValid"], "generateSilenceWavUri must produce valid audio WAV blob URI!"
 
-            print("ALL UI TOUCHUPS, SLEEP TIMER, CHAPTER NAVIGATION, BACKGROUND AUDIO, PITCH, AND SPEED CHIPS VERIFIED SUCCESSFULLY!")
+            print("--- 16. Testing Live Pitch Slider & Audiobook Cog Settings Modal ---")
+            cog_test_result = await eval_js(ws, """
+            (() => {
+                // Open sleep/settings cog modal
+                window.TTSEngine.openSleepModal();
+                const modal = document.getElementById('audiobookSleepModal');
+                const cogSlider = document.getElementById('audiobookCogPitchSlider');
+                const cogVal = document.getElementById('audiobookCogPitchVal');
+                const resetBtn = document.getElementById('audiobookPitchResetBtn');
+                const cogVoice = document.getElementById('audiobookCogVoiceSelect');
+                const modalVisible = modal && modal.style.display !== 'none';
+
+                // Dispatch live input on pitch slider (simulate user dragging slider to 26Hz)
+                if (cogSlider) {
+                    cogSlider.value = 26;
+                    cogSlider.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+                const liveHzAfterDrag = cogVal ? cogVal.textContent : '';
+                const liveModalHz = document.getElementById('audiobookModalPitchVal')?.textContent;
+
+                // Click Reset button
+                if (resetBtn) resetBtn.click();
+                const liveHzAfterReset = cogVal ? cogVal.textContent : '';
+                const pitchAfterReset = window.TTSEngine.pitch;
+
+                // Close modal
+                window.TTSEngine.closeSleepModal();
+
+                return {
+                    modalVisible,
+                    hasCogSlider: !!cogSlider,
+                    hasResetBtn: !!resetBtn,
+                    hasCogVoice: !!cogVoice,
+                    voiceOptionCount: cogVoice ? cogVoice.options.length : 0,
+                    liveHzAfterDrag,
+                    liveModalHz,
+                    liveHzAfterReset,
+                    pitchAfterReset
+                };
+            })()
+            """)
+            print("Cog settings modal test results:", cog_test_result)
+            assert cog_test_result["modalVisible"], "Audiobook Cog Modal should be visible when opened!"
+            assert cog_test_result["hasCogSlider"], "Cog Modal must include voice pitch slider!"
+            assert cog_test_result["hasResetBtn"], "Cog Modal must include pitch reset button!"
+            assert cog_test_result["hasCogVoice"] and cog_test_result["voiceOptionCount"] >= 5, "Cog Modal must include populated voice select!"
+            assert "+26Hz" in cog_test_result["liveHzAfterDrag"], f"Live Hz counter should show '+26Hz', got {cog_test_result['liveHzAfterDrag']}"
+            assert "+26Hz" in cog_test_result["liveModalHz"], f"Audiobook modal Hz counter should also sync '+26Hz', got {cog_test_result['liveModalHz']}"
+            assert "0Hz" in cog_test_result["liveHzAfterReset"], f"Live Hz counter should show '0Hz' after reset, got {cog_test_result['liveHzAfterReset']}"
+            assert cog_test_result["pitchAfterReset"] == 0, f"Engine pitch should be 0 after reset, got {cog_test_result['pitchAfterReset']}"
+
+            print("--- 17. Testing Auto-Scroll Button & Active Bar in Quick Sheet ---")
+            autoscroll_test_result = await eval_js(ws, """
+            (() => {
+                window.App.openMobileQuickSheet();
+                const bar = document.getElementById('quickSheetAutoScrollActiveBar');
+                const initialDisplay = bar ? window.getComputedStyle(bar).display : 'none';
+
+                // Start Auto-Scroll
+                window.AutoScroll.start(40);
+                const displayWhileActive = bar ? window.getComputedStyle(bar).display : 'none';
+                const speedValActive = document.getElementById('quickSheetAutoScrollSpeedVal')?.textContent;
+
+                // Test -5 slow button
+                const slowBtn = document.getElementById('quickSheetAutoScrollSlowBtn');
+                if (slowBtn) slowBtn.click();
+                const speedAfterSlow = window.AutoScroll.speed;
+                const speedValAfterSlow = document.getElementById('quickSheetAutoScrollSpeedVal')?.textContent;
+
+                // Test +5 fast button
+                const fastBtn = document.getElementById('quickSheetAutoScrollFastBtn');
+                if (fastBtn) fastBtn.click();
+                const speedAfterFast = window.AutoScroll.speed;
+
+                // Test Stop Auto-Scroll button
+                const stopBtn = document.getElementById('quickSheetAutoScrollStopBtn');
+                if (stopBtn) stopBtn.click();
+                const isActiveAfterStop = window.AutoScroll.isActive;
+                const displayAfterStop = bar ? window.getComputedStyle(bar).display : 'none';
+
+                window.App.closeMobileQuickSheet();
+
+                return {
+                    initialDisplay,
+                    displayWhileActive,
+                    speedValActive,
+                    speedAfterSlow,
+                    speedValAfterSlow,
+                    speedAfterFast,
+                    isActiveAfterStop,
+                    displayAfterStop
+                };
+            })()
+            """)
+            print("Auto-scroll active bar test results:", autoscroll_test_result)
+            assert autoscroll_test_result["initialDisplay"] == "none", "Auto-scroll bar must be hidden when inactive!"
+            assert autoscroll_test_result["displayWhileActive"] != "none", "Auto-scroll bar must be visible when auto-scroll is active!"
+            assert "40 px/s" in autoscroll_test_result["speedValActive"], f"Speed value should show '40 px/s', got {autoscroll_test_result['speedValActive']}"
+            assert autoscroll_test_result["speedAfterSlow"] == 35, f"Speed after -5 should be 35, got {autoscroll_test_result['speedAfterSlow']}"
+            assert "35 px/s" in autoscroll_test_result["speedValAfterSlow"], f"Speed display should show '35 px/s', got {autoscroll_test_result['speedValAfterSlow']}"
+            assert autoscroll_test_result["speedAfterFast"] == 40, f"Speed after +5 should be 40, got {autoscroll_test_result['speedAfterFast']}"
+            assert not autoscroll_test_result["isActiveAfterStop"], "Auto-scroll must be stopped after clicking stop button!"
+            assert autoscroll_test_result["displayAfterStop"] == "none", "Auto-scroll bar must be hidden after stopping!"
+
+            print("--- 18. Testing Read Aloud Loading Animation Soundbars ---")
+            loading_anim_result = await eval_js(ws, """
+            (() => {
+                // Show loading animation in audiobook view
+                window.TTSEngine.showAudiobookLoading();
+                const spokenEl = document.getElementById('audiobookSpokenText');
+                const loadingWrap = spokenEl ? spokenEl.querySelector('.audiobook-loading-wrap') : null;
+                const soundBars = spokenEl ? spokenEl.querySelectorAll('.audiobook-sound-bar') : [];
+                const loadingLabel = spokenEl ? spokenEl.querySelector('.audiobook-loading-label') : null;
+
+                const hasLoadingWrap = !!loadingWrap;
+                const barCount = soundBars.length;
+                const labelText = loadingLabel ? loadingLabel.textContent : '';
+
+                // Transition to spoken text
+                window.TTSEngine.updateAudiobookModalContent();
+                const hasTokensAfterStart = spokenEl && spokenEl.querySelectorAll('.tts-word').length > 0;
+                const loadingGone = spokenEl && !spokenEl.querySelector('.audiobook-loading-wrap');
+
+                return {
+                    hasLoadingWrap,
+                    barCount,
+                    labelText,
+                    hasTokensAfterStart,
+                    loadingGone
+                };
+            })()
+            """)
+            print("Read aloud loading animation test results:", loading_anim_result)
+            assert loading_anim_result["hasLoadingWrap"], "Spoken card must display audiobook-loading-wrap during synthesis!"
+            assert loading_anim_result["barCount"] == 5, f"Soundwave must have 5 sound bars, got {loading_anim_result['barCount']}"
+            assert "Loading" in loading_anim_result["labelText"], f"Loading label should indicate voice loading, got {loading_anim_result['labelText']}"
+            assert loading_anim_result["hasTokensAfterStart"] and loading_anim_result["loadingGone"], "Loading animation must be replaced with words once playback starts!"
+
+            print("--- 19. Testing Edge Margin Setting ---")
+            edge_margin_result = await eval_js(ws, """
+            (() => {
+                document.documentElement.setAttribute('data-margin', 'edge');
+                const paddingVar = window.getComputedStyle(document.documentElement).getPropertyValue('--reader-padding-x').trim();
+                return {
+                    paddingVar
+                };
+            })()
+            """)
+            print("Edge margin test results:", edge_margin_result)
+            assert edge_margin_result["paddingVar"] == "2px", f"Edge margin --reader-padding-x should be '2px', got '{edge_margin_result['paddingVar']}'"
+
+            print("ALL UI TOUCHUPS, SLEEP TIMER, CHAPTER NAVIGATION, BACKGROUND AUDIO, PITCH, AUTO-SCROLL, SOUNDBARS, AND SPEED CHIPS VERIFIED SUCCESSFULLY!")
 
     finally:
         proc.terminate()

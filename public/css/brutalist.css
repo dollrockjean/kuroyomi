@@ -2145,13 +2145,17 @@ body {
 
 /* Margin Presets */
 [data-margin="edge"] {
-  --reader-padding-x: 6px;
+  --reader-padding-x: 2px;
+}
+[data-margin="edge"] .reader-paragraph {
+  padding-left: 0px;
+  padding-right: 0px;
 }
 [data-margin="compact"] {
-  --reader-padding-x: 14px;
+  --reader-padding-x: 12px;
 }
 [data-margin="comfortable"] {
-  --reader-padding-x: 24px;
+  --reader-padding-x: 22px;
 }
 
 /* Menu Active Word Light Highlight */
@@ -2250,20 +2254,33 @@ body {
   position: fixed;
   bottom: 0;
   left: 0;
+  right: 0;
   width: 100%;
+  max-width: 500px;
+  margin: 0 auto;
   z-index: 250;
   background: var(--bg-surface);
-  border-top: 1px solid var(--border-color);
+  border: 1px solid var(--border-color);
+  border-bottom: none;
   border-top-left-radius: 20px;
   border-top-right-radius: 20px;
-  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.55);
+  box-shadow: 0 -10px 36px rgba(0, 0, 0, 0.6);
   box-sizing: border-box;
-  padding: 12px 18px calc(24px + var(--safe-bottom)) 18px;
+  padding: 10px 16px calc(22px + var(--safe-bottom)) 16px;
   transform: translateY(105%);
-  transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1);
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 8px;
+}
+
+.mobile-quick-sheet button {
+  appearance: none;
+  -webkit-appearance: none;
+  outline: none;
+  font-family: inherit;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .mobile-quick-sheet.open {
@@ -2271,42 +2288,55 @@ body {
 }
 
 .quick-sheet-handle {
-  width: 38px;
+  width: 36px;
   height: 4px;
   border-radius: 2px;
   background: var(--border-active);
   margin: 0 auto 4px auto;
-  opacity: 0.5;
+  opacity: 0.35;
 }
 
 .quick-sheet-body {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
-/* Chapter Progress Bar */
+/* 1. Chapter Navigation Bar */
 .quick-sheet-nav-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--border-color);
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 4px 8px;
+  min-height: 40px;
+  gap: 6px;
 }
 
 .quick-sheet-nav-btn {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
   gap: 4px;
   padding: 6px 12px;
-  font-size: 11px;
-  font-weight: 600;
-  border-radius: 6px;
-  min-height: 32px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  border-radius: 8px;
   white-space: nowrap;
-  transition: transform 0.12s ease, opacity 0.15s ease;
+  transition: background 0.12s ease;
+}
+
+.quick-sheet-nav-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
 }
 
 .quick-sheet-nav-btn:active:not(:disabled) {
@@ -2327,14 +2357,16 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  letter-spacing: 0.3px;
+  letter-spacing: 0.2px;
 }
 
-/* 4-Item Quick Action Clipart Grid */
+/* 2. 4-Item Quick Action Clipart Grid */
 .quick-sheet-action-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .quick-action-tile {
@@ -2344,31 +2376,40 @@ body {
   justify-content: center;
   gap: 5px;
   padding: 8px 4px;
-  background: var(--bg-primary);
+  background: var(--bg-card);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: 12px;
   cursor: pointer;
-  transition: transform 0.12s ease, border-color 0.15s ease, background 0.15s ease;
-  min-height: 58px;
+  min-height: 60px;
   color: var(--text-primary);
+  width: 100%;
+  box-sizing: border-box;
+  transition: transform 0.1s ease, border-color 0.15s ease, background 0.15s ease;
 }
 
 .quick-action-tile:hover {
   border-color: var(--accent);
-  background: var(--bg-surface);
+  background: var(--bg-hover);
 }
 
 .quick-action-tile:active {
-  transform: scale(0.95);
+  transform: scale(0.96);
+}
+
+.quick-action-tile.active {
+  border-color: var(--accent);
+  background: var(--bg-hover);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 
 .quick-tile-icon-wrap {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   color: var(--text-primary);
+  flex-shrink: 0;
 }
 
 .quick-tile-label {
@@ -2382,19 +2423,22 @@ body {
   color: var(--text-secondary);
 }
 
-.quick-action-tile:hover .quick-tile-label {
+.quick-action-tile:hover .quick-tile-label,
+.quick-action-tile.active .quick-tile-label {
   color: var(--text-primary);
 }
 
-/* Narration Speed Chips Row */
+/* 3. Narration Speed Chips Row */
 .quick-sheet-speed-row {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  background: var(--bg-primary);
+  background: var(--bg-card);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: 12px;
   padding: 8px 10px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .quick-sheet-speed-header {
@@ -2407,9 +2451,9 @@ body {
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -2417,22 +2461,28 @@ body {
 .quick-sheet-speed-val {
   font-size: 11px;
   font-weight: 700;
-  color: var(--accent);
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
 }
 
 .quick-sheet-speed-chips {
   display: grid;
   grid-template-columns: repeat(6, 1fr);
-  gap: 5px;
+  gap: 4px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .quick-sheet-speed-chip {
-  padding: 5px 2px;
+  padding: 6px 2px;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
   text-align: center;
   border: 1px solid var(--border-color);
-  border-radius: 5px;
+  border-radius: 8px;
   background: var(--bg-surface);
   color: var(--text-secondary);
   cursor: pointer;
@@ -2445,27 +2495,144 @@ body {
 }
 
 .quick-sheet-speed-chip.selected {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--accent-contrast, #000);
+  border-color: var(--border-active);
+  background: var(--bg-hover);
+  color: var(--text-primary);
   font-weight: 800;
+  box-shadow: 0 0 0 1px var(--border-active);
 }
 
-/* Typography & Spacing Steppers */
+/* 3.5 Auto-Scroll Active Control Bar (Visible when active) */
+.quick-sheet-autoscroll-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 8px 10px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.quick-autoscroll-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.quick-autoscroll-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.quick-autoscroll-speed-val {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+}
+
+.quick-autoscroll-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+}
+
+.quick-autoscroll-stepper {
+  display: flex;
+  align-items: center;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.quick-autoscroll-btn {
+  min-width: 32px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.quick-autoscroll-btn:hover {
+  background: var(--bg-hover);
+}
+
+.quick-autoscroll-stop-btn {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #ef4444 !important;
+  background: var(--bg-surface);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.quick-autoscroll-stop-btn:hover {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: #ef4444;
+}
+
+/* 4. Typography & Spacing Steppers */
 .quick-sheet-steppers {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 8px 10px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
-.quick-sheet-stepper-row {
+.quick-stepper-row-font {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: var(--bg-primary);
+  width: 100%;
+}
+
+.quick-stepper-grid-2col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.quick-stepper-col {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-surface);
   border: 1px solid var(--border-color);
   border-radius: 8px;
-  padding: 5px 12px;
+  padding: 3px 6px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .quick-stepper-label {
@@ -2474,49 +2641,135 @@ body {
   color: var(--text-secondary);
 }
 
-.quick-stepper-controls {
+.quick-stepper-pill {
   display: flex;
   align-items: center;
-  gap: 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  overflow: hidden;
 }
 
 .quick-stepper-btn {
-  min-width: 36px;
-  min-height: 28px;
-  padding: 2px 8px;
+  min-width: 32px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
   font-weight: 700;
   font-size: 12px;
-  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s ease;
+}
+
+.quick-stepper-btn:hover {
+  background: var(--bg-hover);
+}
+
+.quick-stepper-btn:active {
+  transform: scale(0.94);
 }
 
 .quick-stepper-val {
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 700;
   min-width: 38px;
   text-align: center;
   color: var(--text-primary);
+  border-left: 1px solid var(--border-color);
+  border-right: 1px solid var(--border-color);
+  padding: 0 4px;
 }
 
-/* Quick Footer Toggles */
+/* 5. Quick Footer Toggles (Margin & Theme Switch) */
 .quick-sheet-footer-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .quick-sheet-footer-btn {
-  flex: 1;
-  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  height: 36px;
+  font-size: 11.5px;
   font-weight: 600;
-  padding: 8px;
-  text-align: center;
-  border-radius: 6px;
-  min-height: 34px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.12s ease;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.quick-sheet-footer-btn:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.quick-sheet-footer-btn:active {
+  transform: scale(0.97);
 }
 
 .quick-sheet-clipart {
   stroke: currentColor;
   vertical-align: middle;
   flex-shrink: 0;
+}
+
+/* 6. Audiobook Sound Bars Loading Animation */
+.audiobook-loading-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 120px;
+  width: 100%;
+}
+
+.audiobook-sound-bars {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+}
+
+.audiobook-sound-bars span {
+  display: inline-block;
+  width: 3.5px;
+  height: 100%;
+  background: var(--text-primary, #ffffff);
+  border-radius: 2px;
+  animation: soundBarBounce 1.1s ease-in-out infinite alternate;
+}
+
+.audiobook-sound-bars span:nth-child(1) { animation-delay: 0.1s; height: 35%; }
+.audiobook-sound-bars span:nth-child(2) { animation-delay: 0.3s; height: 75%; }
+.audiobook-sound-bars span:nth-child(3) { animation-delay: 0.0s; height: 100%; }
+.audiobook-sound-bars span:nth-child(4) { animation-delay: 0.4s; height: 60%; }
+.audiobook-sound-bars span:nth-child(5) { animation-delay: 0.2s; height: 40%; }
+
+@keyframes soundBarBounce {
+  0% { transform: scaleY(0.25); opacity: 0.45; }
+  100% { transform: scaleY(1); opacity: 1; }
+}
+
+.audiobook-loading-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.3px;
 }
 
 /* Responsive adjustments & Overlap Prevention */

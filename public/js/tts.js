@@ -295,14 +295,24 @@ const TTSEngine = {
       });
     });
 
-    // Wire pitch sliders
-    const pitchSlider1 = document.getElementById('ttsPitchSlider');
-    if (pitchSlider1) {
-      pitchSlider1.addEventListener('input', (e) => this.setPitch(e.target.value));
-    }
-    const pitchSlider2 = document.getElementById('audiobookModalPitchSlider');
-    if (pitchSlider2) {
-      pitchSlider2.addEventListener('input', (e) => this.setPitch(e.target.value));
+    // Wire pitch sliders (decoupled input for instant UI feedback + change for commit)
+    const bindPitchSlider = (id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('input', (e) => this.onPitchInput(e.target.value));
+      el.addEventListener('change', (e) => this.commitPitch(e.target.value));
+    };
+    bindPitchSlider('ttsPitchSlider');
+    bindPitchSlider('audiobookModalPitchSlider');
+    bindPitchSlider('audiobookCogPitchSlider');
+
+    const pitchResetBtn = document.getElementById('audiobookPitchResetBtn');
+    if (pitchResetBtn) {
+      pitchResetBtn.addEventListener('click', () => {
+        this.pitch = 0;
+        this.updatePitchUI();
+        this.commitPitch(0);
+      });
     }
 
     // Wire retry on offline badge tap
@@ -363,7 +373,8 @@ const TTSEngine = {
   populateVoiceSelect() {
     const s1 = document.getElementById('ttsVoiceSelect');
     const s2 = document.getElementById('audiobookModalVoiceSelect');
-    const selects = [s1, s2].filter(Boolean);
+    const s3 = document.getElementById('audiobookCogVoiceSelect');
+    const selects = [s1, s2, s3].filter(Boolean);
     if (!selects.length) return;
 
     const saved = window.ReaderSettings?.tts_voice || this.selectedVoice;
@@ -402,6 +413,8 @@ const TTSEngine = {
     if (s1 && s1.value !== voiceId) s1.value = voiceId;
     const s2 = document.getElementById('audiobookModalVoiceSelect');
     if (s2 && s2.value !== voiceId) s2.value = voiceId;
+    const s3 = document.getElementById('audiobookCogVoiceSelect');
+    if (s3 && s3.value !== voiceId) s3.value = voiceId;
 
     if (this.isPlaying && !this.isPaused) {
       // Immediately stop existing playback so old voice stops instantly without collision
@@ -424,12 +437,19 @@ const TTSEngine = {
     return p >= 0 ? `+${p}Hz` : `${p}Hz`;
   },
 
-  setPitch(val) {
+  onPitchInput(val) {
     this.pitch = parseInt(val, 10) || 0;
+    this.updatePitchUI();
+  },
+
+  commitPitch(val) {
+    if (val !== undefined) {
+      this.pitch = parseInt(val, 10) || 0;
+    }
     this.blobCache.clear();
     if (window.ReaderSettings) {
       window.ReaderSettings.tts_pitch = this.pitch;
-      if (window.SyncService) {
+      if (window.SyncService && typeof window.SyncService.syncSettings === 'function') {
         window.SyncService.syncSettings(window.ReaderSettings);
       }
     }
@@ -439,19 +459,30 @@ const TTSEngine = {
     }
   },
 
+  setPitch(val) {
+    this.onPitchInput(val);
+    this.commitPitch();
+  },
+
   updatePitchUI() {
-    const pStr = `${this.pitch >= 0 ? '+' : ''}${this.pitch}Hz`;
-    const labelStr = this.pitch === 0 ? '0Hz (Normal)' : pStr;
+    const p = this.pitch || 0;
+    const pStr = `${p >= 0 ? '+' : ''}${p}Hz`;
+    const labelStr = p === 0 ? '0Hz (Normal)' : pStr;
 
     const slider1 = document.getElementById('ttsPitchSlider');
-    if (slider1) slider1.value = this.pitch;
+    if (slider1 && parseInt(slider1.value, 10) !== p) slider1.value = p;
     const val1 = document.getElementById('ttsPitchVal');
     if (val1) val1.textContent = labelStr;
 
     const slider2 = document.getElementById('audiobookModalPitchSlider');
-    if (slider2) slider2.value = this.pitch;
+    if (slider2 && parseInt(slider2.value, 10) !== p) slider2.value = p;
     const val2 = document.getElementById('audiobookModalPitchVal');
     if (val2) val2.textContent = pStr;
+
+    const slider3 = document.getElementById('audiobookCogPitchSlider');
+    if (slider3 && parseInt(slider3.value, 10) !== p) slider3.value = p;
+    const val3 = document.getElementById('audiobookCogPitchVal');
+    if (val3) val3.textContent = pStr;
   },
 
   async getAudioBlobUrl(text, voiceId, rateVal, pitchVal, retries = 2) {
@@ -845,8 +876,22 @@ const TTSEngine = {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
 
-    // Update audiobook modal content and audio UI immediately
-    this.updateAudiobookModalContent();
+    const textToSpeak = el.innerText.trim();
+    if (!textToSpeak) {
+      this.speakParagraph(index + 1);
+      return;
+    }
+
+    // Check if audio blob is already preloaded or in memory cache
+    const cacheKey = `${this.selectedVoice}_${this.rate}_${this.pitch}_${textToSpeak}`;
+    const isCached = (this.preloadedIndex === index && this.preloadedBlobUrl) || this.blobCache.has(cacheKey);
+
+    // If audio needs to be synthesized/fetched, show soundwave animation in audiobook modal
+    if (!isCached && navigator.onLine) {
+      this.showAudiobookLoading();
+    } else {
+      this.updateAudiobookModalContent();
+    }
     this.updateAudioUI();
     this.updateMediaSessionMetadata();
 
@@ -857,15 +902,10 @@ const TTSEngine = {
       window.Reader.saveCurrentProgress(index, scrollPct);
     }
 
-    const textToSpeak = el.innerText.trim();
-    if (!textToSpeak) {
-      this.speakParagraph(index + 1);
-      return;
-    }
-
     // If device is offline
     if (!navigator.onLine) {
       this.setDeviceVoiceMode(true);
+      this.updateAudiobookModalContent();
       this.speakWithDeviceVoice(textToSpeak, index);
       return;
     }
@@ -894,6 +934,7 @@ const TTSEngine = {
       this.audioElement.loop = false;
       this.audioElement.src = blobUrl;
       this.audioElement.playbackRate = this.rate;
+      this.updateAudiobookModalContent();
       await this.audioElement.play();
       this.updateAudioUI();
 
@@ -905,6 +946,7 @@ const TTSEngine = {
       if (this.playbackSessionId !== sessionId || !this.isPlaying || this.isPaused) return;
       console.warn('Cloud TTS synthesis failed, using device voice fallback for this paragraph:', err);
       this.setDeviceVoiceMode(true);
+      this.updateAudiobookModalContent();
       this.speakWithDeviceVoice(textToSpeak, index);
     }
   },
@@ -1219,6 +1261,11 @@ const TTSEngine = {
     if (modal && backdrop) {
       modal.style.display = 'block';
       backdrop.style.display = 'block';
+      this.updatePitchUI();
+      const cogVoice = document.getElementById('audiobookCogVoiceSelect');
+      if (cogVoice && cogVoice.value !== this.selectedVoice) {
+        cogVoice.value = this.selectedVoice;
+      }
       this.updateSleepModalUI();
     }
   },
@@ -1294,11 +1341,49 @@ const TTSEngine = {
     this.updateAudioUI();
   },
 
+  showAudiobookLoading() {
+    const titleEl = document.getElementById('audiobookHeaderTitle');
+    const chEl = document.getElementById('audiobookHeaderChapter');
+    const spokenEl = document.getElementById('audiobookSpokenText');
+    const badgeEl = document.getElementById('audiobookParaBadge');
+
+    if (window.Reader && window.Reader.currentNovel) {
+      if (titleEl) titleEl.textContent = window.Reader.currentNovel.title || 'KuroYomi Audiobook';
+    }
+    if (window.Reader && window.Reader.currentChapter) {
+      if (chEl) chEl.textContent = window.Reader.currentChapter.title || 'Chapter';
+    }
+    if (this.paragraphs && this.paragraphs.length > 0) {
+      const pct = Math.round(((this.currentIndex + 1) / this.paragraphs.length) * 100);
+      if (badgeEl) badgeEl.textContent = `${pct}%`;
+    }
+
+    if (spokenEl) {
+      spokenEl.innerHTML = `
+        <div class="audiobook-loading-wrap" id="audiobookLoadingPlaceholder">
+          <div class="audiobook-sound-bars">
+            <div class="audiobook-sound-bar"></div>
+            <div class="audiobook-sound-bar"></div>
+            <div class="audiobook-sound-bar"></div>
+            <div class="audiobook-sound-bar"></div>
+            <div class="audiobook-sound-bar"></div>
+          </div>
+          <span class="audiobook-loading-label">Loading Voice Audio...</span>
+        </div>
+      `;
+    }
+    this.updateCoverDisplays();
+  },
+
   openAudiobookModal() {
     const modal = document.getElementById('audiobookFullModal');
     if (modal) {
       modal.style.display = 'flex';
-      this.updateAudiobookModalContent();
+      this.updatePitchUI();
+      const spokenEl = document.getElementById('audiobookSpokenText');
+      if (!spokenEl || !spokenEl.querySelector('.audiobook-loading-wrap')) {
+        this.updateAudiobookModalContent();
+      }
       this.updateAudioUI();
     }
   },
@@ -1494,6 +1579,10 @@ const TTSEngine = {
     const sideVoiceSelect = document.getElementById('ttsVoiceSelect');
     if (sideVoiceSelect && sideVoiceSelect.value !== this.selectedVoice) {
       sideVoiceSelect.value = this.selectedVoice;
+    }
+    const cogVoiceSelect = document.getElementById('audiobookCogVoiceSelect');
+    if (cogVoiceSelect && cogVoiceSelect.value !== this.selectedVoice) {
+      cogVoiceSelect.value = this.selectedVoice;
     }
 
     this.updateSleepBadge();

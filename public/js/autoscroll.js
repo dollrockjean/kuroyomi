@@ -44,6 +44,9 @@ const AutoScroll = {
     this.isPaused = false;
     this.lastFrameTime = performance.now();
     this.showPill();
+    if (window.App && typeof window.App.updateAutoScrollUI === 'function') {
+      window.App.updateAutoScrollUI();
+    }
     this.loop();
   },
 
@@ -53,6 +56,9 @@ const AutoScroll = {
     if (this.animationId) cancelAnimationFrame(this.animationId);
     if (this.pauseTimeout) clearTimeout(this.pauseTimeout);
     this.hidePill();
+    if (window.App && typeof window.App.updateAutoScrollUI === 'function') {
+      window.App.updateAutoScrollUI();
+    }
   },
 
   toggle() {
@@ -66,10 +72,15 @@ const AutoScroll = {
   setSpeed(newSpeed) {
     this.speed = Math.max(5, Math.min(180, newSpeed));
     this.updatePillUI();
+    if (window.App && typeof window.App.updateAutoScrollUI === 'function') {
+      window.App.updateAutoScrollUI();
+    }
     // Persist speed in settings
     if (window.ReaderSettings) {
       window.ReaderSettings.auto_scroll_speed = this.speed;
-      SyncService.syncSettings(window.ReaderSettings);
+      if (window.SyncService && typeof window.SyncService.syncSettings === 'function') {
+        window.SyncService.syncSettings(window.ReaderSettings);
+      }
     }
   },
 

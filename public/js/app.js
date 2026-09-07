@@ -22,7 +22,7 @@ window.ReaderSettings = {
   auto_scroll_speed: 35,
   tts_voice: 'en-US-BrianNeural',
   tts_rate: 1.0,
-  tts_pitch: 1.0,
+  tts_pitch: 0,
   library_view_mode: 'tile',
   library_sort_by: 'last_read'
 };
@@ -562,6 +562,32 @@ const App = {
     }
   },
 
+  updateAutoScrollUI() {
+    if (typeof AutoScroll === 'undefined') return;
+    const isAct = !!AutoScroll.isActive;
+    const bar = document.getElementById('quickSheetAutoScrollActiveBar');
+    const autoScrollTile = document.getElementById('quickSheetAutoScrollBtn');
+    const autoScrollText = document.getElementById('quickSheetAutoScrollText');
+    const speedVal = document.getElementById('quickSheetAutoScrollSpeedVal');
+    const speedDisplay = document.getElementById('quickSheetAutoScrollSpeedDisplay');
+
+    if (bar) {
+      bar.style.display = isAct ? 'flex' : 'none';
+    }
+    if (autoScrollTile) {
+      autoScrollTile.classList.toggle('active', isAct);
+    }
+    if (autoScrollText) {
+      autoScrollText.textContent = isAct ? 'Scrolling' : 'Auto-Scroll';
+    }
+    if (speedVal) {
+      speedVal.textContent = `${AutoScroll.speed} px/s`;
+    }
+    if (speedDisplay) {
+      speedDisplay.textContent = `${AutoScroll.speed} px/s`;
+    }
+  },
+
   openMobileQuickSheet() {
     const sheet = document.getElementById('mobileQuickSheet');
     const backdrop = document.getElementById('quickSheetBackdrop');
@@ -595,10 +621,7 @@ const App = {
       ttsText.textContent = (TTSEngine.isPlaying && !TTSEngine.isPaused) ? 'Pause' : 'Read Aloud';
     }
 
-    const autoScrollText = document.getElementById('quickSheetAutoScrollText');
-    if (autoScrollText && typeof AutoScroll !== 'undefined') {
-      autoScrollText.textContent = AutoScroll.isRunning ? 'Pause Scroll' : 'Auto-Scroll';
-    }
+    this.updateAutoScrollUI();
 
     // Update speed chips in quick sheet
     const curSpeed = (typeof TTSEngine !== 'undefined') ? TTSEngine.rate : 1.0;
@@ -715,9 +738,39 @@ const App = {
     const autoScrollBtn = document.getElementById('quickSheetAutoScrollBtn');
     if (autoScrollBtn) {
       autoScrollBtn.addEventListener('click', () => {
-        this.closeMobileQuickSheet();
         if (typeof AutoScroll !== 'undefined') {
           AutoScroll.toggle();
+          this.updateAutoScrollUI();
+        }
+      });
+    }
+
+    const autoScrollStopBtn = document.getElementById('quickSheetAutoScrollStopBtn');
+    if (autoScrollStopBtn) {
+      autoScrollStopBtn.addEventListener('click', () => {
+        if (typeof AutoScroll !== 'undefined') {
+          AutoScroll.stop();
+          this.updateAutoScrollUI();
+        }
+      });
+    }
+
+    const autoScrollSlowBtn = document.getElementById('quickSheetAutoScrollSlowBtn');
+    if (autoScrollSlowBtn) {
+      autoScrollSlowBtn.addEventListener('click', () => {
+        if (typeof AutoScroll !== 'undefined') {
+          AutoScroll.changeSpeed(-5);
+          this.updateAutoScrollUI();
+        }
+      });
+    }
+
+    const autoScrollFastBtn = document.getElementById('quickSheetAutoScrollFastBtn');
+    if (autoScrollFastBtn) {
+      autoScrollFastBtn.addEventListener('click', () => {
+        if (typeof AutoScroll !== 'undefined') {
+          AutoScroll.changeSpeed(5);
+          this.updateAutoScrollUI();
         }
       });
     }

@@ -794,7 +794,7 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             auto_scroll_speed = int(body.get("auto_scroll_speed", 35))
             tts_voice = body.get("tts_voice", "en-US-JennyNeural")
             tts_rate = float(body.get("tts_rate", 1.0))
-            tts_pitch = float(body.get("tts_pitch", 1.0))
+            tts_pitch = float(body.get("tts_pitch", 0.0))
             library_view_mode = body.get("library_view_mode", "tile")
             library_sort_by = body.get("library_sort_by", "last_read")
             now = time.time()

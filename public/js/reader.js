@@ -584,14 +584,34 @@ const Reader = {
         const performScrollBottom = () => {
           const docH = document.documentElement.scrollHeight - window.innerHeight;
           window.scrollTo(0, docH > 0 ? docH : 0);
-          setTimeout(() => {
-            this.isRestoringScroll = false;
-            this.saveCurrentProgress(null, 100);
-          }, 350);
+          const footer = document.getElementById('readerChapterFooter');
+          if (footer && footer.scrollIntoView) {
+            try {
+              footer.scrollIntoView({ block: 'end', behavior: 'instant' });
+            } catch (e) {
+              footer.scrollIntoView(false);
+            }
+          } else {
+            const lastP = document.querySelector('#readerContent .reader-paragraph:last-of-type, #readerContent .reader-heading:last-of-type');
+            if (lastP && lastP.scrollIntoView) {
+              try {
+                lastP.scrollIntoView({ block: 'end', behavior: 'instant' });
+              } catch (e) {
+                lastP.scrollIntoView(false);
+              }
+            }
+          }
         };
-        requestAnimationFrame(() => {
-          setTimeout(performScrollBottom, 60);
-        });
+        performScrollBottom();
+        requestAnimationFrame(performScrollBottom);
+        setTimeout(performScrollBottom, 40);
+        setTimeout(performScrollBottom, 120);
+        setTimeout(performScrollBottom, 260);
+        setTimeout(() => {
+          performScrollBottom();
+          this.isRestoringScroll = false;
+          this.saveCurrentProgress(null, 100);
+        }, 400);
       } else if (scrollToTarget && (this.targetParagraphIndex > 0 || this.targetScrollPercent > 0)) {
         this.isRestoringScroll = true;
         const targetPid = this.targetParagraphIndex;

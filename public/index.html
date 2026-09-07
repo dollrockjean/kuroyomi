@@ -30,7 +30,94 @@
   <link href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,300;0,400;0,700;1,300;1,400&family=Lora:ital,wght@0,400..700;1,400..700&family=Merriweather:ital,wght@0,300;0,400;0,700;1,300;1,400&family=Open+Sans:ital,wght@0,300..800;1,300..800&family=PT+Serif:ital,wght@0,400;0,700;1,400;1,700&family=Roboto:ital,wght@0,300;0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
 
   <!-- Styles -->
-  <link rel="stylesheet" href="/css/brutalist.css?v=18.0">
+  <link rel="stylesheet" href="/css/brutalist.css?v=21.0">
+
+  <!-- Critical Quick Sheet Theme & Layout Styles (Anti-Cache Protection) -->
+  <style id="quickSheetCriticalStyles">
+    .mobile-quick-sheet {
+      position: fixed; bottom: 0; left: 0; right: 0; width: 100%; max-width: 500px; margin: 0 auto;
+      z-index: 250; background: var(--bg-surface); border: 1px solid var(--border-color); border-bottom: none;
+      border-top-left-radius: 20px; border-top-right-radius: 20px; box-shadow: 0 -10px 36px rgba(0,0,0,0.6);
+      box-sizing: border-box; padding: 10px 16px calc(22px + var(--safe-bottom)) 16px;
+      transform: translateY(105%); transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1);
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    .mobile-quick-sheet button {
+      appearance: none; -webkit-appearance: none; outline: none; font-family: inherit;
+    }
+    .mobile-quick-sheet.open { transform: translateY(0); }
+    .quick-sheet-body { display: flex; flex-direction: column; gap: 8px; width: 100%; box-sizing: border-box; }
+    .quick-sheet-nav-bar {
+      display: flex; align-items: center; justify-content: space-between; width: 100%; box-sizing: border-box;
+      background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 4px 8px;
+      min-height: 40px; gap: 6px;
+    }
+    .quick-sheet-nav-btn {
+      display: inline-flex; align-items: center; gap: 4px; padding: 6px 12px; font-size: 11.5px; font-weight: 700;
+      color: var(--text-primary); background: transparent; border: none; cursor: pointer; border-radius: 8px;
+      white-space: nowrap; transition: background 0.12s ease; appearance: none; -webkit-appearance: none;
+    }
+    .quick-sheet-action-grid {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; width: 100%; box-sizing: border-box;
+    }
+    .quick-action-tile {
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px;
+      padding: 8px 4px; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px;
+      cursor: pointer; min-height: 60px; color: var(--text-primary); width: 100%; box-sizing: border-box;
+      appearance: none; -webkit-appearance: none; transition: all 0.12s ease;
+    }
+    .quick-action-tile.active { border-color: var(--accent); background: var(--bg-hover); }
+    .quick-sheet-speed-row {
+      display: flex; flex-direction: column; gap: 6px; background: var(--bg-card);
+      border: 1px solid var(--border-color); border-radius: 12px; padding: 8px 10px; width: 100%; box-sizing: border-box;
+    }
+    .quick-sheet-speed-chips {
+      display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; width: 100%; box-sizing: border-box;
+    }
+    .quick-sheet-speed-chip {
+      padding: 6px 2px; font-size: 11px; font-weight: 600; text-align: center; border: 1px solid var(--border-color);
+      border-radius: 8px; background: var(--bg-surface); color: var(--text-secondary); cursor: pointer;
+      appearance: none; -webkit-appearance: none;
+    }
+    .quick-sheet-speed-chip.selected {
+      border-color: var(--border-active); background: var(--bg-hover); color: var(--text-primary); font-weight: 800;
+      box-shadow: 0 0 0 1px var(--border-active);
+    }
+    .quick-sheet-autoscroll-bar {
+      display: flex; flex-direction: column; gap: 6px; background: var(--bg-card);
+      border: 1px solid var(--border-color); border-radius: 12px; padding: 8px 10px; width: 100%; box-sizing: border-box;
+    }
+    .quick-autoscroll-header { display: flex; align-items: center; justify-content: space-between; }
+    .quick-autoscroll-title { display: flex; align-items: center; gap: 5px; font-size: 10px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; }
+    .quick-autoscroll-speed-val { font-size: 11px; font-weight: 700; color: var(--text-primary); background: var(--bg-surface); border: 1px solid var(--border-color); padding: 1px 7px; border-radius: 9999px; }
+    .quick-autoscroll-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; }
+    .quick-autoscroll-stepper { display: flex; align-items: center; background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; }
+    .quick-autoscroll-btn { background: transparent; border: none; padding: 4px 10px; font-size: 11px; font-weight: 700; color: var(--text-primary); cursor: pointer; appearance: none; -webkit-appearance: none; }
+    .quick-autoscroll-stop-btn { flex: 1; height: 32px; background: #e63946; color: #fff; border: 1px solid #e63946; border-radius: 8px; font-size: 11.5px; font-weight: 700; cursor: pointer; appearance: none; -webkit-appearance: none; }
+    .audiobook-loading-wrap { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 120px; gap: 14px; width: 100%; }
+    .audiobook-sound-bars { display: flex; align-items: center; justify-content: center; gap: 6px; height: 36px; }
+    .audiobook-sound-bar { width: 5px; height: 100%; background: var(--accent); border-radius: 3px; animation: soundBarBounce 1.2s ease-in-out infinite alternate; }
+    .audiobook-sound-bar:nth-child(1) { animation-delay: 0.1s; }
+    .audiobook-sound-bar:nth-child(2) { animation-delay: 0.3s; }
+    .audiobook-sound-bar:nth-child(3) { animation-delay: 0.0s; }
+    .audiobook-sound-bar:nth-child(4) { animation-delay: 0.4s; }
+    .audiobook-sound-bar:nth-child(5) { animation-delay: 0.2s; }
+    @keyframes soundBarBounce { 0% { height: 6px; opacity: 0.35; } 100% { height: 36px; opacity: 1; } }
+    .audiobook-loading-label { font-size: 12px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.8px; }
+    .quick-sheet-steppers {
+      display: flex; flex-direction: column; gap: 6px; background: var(--bg-card);
+      border: 1px solid var(--border-color); border-radius: 12px; padding: 8px 10px; width: 100%; box-sizing: border-box;
+    }
+    .quick-sheet-footer-row {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; box-sizing: border-box;
+    }
+    .quick-sheet-footer-btn {
+      display: flex; align-items: center; justify-content: center; gap: 4px; background: var(--bg-card);
+      border: 1px solid var(--border-color); border-radius: 10px; height: 36px; font-size: 11.5px; font-weight: 600;
+      color: var(--text-secondary); cursor: pointer; width: 100%; box-sizing: border-box;
+      appearance: none; -webkit-appearance: none;
+    }
+  </style>
 </head>
 <body style="background-color: #141518; color: #f0f0f0;">
 
@@ -276,7 +363,12 @@
           <span id="audiobookModalSleepBadge" class="badge-brutal" style="display: none;">15:00</span>
         </div>
         <div class="audiobook-spoken-text" id="audiobookSpokenText">
-          Reading paragraph...
+          <div class="audiobook-loading-wrap" id="audiobookLoadingPlaceholder">
+            <div class="audiobook-sound-bars">
+              <span></span><span></span><span></span><span></span><span></span>
+            </div>
+            <div class="audiobook-loading-label">Synthesizing voice narration...</div>
+          </div>
         </div>
       </div>
     </div>
@@ -319,8 +411,8 @@
         <div class="audiobook-compact-row">
           <span class="audiobook-compact-label">Pitch:</span>
           <div style="display: flex; align-items: center; gap: 8px; flex: 1;">
-            <input type="range" id="audiobookModalPitchSlider" class="range-slider" min="-20" max="20" step="2" value="0" style="flex: 1;" />
-            <span id="audiobookModalPitchVal" style="font-size: 11px; font-weight: 600; min-width: 44px; text-align: right; color: var(--text-secondary);">0Hz</span>
+            <input type="range" id="audiobookModalPitchSlider" class="range-slider" min="-50" max="50" step="2" value="0" style="flex: 1;" />
+            <span id="audiobookModalPitchVal" style="font-size: 11px; font-weight: 700; min-width: 44px; text-align: right; color: var(--text-primary);">0Hz</span>
           </div>
         </div>
 
@@ -332,14 +424,30 @@
     </div>
   </div>
 
-  <!-- Dedicated Sleep Timer Sheet / Modal -->
+  <!-- Dedicated Audiobook Settings & Sleep Timer Sheet / Modal -->
   <div class="modal-backdrop" id="audiobookSleepBackdrop" style="display: none;"></div>
   <div class="audiobook-sleep-modal" id="audiobookSleepModal" style="display: none;">
     <div class="audiobook-sleep-modal-header">
-      <h3 style="font-size: 14px; font-weight: 700; margin: 0;">Sleep Timer</h3>
+      <h3 style="font-size: 14px; font-weight: 700; margin: 0;">Audiobook Settings & Sleep Timer</h3>
       <button class="btn-brutal" id="closeAudiobookSleepBtn" style="min-height: 28px; padding: 2px 10px; font-size: 11px;">Close</button>
     </div>
     <div class="audiobook-sleep-modal-body">
+      <!-- Voice Pitch Quick Controls inside Cog Modal -->
+      <div style="background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 10px; padding: 10px 12px; margin-bottom: 12px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+          <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px;">Voice Pitch</span>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <span id="audiobookCogPitchVal" style="font-size: 11px; font-weight: 700; color: var(--text-primary);">0Hz</span>
+            <button class="btn-brutal" id="audiobookPitchResetBtn" style="min-height: 22px; padding: 0 6px; font-size: 10px;">Reset 0Hz</button>
+          </div>
+        </div>
+        <input type="range" id="audiobookCogPitchSlider" class="range-slider" min="-50" max="50" step="2" value="0" style="width: 100%;" />
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border-color); gap: 10px;">
+          <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px; white-space: nowrap;">Voice</span>
+          <select id="audiobookCogVoiceSelect" class="form-select audiobook-compact-select" style="flex: 1; min-height: 28px; font-size: 11px; padding: 2px 6px;"></select>
+        </div>
+      </div>
+
       <!-- Active timer status & quick extend -->
       <div class="audiobook-sleep-active-status" id="audiobookSleepActiveStatus" style="display: none;">
         <div class="audiobook-sleep-time-remaining">
@@ -459,32 +567,57 @@
         </div>
       </div>
 
+      <!-- 3.5 Auto-Scroll Active Control Bar (Only visible when Auto-Scroll is active) -->
+      <div class="quick-sheet-autoscroll-bar" id="quickSheetAutoScrollActiveBar" style="display: none;">
+        <div class="quick-autoscroll-header">
+          <div class="quick-autoscroll-title">
+            <svg class="quick-sheet-clipart" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="7 13 12 18 17 13"></polyline>
+              <polyline points="7 6 12 11 17 6"></polyline>
+            </svg>
+            <span>Auto-Scroll Active</span>
+          </div>
+          <span class="quick-autoscroll-speed-val" id="quickSheetAutoScrollSpeedVal">35 px/s</span>
+        </div>
+        <div class="quick-autoscroll-controls">
+          <div class="quick-autoscroll-stepper">
+            <button class="quick-autoscroll-btn" id="quickSheetAutoScrollSlowBtn" title="Slower">-5</button>
+            <span class="quick-stepper-val" id="quickSheetAutoScrollSpeedDisplay" style="min-width: 52px;">35 px/s</span>
+            <button class="quick-autoscroll-btn" id="quickSheetAutoScrollFastBtn" title="Faster">+5</button>
+          </div>
+          <button class="quick-autoscroll-stop-btn" id="quickSheetAutoScrollStopBtn">Stop Auto-Scroll</button>
+        </div>
+      </div>
+
       <!-- 4. Typography & Spacing Steppers -->
       <div class="quick-sheet-steppers">
-        <div class="quick-sheet-stepper-row">
+        <!-- Font Size Row -->
+        <div class="quick-stepper-row-font">
           <span class="quick-stepper-label">Font Size</span>
-          <div class="quick-stepper-controls">
+          <div class="quick-stepper-pill">
             <button class="btn-brutal quick-stepper-btn" id="quickSheetFontDown" title="Decrease font size">A-</button>
             <span class="quick-stepper-val" id="quickSheetFontVal">19px</span>
             <button class="btn-brutal quick-stepper-btn" id="quickSheetFontUp" title="Increase font size">A+</button>
           </div>
         </div>
 
-        <div class="quick-sheet-stepper-row">
-          <span class="quick-stepper-label">Line Spacing</span>
-          <div class="quick-stepper-controls">
-            <button class="btn-brutal quick-stepper-btn" id="quickSheetLineDown" title="Decrease line spacing">-</button>
-            <span class="quick-stepper-val" id="quickSheetLineVal">1.85</span>
-            <button class="btn-brutal quick-stepper-btn" id="quickSheetLineUp" title="Increase line spacing">+</button>
+        <!-- Line Spacing & Letter Spacing 2-Column Grid -->
+        <div class="quick-stepper-grid-2col">
+          <div class="quick-stepper-col">
+            <span class="quick-stepper-label">Line</span>
+            <div class="quick-stepper-pill">
+              <button class="btn-brutal quick-stepper-btn" id="quickSheetLineDown" title="Decrease line spacing">-</button>
+              <span class="quick-stepper-val" id="quickSheetLineVal">1.85</span>
+              <button class="btn-brutal quick-stepper-btn" id="quickSheetLineUp" title="Increase line spacing">+</button>
+            </div>
           </div>
-        </div>
-
-        <div class="quick-sheet-stepper-row">
-          <span class="quick-stepper-label">Letter Spacing</span>
-          <div class="quick-stepper-controls">
-            <button class="btn-brutal quick-stepper-btn" id="quickSheetLetterDown" title="Decrease letter spacing">-</button>
-            <span class="quick-stepper-val" id="quickSheetLetterVal">0.0px</span>
-            <button class="btn-brutal quick-stepper-btn" id="quickSheetLetterUp" title="Increase letter spacing">+</button>
+          <div class="quick-stepper-col">
+            <span class="quick-stepper-label">Letter</span>
+            <div class="quick-stepper-pill">
+              <button class="btn-brutal quick-stepper-btn" id="quickSheetLetterDown" title="Decrease letter spacing">-</button>
+              <span class="quick-stepper-val" id="quickSheetLetterVal">0.0px</span>
+              <button class="btn-brutal quick-stepper-btn" id="quickSheetLetterUp" title="Increase letter spacing">+</button>
+            </div>
           </div>
         </div>
       </div>
@@ -568,9 +701,9 @@
         <div class="form-group">
           <div style="display: flex; justify-content: space-between;">
             <label class="form-label">Voice Pitch</label>
-            <span id="ttsPitchVal" style="font-size: 12px; font-weight: 600; color: var(--text-secondary);">0Hz (Normal)</span>
+            <span id="ttsPitchVal" style="font-size: 12px; font-weight: 700; color: var(--text-primary);">0Hz (Normal)</span>
           </div>
-          <input type="range" id="ttsPitchSlider" class="range-slider" min="-20" max="20" step="2" value="0" />
+          <input type="range" id="ttsPitchSlider" class="range-slider" min="-50" max="50" step="2" value="0" />
         </div>
 
         <div class="form-group" style="margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--border-color);">
@@ -877,11 +1010,11 @@
   <input type="file" id="novelCoverInput" accept="image/*" style="display: none;" />
 
   <!-- Application Scripts -->
-  <script src="/js/storage.js?v=17.0"></script>
-  <script src="/js/sync.js?v=17.0"></script>
-  <script src="/js/autoscroll.js?v=17.0"></script>
-  <script src="/js/tts.js?v=17.0"></script>
-  <script src="/js/reader.js?v=17.0"></script>
-  <script src="/js/app.js?v=17.0"></script>
+  <script src="/js/storage.js?v=21.0"></script>
+  <script src="/js/sync.js?v=21.0"></script>
+  <script src="/js/autoscroll.js?v=21.0"></script>
+  <script src="/js/tts.js?v=21.0"></script>
+  <script src="/js/reader.js?v=21.0"></script>
+  <script src="/js/app.js?v=21.0"></script>
 </body>
 </html>
