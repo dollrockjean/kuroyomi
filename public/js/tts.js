@@ -148,13 +148,20 @@ const TTSEngine = {
 
   init(onChapterEnd) {
     this.onChapterEndCallback = onChapterEnd;
-    if (window.ReaderSettings && window.ReaderSettings.tts_rate) {
+    const localSettings = (typeof Storage !== 'undefined' && Storage.getLocalSettings) ? Storage.getLocalSettings() : null;
+    if (localSettings && localSettings.tts_rate) {
+      this.rate = parseFloat(localSettings.tts_rate);
+    } else if (window.ReaderSettings && window.ReaderSettings.tts_rate) {
       this.rate = parseFloat(window.ReaderSettings.tts_rate);
     }
-    if (window.ReaderSettings && window.ReaderSettings.tts_pitch !== undefined) {
+    if (localSettings && localSettings.tts_pitch !== undefined) {
+      this.pitch = parseInt(localSettings.tts_pitch, 10) || 0;
+    } else if (window.ReaderSettings && window.ReaderSettings.tts_pitch !== undefined) {
       this.pitch = parseInt(window.ReaderSettings.tts_pitch, 10) || 0;
     }
-    if (window.ReaderSettings && window.ReaderSettings.tts_voice) {
+    if (localSettings && localSettings.tts_voice) {
+      this.selectedVoice = localSettings.tts_voice;
+    } else if (window.ReaderSettings && window.ReaderSettings.tts_voice) {
       this.selectedVoice = window.ReaderSettings.tts_voice;
     }
     this.populateVoiceSelect();
@@ -456,6 +463,9 @@ const TTSEngine = {
     this.pendingFetches.clear();
     if (window.ReaderSettings) {
       window.ReaderSettings.tts_pitch = this.pitch;
+      if (typeof Storage !== 'undefined' && typeof Storage.setLocalSettings === 'function') {
+        Storage.setLocalSettings(window.ReaderSettings);
+      }
       if (window.SyncService && typeof window.SyncService.syncSettings === 'function') {
         window.SyncService.syncSettings(window.ReaderSettings);
       }
@@ -658,6 +668,13 @@ const TTSEngine = {
     this.refreshParagraphs();
     if (!this.paragraphs.length) return;
 
+    if (window.App && typeof window.App.cancelPendingSleepResume === 'function') {
+      window.App.cancelPendingSleepResume();
+    } else {
+      try { localStorage.removeItem('kuroyomi_pending_sleep_resume'); } catch (e) {}
+    }
+    this.sleepModeExpired = false;
+
     // Always prioritize the main voice selected
     this.setDeviceVoiceMode(false);
     this.startKeepAlive();
@@ -789,6 +806,13 @@ const TTSEngine = {
   },
 
   resume() {
+    if (window.App && typeof window.App.cancelPendingSleepResume === 'function') {
+      window.App.cancelPendingSleepResume();
+    } else {
+      try { localStorage.removeItem('kuroyomi_pending_sleep_resume'); } catch (e) {}
+    }
+    this.sleepModeExpired = false;
+
     if (this.isPlaying && this.isPaused) {
       this.isPaused = false;
       this.startKeepAlive();
@@ -1208,6 +1232,9 @@ const TTSEngine = {
     this.updateSleepModalUI();
     this.stop();
     if (AutoScroll.isActive) AutoScroll.stop();
+
+    this.sleepModeExpired = true;
+    this.sleepExpiredAt = Date.now();
 
     if (window.Reader) {
       window.Reader.saveCurrentProgress();

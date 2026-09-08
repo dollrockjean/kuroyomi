@@ -20,6 +20,15 @@ const Reader = {
     this.initOverscrollNavigation();
     this.bindDesktopHover();
     this.bindKeyboardShortcuts();
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') {
+        this.flushPendingProgress();
+      }
+    });
+    window.addEventListener('pagehide', () => {
+      this.flushPendingProgress();
+    });
   },
 
   bindDesktopHover() {
@@ -78,6 +87,15 @@ const Reader = {
 
       // Whole-book reading progress calculation across all volumes & chapters
       this.updateProgressPill(currentScrollY);
+
+      // Invalidate pending sleep timer resume prompt if user continues scrolling to read
+      if (window.TTSEngine && window.TTSEngine.sleepModeExpired) {
+        if (!window.TTSEngine.sleepExpiredAt || (Date.now() - window.TTSEngine.sleepExpiredAt > 1000)) {
+          if (window.App && typeof window.App.cancelPendingSleepResume === 'function') {
+            window.App.cancelPendingSleepResume();
+          }
+        }
+      }
 
       // Silently debounce saving progress to cloud without toasts
       if (this.isRestoringScroll) return;
@@ -408,29 +426,85 @@ const Reader = {
 
       const local = Storage.getLocalProgress(novelId);
       if (resume) {
-        if (data.progress && data.progress.chapter_id) {
+        const hasCloud = !!(data.progress && data.progress.chapter_id);
+        const hasLocal = !!(local && local.chapterId);
+
+        const cloudChIdx = hasCloud ? this.chapterList.findIndex(c => c.id === data.progress.chapter_id) : -1;
+        const localChIdx = hasLocal ? this.chapterList.findIndex(c => c.id === local.chapterId) : -1;
+
+        let chooseSource = null;
+
+        if (hasLocal && hasCloud) {
+          if (localChIdx !== -1 && cloudChIdx !== -1) {
+            if (localChIdx > cloudChIdx) {
+              // Local is further ahead in chapter sequence
+              chooseSource = 'local';
+            } else if (cloudChIdx > localChIdx) {
+              // Cloud is further ahead in chapter sequence
+              chooseSource = 'cloud';
+            } else {
+              // Same chapter: compare paragraph index and scroll percent
+              const localPid = local.paragraphIndex || 0;
+              const cloudPid = data.progress.paragraph_index || 0;
+              const localPct = local.scrollPercent || 0;
+              const cloudPct = data.progress.scroll_percent || 0;
+
+              const localScore = (localPid * 1000) + localPct;
+              const cloudScore = (cloudPid * 1000) + cloudPct;
+
+              if (localScore > cloudScore) {
+                chooseSource = 'local';
+              } else if (cloudScore > localScore) {
+                chooseSource = 'cloud';
+              } else {
+                // Same position: break tie with saved timestamp
+                const localTime = local.savedAt || 0;
+                const cloudTime = (data.progress.updated_at || 0) * 1000;
+                chooseSource = (localTime >= cloudTime) ? 'local' : 'cloud';
+              }
+            }
+          } else if (localChIdx !== -1) {
+            chooseSource = 'local';
+          } else if (cloudChIdx !== -1) {
+            chooseSource = 'cloud';
+          } else {
+            const localTime = local.savedAt || 0;
+            const cloudTime = (data.progress.updated_at || 0) * 1000;
+            chooseSource = (localTime >= cloudTime) ? 'local' : 'cloud';
+          }
+        } else if (hasLocal) {
+          chooseSource = 'local';
+        } else if (hasCloud) {
+          chooseSource = 'cloud';
+        }
+
+        if (chooseSource === 'local') {
+          targetChapterId = local.chapterId;
+          targetPid = local.paragraphIndex || 0;
+          targetPercent = local.scrollPercent || 0;
+
+          // If local was ahead of cloud, immediately push forward to cloud
+          if (hasCloud && (localChIdx > cloudChIdx || (localChIdx === cloudChIdx && ((local.paragraphIndex || 0) > (data.progress.paragraph_index || 0) || (local.scrollPercent || 0) > (data.progress.scroll_percent || 0))))) {
+            SyncService.syncReadingProgress(
+              novelId,
+              local.volumeId || this.currentVolumeId,
+              targetChapterId,
+              targetPid,
+              targetPercent
+            );
+          }
+        } else if (chooseSource === 'cloud') {
           targetChapterId = data.progress.chapter_id;
           targetPid = data.progress.paragraph_index || 0;
           targetPercent = data.progress.scroll_percent || 0;
-        }
 
-        // Compare with local storage; choose whichever has valid deeper reading progress
-        if (local && local.chapterId) {
-          if (!targetChapterId) {
-            targetChapterId = local.chapterId;
-            targetPid = local.paragraphIndex || 0;
-            targetPercent = local.scrollPercent || 0;
-          } else if (local.chapterId === targetChapterId) {
-            if ((local.paragraphIndex || 0) > targetPid || (local.scrollPercent || 0) > targetPercent) {
-              targetPid = local.paragraphIndex || 0;
-              targetPercent = local.scrollPercent || 0;
-            }
-          } else if (targetPid === 0 && targetPercent === 0 && (local.paragraphIndex > 0 || local.scrollPercent > 0)) {
-            // Local has real spot on a chapter while cloud was reset to 0
-            targetChapterId = local.chapterId;
-            targetPid = local.paragraphIndex || 0;
-            targetPercent = local.scrollPercent || 0;
-          }
+          // Update local cache with latest cloud reading position
+          Storage.saveLocalProgress(novelId, {
+            volumeId: data.progress.volume_id,
+            chapterId: targetChapterId,
+            paragraphIndex: targetPid,
+            scrollPercent: targetPercent
+          });
         }
       }
 
@@ -455,6 +529,11 @@ const Reader = {
   },
 
   async loadChapter(chapterId, scrollToTarget = false, isTtsAdvance = false, scrollToBottom = false) {
+    if (!isTtsAdvance && window.TTSEngine && window.TTSEngine.sleepModeExpired) {
+      if (window.App && typeof window.App.cancelPendingSleepResume === 'function') {
+        window.App.cancelPendingSleepResume();
+      }
+    }
     App.showLoading('Loading chapter...');
     try {
       const userId = SyncService.currentUserId || Storage.getUserId() || 'universal_device_mirror';
@@ -711,6 +790,17 @@ const Reader = {
       pid,
       scrollPercent
     );
+  },
+
+  flushPendingProgress() {
+    if (this.scrollDebounce) {
+      clearTimeout(this.scrollDebounce);
+      this.scrollDebounce = null;
+      this.saveCurrentProgress();
+    }
+    if (window.SyncService && typeof window.SyncService.flushPendingSync === 'function') {
+      window.SyncService.flushPendingSync();
+    }
   },
 
   async prefetchUpcomingChapters(ch) {

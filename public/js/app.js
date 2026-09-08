@@ -1051,6 +1051,17 @@ const App = {
       TTSEngine.updateAudioUI();
     }
 
+    // 6b. TTS Pitch
+    if (cur.tts_pitch !== undefined) {
+      const pitchVal = parseInt(cur.tts_pitch, 10) || 0;
+      if (typeof TTSEngine !== 'undefined') {
+        TTSEngine.pitch = pitchVal;
+        if (typeof TTSEngine.updatePitchUI === 'function') {
+          TTSEngine.updatePitchUI();
+        }
+      }
+    }
+
     // 7. Auto-Scroll Speed
     const scrollSpeed = parseInt(cur.auto_scroll_speed || 35);
     AutoScroll.speed = scrollSpeed;
@@ -1383,11 +1394,14 @@ const App = {
 
     // Auto-refresh when mobile reader wakes up or user returns to tab
     const handleVisibilityOrFocus = () => {
-      if (document.visibilityState === 'visible' && navigator.onLine) {
-        if (!this._lastWakeCheck || (Date.now() - this._lastWakeCheck > 8000)) {
-          this._lastWakeCheck = Date.now();
-          if (this.currentView === 'library') {
-            this.loadLibrary(false);
+      if (document.visibilityState === 'visible') {
+        this.checkSleepTimerResume();
+        if (navigator.onLine) {
+          if (!this._lastWakeCheck || (Date.now() - this._lastWakeCheck > 8000)) {
+            this._lastWakeCheck = Date.now();
+            if (this.currentView === 'library') {
+              this.loadLibrary(false);
+            }
           }
         }
       }
@@ -1761,6 +1775,15 @@ const App = {
     } catch (e) {
       console.warn('Error checking sleep timer resume:', e);
       localStorage.removeItem('kuroyomi_pending_sleep_resume');
+    }
+  },
+
+  cancelPendingSleepResume() {
+    try {
+      localStorage.removeItem('kuroyomi_pending_sleep_resume');
+    } catch (e) {}
+    if (typeof TTSEngine !== 'undefined') {
+      TTSEngine.sleepModeExpired = false;
     }
   },
 

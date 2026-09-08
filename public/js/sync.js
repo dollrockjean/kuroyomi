@@ -274,28 +274,43 @@ const SyncService = {
       return;
     }
 
-    // 3. Debounce cloud sync
+    // 3. Debounce cloud sync (400ms for rapid responsiveness)
     if (this.syncTimeout) clearTimeout(this.syncTimeout);
     this.updateStatus('syncing', 'SAVING...');
+    this.lastPendingProgress = progressRecord;
 
-    this.syncTimeout = setTimeout(async () => {
-      if (!this.currentUserId) return;
-      try {
-        const res = await fetch('/api/progress', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(progressRecord)
-        });
-        const data = await res.json();
-        if (data.success) {
+    this.syncTimeout = setTimeout(() => {
+      this.flushPendingSync();
+    }, 400);
+  },
+
+  flushPendingSync() {
+    if (this.syncTimeout) {
+      clearTimeout(this.syncTimeout);
+      this.syncTimeout = null;
+    }
+    const record = this.lastPendingProgress;
+    if (!record || !record.user_id) return;
+    this.lastPendingProgress = null;
+
+    try {
+      fetch('/api/progress', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(record),
+        keepalive: true
+      }).then(res => res.json()).then(data => {
+        if (data && data.success) {
           this.updateStatus('synced', 'SAVED');
         }
-      } catch (e) {
+      }).catch(e => {
         console.warn('Progress cloud sync error, queuing offline:', e);
-        Storage.queueOfflineProgress(progressRecord);
+        Storage.queueOfflineProgress(record);
         this.updateStatus('offline', 'LOCAL ONLY');
-      }
-    }, 1500);
+      });
+    } catch (e) {
+      Storage.queueOfflineProgress(record);
+    }
   },
 
   async flushOfflineQueue() {

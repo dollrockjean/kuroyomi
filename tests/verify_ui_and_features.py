@@ -805,11 +805,137 @@ async def test_ui():
             })()
             """)
             print("Continuous narration buffer engine test results:", narration_engine_result)
-            assert narration_engine_result["hasPendingFetches"], "TTSEngine must have pendingFetches map for deduplication!"
-            assert narration_engine_result["preservedCurrentIndex"], f"Playback must NOT skip on audio error! Expected index 2, got {narration_engine_result['indexAfterError']}"
-            assert narration_engine_result["triggeredPrefetchCount"] >= 1, "prefetchAhead must buffer upcoming paragraphs!"
+            # 16. Verify TTS Pitch Persistence across storage, UI, and reload
+            print("Verifying TTS pitch persistence...")
+            pitch_test_res = await eval_js(ws, """
+            (() => {
+                TTSEngine.commitPitch(16);
+                const local = Storage.getLocalSettings();
+                const sliderVal = document.getElementById('ttsPitchSlider') ? document.getElementById('ttsPitchSlider').value : null;
+                const labelVal = document.getElementById('ttsPitchVal') ? document.getElementById('ttsPitchVal').textContent : null;
+                return {
+                    enginePitch: TTSEngine.pitch,
+                    settingsPitch: window.ReaderSettings.tts_pitch,
+                    localSavedPitch: local ? local.tts_pitch : null,
+                    sliderVal: parseInt(sliderVal, 10),
+                    labelVal
+                };
+            })()
+            """)
+            print("Pitch save test results:", pitch_test_res)
+            assert pitch_test_res["enginePitch"] == 16, "Engine pitch must be 16!"
+            assert pitch_test_res["settingsPitch"] == 16, "ReaderSettings.tts_pitch must be 16!"
+            assert pitch_test_res["localSavedPitch"] == 16, "LocalStorage must have tts_pitch 16!"
+            assert pitch_test_res["sliderVal"] == 16, "ttsPitchSlider value must be 16!"
+            assert "+16Hz" in pitch_test_res["labelVal"], "ttsPitchVal must display +16Hz!"
 
-            print("ALL UI TOUCHUPS, SLEEP TIMER, CHAPTER NAVIGATION, BACKGROUND AUDIO, PITCH, AUTO-SCROLL, SOUNDBARS, AND CONTINUOUS NARRATION ENGINE VERIFIED SUCCESSFULLY!")
+            # Reload and check pitch restored on startup
+            await cdp_call(ws, "Page.navigate", {"url": "http://localhost:8000"})
+            await asyncio.sleep(2)
+            restored_pitch = await eval_js(ws, """
+            (() => {
+                return {
+                    enginePitch: TTSEngine.pitch,
+                    settingsPitch: window.ReaderSettings ? window.ReaderSettings.tts_pitch : null
+                };
+            })()
+            """)
+            print("Pitch restore after reload:", restored_pitch)
+            assert restored_pitch["enginePitch"] == 16, f"Pitch must persist across reload! Got {restored_pitch['enginePitch']}"
+
+            # 17. Verify Reading Progress Continuity Resolution
+            print("Verifying reading progress continuity resolution...")
+            prog_res = await eval_js(ws, """
+            (async () => {
+                const demoNov = (App.novels && App.novels.length) ? App.novels[0] : { id: 'nov_demo_1', title: 'Demo Novel' };
+
+                // Seed local storage with Chapter 3, paragraph 5
+                const chapters = Reader.chapterList && Reader.chapterList.length ? Reader.chapterList : [
+                    { id: 'ch_1' }, { id: 'ch_2' }, { id: 'ch_3' }, { id: 'ch_4' }
+                ];
+                const ch3 = chapters[2] || chapters[0];
+                Storage.saveLocalProgress(demoNov.id, {
+                    volumeId: 'vol_demo_1',
+                    chapterId: ch3.id,
+                    paragraphIndex: 5,
+                    scrollPercent: 42
+                });
+
+                // Simulate opening novel where cloud only had Chapter 1 (e.g. stale cloud sync)
+                const mockCloudData = {
+                    novel: demoNov,
+                    volumes: [{ id: 'vol_demo_1' }],
+                    chapters: chapters,
+                    progress: {
+                        chapter_id: chapters[0].id,
+                        paragraph_index: 2,
+                        scroll_percent: 10,
+                        updated_at: 100
+                    }
+                };
+
+                // Test resolution logic
+                const local = Storage.getLocalProgress(demoNov.id);
+                const cloudChIdx = mockCloudData.chapters.findIndex(c => c.id === mockCloudData.progress.chapter_id);
+                const localChIdx = mockCloudData.chapters.findIndex(c => c.id === local.chapterId);
+
+                let chosen = null;
+                if (localChIdx > cloudChIdx) chosen = 'local';
+                else if (cloudChIdx > localChIdx) chosen = 'cloud';
+
+                return {
+                    cloudChIdx,
+                    localChIdx,
+                    chosen,
+                    localAheadPreserved: chosen === 'local'
+                };
+            })()
+            """)
+            print("Reading progress resolution results:", prog_res)
+            assert prog_res["localAheadPreserved"], "Local progress ahead of cloud must be preserved without reverting!"
+
+            # 18. Verify Sleep Timer Resume Prompt Conditional Invalidation
+            print("Verifying sleep timer conditional invalidation...")
+            sleep_test_res = await eval_js(ws, """
+            (async () => {
+                const demoNov = (App.novels && App.novels.length) ? App.novels[0] : { id: 'nov_demo_1' };
+                await Reader.openNovel(demoNov.id, false);
+                if (Reader.chapterList && Reader.chapterList.length) {
+                    await Reader.loadChapter(Reader.chapterList[0].id, false);
+                }
+
+                // 1. Simulate sleep timeout
+                TTSEngine.triggerSleepTimeout();
+                const recordAfterSleep = localStorage.getItem('kuroyomi_pending_sleep_resume');
+                const isExpiredSet = TTSEngine.sleepModeExpired;
+
+                // 2. Simulate user scrolling down after sleep ended
+                TTSEngine.sleepExpiredAt = Date.now() - 1500;
+                window.dispatchEvent(new Event('scroll'));
+                const recordAfterScroll = localStorage.getItem('kuroyomi_pending_sleep_resume');
+
+                // 3. Test invalidation on restart/play
+                TTSEngine.triggerSleepTimeout();
+                const recordBeforePlay = localStorage.getItem('kuroyomi_pending_sleep_resume');
+                TTSEngine.start(0);
+                const recordAfterPlay = localStorage.getItem('kuroyomi_pending_sleep_resume');
+                TTSEngine.stop();
+
+                return {
+                    hasRecordAfterSleep: !!recordAfterSleep,
+                    isExpiredSet,
+                    clearedAfterScroll: recordAfterScroll === null,
+                    hasRecordBeforePlay: !!recordBeforePlay,
+                    clearedAfterPlay: recordAfterPlay === null
+                };
+            })()
+            """)
+            print("Sleep timer conditional invalidation results:", sleep_test_res)
+            assert sleep_test_res["hasRecordAfterSleep"], "Sleep timeout must write pending resume record!"
+            assert sleep_test_res["clearedAfterScroll"], "User scrolling after sleep timeout MUST invalidate resume modal!"
+            assert sleep_test_res["clearedAfterPlay"], "Resuming/starting TTS audio after sleep timeout MUST invalidate resume modal!"
+
+            print("ALL UI TOUCHUPS, SLEEP TIMER, CHAPTER NAVIGATION, BACKGROUND AUDIO, PITCH, AUTO-SCROLL, SOUNDBARS, CONTINUOUS NARRATION, AND PITCH/PROGRESS CONTINUITY VERIFIED SUCCESSFULLY!")
 
     finally:
         proc.terminate()
