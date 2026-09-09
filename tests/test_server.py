@@ -238,7 +238,7 @@ class NovelReaderIntegrationTests(unittest.TestCase):
                 self.assertEqual(ch["global_index"], idx)
 
     def test_06_auto_primary_device_sync(self):
-        """Test that new/unpaired devices automatically link to the primary user library."""
+        """Test that new visitors get isolated libraries, while pairing with a sync key connects devices."""
         # Device A registers without any sync key
         req_a = urllib.request.Request(
             f"{BASE_URL}/api/auth/register-device",
@@ -252,18 +252,30 @@ class NovelReaderIntegrationTests(unittest.TestCase):
             user_id_a = data_a.get("user_id")
             self.assertTrue(primary_key)
 
-        # Device B (iPhone) opens reader without any sync key
+        # Device B (Friend) opens reader without any sync key -> gets isolated profile
         req_b = urllib.request.Request(
             f"{BASE_URL}/api/auth/register-device",
-            data=json.dumps({"sync_key": "", "device_name": "iPhone Safari"}).encode('utf-8'),
+            data=json.dumps({"sync_key": "", "device_name": "Friend Phone Safari"}).encode('utf-8'),
             headers={'Content-Type': 'application/json'}
         )
         with urllib.request.urlopen(req_b) as resp_b:
             data_b = json.loads(resp_b.read().decode('utf-8'))
             self.assertTrue(data_b.get("success"))
-            # Must automatically connect to Device A's primary library
-            self.assertEqual(data_b.get("sync_key"), primary_key)
-            self.assertEqual(data_b.get("user_id"), user_id_a)
+            # Must have its own isolated account
+            self.assertNotEqual(data_b.get("sync_key"), primary_key)
+            self.assertNotEqual(data_b.get("user_id"), user_id_a)
+
+        # Device C (Owner second device) pairs using Device A's sync key
+        req_c = urllib.request.Request(
+            f"{BASE_URL}/api/auth/register-device",
+            data=json.dumps({"sync_key": primary_key, "device_name": "Owner iPhone"}).encode('utf-8'),
+            headers={'Content-Type': 'application/json'}
+        )
+        with urllib.request.urlopen(req_c) as resp_c:
+            data_c = json.loads(resp_c.read().decode('utf-8'))
+            self.assertTrue(data_c.get("success"))
+            self.assertEqual(data_c.get("sync_key"), primary_key)
+            self.assertEqual(data_c.get("user_id"), user_id_a)
 
 if __name__ == "__main__":
     unittest.main()

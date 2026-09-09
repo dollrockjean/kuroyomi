@@ -25,13 +25,12 @@ class CloudSyncAndBridgingTests(unittest.TestCase):
             except Exception:
                 pass
 
-    def test_01_primary_library_bridging_for_phone_device(self):
-        """Test that a phone device with a unique token/user-id sees the primary library."""
-        # 1. Primary user (e.g. Mac) uploads/seeds a book
+    def test_01_visitor_isolation_and_device_pairing(self):
+        """Test that a new visitor without a sync key gets an isolated profile, while a pairing device connects to the owner."""
+        # 1. Primary owner (e.g. Mac) uploads/seeds a book
         mac_user_id = database.get_or_create_user("READER-PRIMARY", "MacBook Pro")
         sample_books.seed_demo_novel(mac_user_id)
 
-        # 2. Phone connects without explicit sync key (default READER-PRIMARY)
         class MockHandler:
             def __init__(self):
                 self.sent_json = None
@@ -41,19 +40,36 @@ class CloudSyncAndBridgingTests(unittest.TestCase):
                 self.sent_json = data
                 self.sent_status = status
 
-        h_reg = MockHandler()
-        server.NovelReaderHandler.handle_api_post(h_reg, "/api/auth/register-device", {
+        # 2. Friend / first-time visitor opens plain link without any sync key
+        h_friend = MockHandler()
+        server.NovelReaderHandler.handle_api_post(h_friend, "/api/auth/register-device", {
             "sync_key": "",
-            "device_token": "iphone_token_xyz_99",
-            "device_name": "iPhone Safari",
+            "device_token": "friend_token_xyz_99",
+            "device_name": "Friend Phone Safari",
             "remember": True
         })
 
-        self.assertTrue(h_reg.sent_json.get("success"))
-        phone_user_id = h_reg.sent_json.get("user_id")
+        self.assertTrue(h_friend.sent_json.get("success"))
+        friend_user_id = h_friend.sent_json.get("user_id")
+        friend_sync_key = h_friend.sent_json.get("sync_key")
+        # Friend must have their OWN unique profile, NOT the owner's account
+        self.assertNotEqual(friend_user_id, mac_user_id)
+        self.assertNotEqual(friend_sync_key, "READER-PRIMARY")
+        self.assertTrue(friend_sync_key.startswith("READER-"))
+
+        # 3. Owner's second device connects using the owner's sync key (via 1-click link or manual pairing)
+        h_owner_phone = MockHandler()
+        server.NovelReaderHandler.handle_api_post(h_owner_phone, "/api/auth/register-device", {
+            "sync_key": "READER-PRIMARY",
+            "device_token": "owner_iphone_token_42",
+            "device_name": "Owner iPhone",
+            "remember": True
+        })
+        self.assertTrue(h_owner_phone.sent_json.get("success"))
+        phone_user_id = h_owner_phone.sent_json.get("user_id")
         self.assertEqual(phone_user_id, mac_user_id)
 
-        # 3. Query novels for the phone
+        # 4. Query novels for the owner's phone
         h_novels = MockHandler()
         server.NovelReaderHandler.handle_api_get(h_novels, "/api/novels", {"user_id": [phone_user_id]})
         novels = h_novels.sent_json.get("novels", [])

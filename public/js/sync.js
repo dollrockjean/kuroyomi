@@ -124,10 +124,10 @@ const SyncService = {
         }
       }
 
-      // 4. Connect with existing local sync key or link to primary shared library
+      // 4. Connect with existing local sync key (or empty to generate isolated visitor profile)
       let syncKey = Storage.getSyncKey();
-      if (!syncKey || syncKey === 'OFFLINE') {
-        syncKey = 'READER-PRIMARY';
+      if (!syncKey || syncKey === 'OFFLINE' || syncKey === 'DEFAULT_READER') {
+        syncKey = '';
       }
       const deviceName = Storage.getDeviceName();
       const existingUserId = Storage.getUserId();
@@ -161,8 +161,8 @@ const SyncService = {
       console.warn('Sync connection error, operating in offline fallback:', e);
       this.isOnline = false;
       this.updateStatus('offline', 'OFFLINE');
-      this.currentUserId = Storage.getUserId() || 'universal_device_mirror';
-      this.currentSyncKey = Storage.getSyncKey() || 'READER-PRIMARY';
+      this.currentUserId = Storage.getUserId() || 'offline_user';
+      this.currentSyncKey = Storage.getSyncKey() || 'OFFLINE';
       return { userId: this.currentUserId, syncKey: this.currentSyncKey, settings: Storage.getLocalSettings() || {} };
     }
   },

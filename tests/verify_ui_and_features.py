@@ -935,7 +935,44 @@ async def test_ui():
             assert sleep_test_res["clearedAfterScroll"], "User scrolling after sleep timeout MUST invalidate resume modal!"
             assert sleep_test_res["clearedAfterPlay"], "Resuming/starting TTS audio after sleep timeout MUST invalidate resume modal!"
 
-            print("ALL UI TOUCHUPS, SLEEP TIMER, CHAPTER NAVIGATION, BACKGROUND AUDIO, PITCH, AUTO-SCROLL, SOUNDBARS, CONTINUOUS NARRATION, AND PITCH/PROGRESS CONTINUITY VERIFIED SUCCESSFULLY!")
+            # 19. Verify New Visitor Isolation (Plain link opens new isolated profile without touching owner)
+            print("Verifying new visitor isolation from plain link...")
+            visitor_res = await eval_js(ws, """
+            (async () => {
+                // Simulate a friend opening the site for the first time
+                const friendToken = 'dev_friend_' + Date.now();
+                const res = await fetch('/api/auth/register-device', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        sync_key: '',
+                        device_token: friendToken,
+                        device_name: 'Friend iPhone',
+                        remember: true
+                    })
+                });
+                const data = await res.json();
+                
+                // Fetch books for friend
+                const novRes = await fetch('/api/novels?user_id=' + encodeURIComponent(data.user_id));
+                const novData = await novRes.json();
+                
+                return {
+                    success: data.success,
+                    friendUserId: data.user_id,
+                    friendSyncKey: data.sync_key,
+                    isDistinctFromPrimary: data.sync_key !== 'READER-PRIMARY',
+                    hasStarterNovels: novData.novels && novData.novels.length >= 1
+                };
+            })()
+            """)
+            print("New visitor isolation test results:", visitor_res)
+            assert visitor_res["success"], "Visitor registration must succeed!"
+            assert visitor_res["isDistinctFromPrimary"], "Visitor must receive an isolated sync key, NOT READER-PRIMARY!"
+            assert visitor_res["friendSyncKey"].startswith("READER-"), "Visitor sync key must start with READER-!"
+            assert visitor_res["hasStarterNovels"], "Visitor must have their own starter demo novel!"
+
+            print("ALL UI TOUCHUPS, SLEEP TIMER, CHAPTER NAVIGATION, BACKGROUND AUDIO, PITCH, AUTO-SCROLL, SOUNDBARS, CONTINUOUS NARRATION, PITCH/PROGRESS CONTINUITY, AND VISITOR ISOLATION VERIFIED SUCCESSFULLY!")
 
     finally:
         proc.terminate()

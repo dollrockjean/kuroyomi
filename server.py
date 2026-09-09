@@ -686,36 +686,23 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             user_agent = self.headers.get("User-Agent", "")
             remember = bool(body.get("remember", True))
 
-            if not sync_key or sync_key in ("DEFAULT_READER", "OFFLINE", "READER-PRIMARY"):
-                cur.execute("""
-                    SELECT u.sync_key, u.id FROM users u 
-                    JOIN novels n ON u.id = n.user_id 
-                    WHERE u.sync_key NOT IN ('OFFLINE', 'DEFAULT_READER')
-                    GROUP BY u.id 
-                    ORDER BY COUNT(n.id) DESC, u.last_active DESC 
-                    LIMIT 1
-                """)
-                primary_user = cur.fetchone()
-
-                has_own_books = False
-                if requested_user_id and requested_user_id.startswith("usr_"):
-                    cur.execute("SELECT COUNT(*) as cnt FROM novels WHERE user_id = ?", (requested_user_id,))
-                    has_own_books = cur.fetchone()["cnt"] > 0
-                    if has_own_books:
-                        cur.execute("SELECT sync_key FROM users WHERE id = ?", (requested_user_id,))
-                        u_row = cur.fetchone()
-                        if u_row and u_row["sync_key"]:
-                            sync_key = u_row["sync_key"]
-
-                if not has_own_books:
-                    if primary_user and primary_user["sync_key"]:
-                        sync_key = primary_user["sync_key"]
-                        requested_user_id = primary_user["id"]
-                    else:
-                        sync_key = "READER-PRIMARY"
+            is_new_user = False
+            # When a visitor opens the plain link for the first time without a sync key,
+            # generate an isolated profile so they get their own fresh library
+            if not sync_key or sync_key in ("OFFLINE", "DEFAULT_READER"):
+                sync_key = f"READER-{secrets.token_hex(4).upper()}"
+                requested_user_id = f"usr_{secrets.token_hex(6)}"
+                is_new_user = True
 
             user_id = database.get_or_create_user(sync_key, requested_user_id=requested_user_id)
             database.register_device(user_id, device_token, device_name, user_agent, remember)
+
+            if is_new_user:
+                try:
+                    import sample_books
+                    sample_books.seed_demo_novel(user_id)
+                except Exception as seed_err:
+                    print("Error seeding demo novel for new user:", seed_err)
 
             # Get user settings
             cur.execute("SELECT * FROM user_settings WHERE user_id = ?", (user_id,))
