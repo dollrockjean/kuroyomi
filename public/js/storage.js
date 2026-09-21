@@ -74,25 +74,50 @@ const Storage = {
     localStorage.setItem(this.SETTINGS_KEY, JSON.stringify(settings));
   },
 
-  saveLocalProgress(novelId, progress) {
-    localStorage.setItem(this.PROGRESS_PREFIX + novelId, JSON.stringify({
+  saveLocalProgress(novelId, progress, userId = null) {
+    const uid = userId || this.getUserId() || 'guest';
+    const payload = JSON.stringify({
       ...progress,
       savedAt: Date.now()
-    }));
+    });
+    localStorage.setItem(`${this.PROGRESS_PREFIX}${uid}_${novelId}`, payload);
+    // Also save legacy key for backward compatibility
+    localStorage.setItem(this.PROGRESS_PREFIX + novelId, payload);
   },
 
-  getLocalProgress(novelId) {
+  getLocalProgress(novelId, userId = null) {
     try {
-      const p = localStorage.getItem(this.PROGRESS_PREFIX + novelId);
-      return p ? JSON.parse(p) : null;
+      const uid = userId || this.getUserId();
+      if (uid) {
+        const pScoped = localStorage.getItem(`${this.PROGRESS_PREFIX}${uid}_${novelId}`);
+        if (pScoped) return JSON.parse(pScoped);
+      }
+      const pLegacy = localStorage.getItem(this.PROGRESS_PREFIX + novelId);
+      return pLegacy ? JSON.parse(pLegacy) : null;
     } catch {
       return null;
+    }
+  },
+
+  clearLocalProgress() {
+    try {
+      const keysToRemove = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith(this.PROGRESS_PREFIX)) {
+          keysToRemove.push(k);
+        }
+      }
+      keysToRemove.forEach(k => localStorage.removeItem(k));
+    } catch (e) {
+      console.warn('Could not clear local progress:', e);
     }
   },
 
   clearSession() {
     localStorage.removeItem(this.SYNC_KEY_KEY);
     localStorage.removeItem(this.USER_ID_KEY);
+    this.clearLocalProgress();
   },
 
   // Offline Progress Queue Management
@@ -138,8 +163,10 @@ const IDB = {
       if (!window.indexedDB) {
         return reject(new Error('IndexedDB not supported'));
       }
-      const req = indexedDB.open(this.dbName, 2);
-      req.onupgradeneeded = (e) => {
+      const request = indexedDB.open(this.dbName, 2);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => resolve(request.result);
+      request.onupgradeneeded = (e) => {
         const db = e.target.result;
         if (!db.objectStoreNames.contains(this.storeName)) {
           db.createObjectStore(this.storeName, { keyPath: 'user_id' });
@@ -148,31 +175,23 @@ const IDB = {
           db.createObjectStore(this.chapterStore, { keyPath: 'id' });
         }
       };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
     });
   },
 
   async saveLibraryMirror(userId, backupData) {
-    if (!backupData || !backupData.novels) return false;
+    if (!userId || !backupData || !backupData.novels) return false;
     try {
       const db = await this.open();
       return new Promise((resolve, reject) => {
         const tx = db.transaction(this.storeName, 'readwrite');
         const store = tx.objectStore(this.storeName);
         const record = {
-          user_id: userId || 'universal_device_mirror',
+          user_id: userId,
           backup_data: backupData,
-          novel_count: backupData.novels.length,
+          novel_count: (backupData.novels && backupData.novels.length) || 0,
           saved_at: Date.now()
         };
         store.put(record);
-        if (userId && userId !== 'universal_device_mirror') {
-          store.put({
-            ...record,
-            user_id: 'universal_device_mirror'
-          });
-        }
         tx.oncomplete = () => resolve(true);
         tx.onerror = () => reject(tx.error);
       });
@@ -182,41 +201,37 @@ const IDB = {
     }
   },
 
+  async clearLibraryMirror() {
+    try {
+      const db = await this.open();
+      return new Promise((resolve) => {
+        const tx = db.transaction(this.storeName, 'readwrite');
+        const store = tx.objectStore(this.storeName);
+        store.clear();
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      });
+    } catch {
+      return false;
+    }
+  },
+
   async getLibraryMirror(userId) {
+    if (!userId) return null;
     try {
       const db = await this.open();
       return new Promise((resolve) => {
         const tx = db.transaction(this.storeName, 'readonly');
         const store = tx.objectStore(this.storeName);
-
-        const fallbackAll = () => {
-          const allReq = store.getAll();
-          allReq.onsuccess = () => {
-            const items = allReq.result || [];
-            if (items.length > 0) {
-              items.sort((a, b) => (b.saved_at || 0) - (a.saved_at || 0));
-              const best = items.find(it => it.novel_count > 0 && it.backup_data) || items[0];
-              resolve(best ? best.backup_data : null);
-            } else {
-              resolve(null);
-            }
-          };
-          allReq.onerror = () => resolve(null);
+        const req = store.get(userId);
+        req.onsuccess = () => {
+          if (req.result && req.result.backup_data) {
+            resolve(req.result.backup_data);
+          } else {
+            resolve(null);
+          }
         };
-
-        if (userId) {
-          const req = store.get(userId);
-          req.onsuccess = () => {
-            if (req.result && req.result.backup_data) {
-              resolve(req.result.backup_data);
-            } else {
-              fallbackAll();
-            }
-          };
-          req.onerror = () => fallbackAll();
-        } else {
-          fallbackAll();
-        }
+        req.onerror = () => resolve(null);
       });
     } catch (e) {
       console.warn('IDB get error:', e);

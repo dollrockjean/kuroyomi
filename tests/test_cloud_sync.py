@@ -76,16 +76,16 @@ class CloudSyncAndBridgingTests(unittest.TestCase):
         self.assertGreaterEqual(len(novels), 1)
         self.assertEqual(novels[0]["title"], "Chronicles of the Aether Sovereign")
 
-    def test_02_export_backup_data_fallback(self):
-        """Test that export_backup_data falls back to primary library if given user has no books."""
+    def test_02_export_backup_data_isolation(self):
+        """Test that export_backup_data strictly isolates data to requesting user without cross-user leakage."""
         # Empty user queries backup
         backup = database.export_backup_data("usr_completely_empty_id")
         self.assertIn("novels", backup)
-        self.assertGreaterEqual(len(backup["novels"]), 1)
-        self.assertGreaterEqual(len(backup["chapters"]), 1)
+        self.assertEqual(len(backup["novels"]), 0)
+        self.assertEqual(len(backup["chapters"]), 0)
 
-    def test_03_import_backup_data_bridges_to_primary_user(self):
-        """Test that restoring a backup automatically populates READER-PRIMARY."""
+    def test_03_import_backup_data_isolates_to_restoring_user(self):
+        """Test that restoring a backup populates the restoring user and preserves primary user isolation."""
         test_user = "usr_mac_unique_uploader"
         database.ensure_user_exists(test_user)
 
@@ -128,8 +128,6 @@ class CloudSyncAndBridgingTests(unittest.TestCase):
         res = database.import_backup_data(backup_data, test_user)
         self.assertEqual(res.get("novels_restored"), 1)
 
-        # Primary user must also have access to this novel
-        primary_uid = database.get_or_create_user("READER-PRIMARY")
         class MockHandler:
             def __init__(self):
                 self.sent_json = None
@@ -138,13 +136,21 @@ class CloudSyncAndBridgingTests(unittest.TestCase):
                 self.sent_json = data
                 self.sent_status = status
 
+        # Restoring user has access to their novel
         h = MockHandler()
-        server.NovelReaderHandler.handle_api_get(h, "/api/novels", {"user_id": [primary_uid]})
-        novel_titles = [n["title"] for n in h.sent_json.get("novels", [])]
-        self.assertIn("Cloud Sync Mastery", novel_titles)
+        server.NovelReaderHandler.handle_api_get(h, "/api/novels", {"user_id": [test_user]})
+        user_titles = [n["title"] for n in h.sent_json.get("novels", [])]
+        self.assertIn("Cloud Sync Mastery", user_titles)
+
+        # Primary user must NOT be contaminated with this book
+        primary_uid = database.get_or_create_user("READER-PRIMARY")
+        h_primary = MockHandler()
+        server.NovelReaderHandler.handle_api_get(h_primary, "/api/novels", {"user_id": [primary_uid]})
+        primary_titles = [n["title"] for n in h_primary.sent_json.get("novels", [])]
+        self.assertNotIn("Cloud Sync Mastery", primary_titles)
 
     def test_04_cross_device_progress_continuity(self):
-        """Test reading progress continuity across devices for newly linked devices."""
+        """Test reading progress continuity across devices paired with the same user account."""
         class MockHandler:
             def __init__(self):
                 self.sent_json = None
@@ -153,12 +159,19 @@ class CloudSyncAndBridgingTests(unittest.TestCase):
                 self.sent_json = data
                 self.sent_status = status
 
+        test_user = "usr_mac_unique_uploader"
         h_last = MockHandler()
-        server.NovelReaderHandler.handle_api_get(h_last, "/api/last-read", {"user_id": ["universal_device_mirror"]})
+        server.NovelReaderHandler.handle_api_get(h_last, "/api/last-read", {"user_id": [test_user]})
         last_read = h_last.sent_json.get("last_read")
         self.assertIsNotNone(last_read)
         self.assertEqual(last_read["novel_title"], "Cloud Sync Mastery")
         self.assertEqual(last_read["scroll_percent"], 50.0)
+
+        # Unpaired stranger must NOT see this user's progress
+        h_stranger = MockHandler()
+        server.NovelReaderHandler.handle_api_get(h_stranger, "/api/last-read", {"user_id": ["stranger_user_id"]})
+        stranger_last_read = h_stranger.sent_json.get("last_read")
+        self.assertIsNone(stranger_last_read)
 
 if __name__ == "__main__":
     unittest.main()

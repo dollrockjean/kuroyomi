@@ -435,42 +435,34 @@ const Reader = {
         let chooseSource = null;
 
         if (hasLocal && hasCloud) {
-          if (localChIdx !== -1 && cloudChIdx !== -1) {
-            if (localChIdx > cloudChIdx) {
-              // Local is further ahead in chapter sequence
-              chooseSource = 'local';
-            } else if (cloudChIdx > localChIdx) {
-              // Cloud is further ahead in chapter sequence
-              chooseSource = 'cloud';
-            } else {
-              // Same chapter: compare paragraph index and scroll percent
+          const localTime = local.savedAt || 0;
+          const cloudTime = (data.progress.updated_at || 0) * 1000;
+
+          // If one is clearly newer (by more than 1.5s), newer position wins (forward OR backward)
+          if (localTime > 0 && cloudTime > 0 && Math.abs(localTime - cloudTime) > 1500) {
+            chooseSource = (localTime > cloudTime) ? 'local' : 'cloud';
+          } else if (localTime > 0 && cloudTime === 0) {
+            chooseSource = 'local';
+          } else if (cloudTime > 0 && localTime === 0) {
+            chooseSource = 'cloud';
+          } else {
+            // Timestamps are close or identical: check position
+            if (local.chapterId === data.progress.chapter_id) {
               const localPid = local.paragraphIndex || 0;
               const cloudPid = data.progress.paragraph_index || 0;
               const localPct = local.scrollPercent || 0;
               const cloudPct = data.progress.scroll_percent || 0;
-
               const localScore = (localPid * 1000) + localPct;
               const cloudScore = (cloudPid * 1000) + cloudPct;
-
-              if (localScore > cloudScore) {
-                chooseSource = 'local';
-              } else if (cloudScore > localScore) {
-                chooseSource = 'cloud';
+              if (localScore !== cloudScore) {
+                chooseSource = (localScore > cloudScore) ? 'local' : 'cloud';
               } else {
-                // Same position: break tie with saved timestamp
-                const localTime = local.savedAt || 0;
-                const cloudTime = (data.progress.updated_at || 0) * 1000;
                 chooseSource = (localTime >= cloudTime) ? 'local' : 'cloud';
               }
+            } else {
+              // Different chapters with close timestamps: break tie with timestamp
+              chooseSource = (localTime >= cloudTime) ? 'local' : 'cloud';
             }
-          } else if (localChIdx !== -1) {
-            chooseSource = 'local';
-          } else if (cloudChIdx !== -1) {
-            chooseSource = 'cloud';
-          } else {
-            const localTime = local.savedAt || 0;
-            const cloudTime = (data.progress.updated_at || 0) * 1000;
-            chooseSource = (localTime >= cloudTime) ? 'local' : 'cloud';
           }
         } else if (hasLocal) {
           chooseSource = 'local';
@@ -483,14 +475,21 @@ const Reader = {
           targetPid = local.paragraphIndex || 0;
           targetPercent = local.scrollPercent || 0;
 
-          // If local was ahead of cloud, immediately push forward to cloud
-          if (hasCloud && (localChIdx > cloudChIdx || (localChIdx === cloudChIdx && ((local.paragraphIndex || 0) > (data.progress.paragraph_index || 0) || (local.scrollPercent || 0) > (data.progress.scroll_percent || 0))))) {
+          // If local was newer than cloud, push it to cloud so all devices sync to it
+          const localTime = local.savedAt || 0;
+          const cloudTime = (data.progress ? (data.progress.updated_at || 0) : 0) * 1000;
+          if (!hasCloud || localTime > cloudTime) {
             SyncService.syncReadingProgress(
               novelId,
               local.volumeId || this.currentVolumeId,
               targetChapterId,
               targetPid,
-              targetPercent
+              targetPercent,
+              {
+                chapterTitle: local.chapterTitle || '',
+                globalIndex: local.globalIndex || 1,
+                overallPercent: local.overallPercent !== undefined ? local.overallPercent : 0
+              }
             );
           }
         } else if (chooseSource === 'cloud') {
@@ -498,12 +497,22 @@ const Reader = {
           targetPid = data.progress.paragraph_index || 0;
           targetPercent = data.progress.scroll_percent || 0;
 
+          // Resolve chapter global index and title from chapterList
+          const chObj = this.chapterList.find(c => c.id === targetChapterId);
+          const chIdx = chObj ? (chObj.global_index ? chObj.global_index - 1 : this.chapterList.indexOf(chObj)) : 0;
+          const totalCh = this.chapterList.length || 1;
+          const cloudOverall = Math.min(100, Math.max(0, ((chIdx + (targetPercent / 100)) / totalCh) * 100));
+
           // Update local cache with latest cloud reading position
           Storage.saveLocalProgress(novelId, {
             volumeId: data.progress.volume_id,
             chapterId: targetChapterId,
             paragraphIndex: targetPid,
-            scrollPercent: targetPercent
+            scrollPercent: targetPercent,
+            chapterTitle: chObj ? chObj.title : '',
+            globalIndex: chObj ? (chObj.global_index || chIdx + 1) : 1,
+            overallPercent: cloudOverall,
+            savedAt: (data.progress.updated_at || 0) * 1000
           });
         }
       }
@@ -783,12 +792,31 @@ const Reader = {
       scrollPercent = docHeight > 0 ? Math.min(100, Math.max(0, (window.scrollY / docHeight) * 100)) : 0;
     }
 
+    // Calculate whole-book overall percentage
+    let overallPercent = 0;
+    const totalCh = (this.chapterList && this.chapterList.length) ? this.chapterList.length : 1;
+    let chIdx = 0;
+    if (typeof this.currentChapter.global_index === 'number' && this.currentChapter.global_index >= 1) {
+      chIdx = this.currentChapter.global_index - 1;
+    } else {
+      chIdx = (this.chapterList || []).findIndex(c => c.id === this.currentChapter.id);
+      if (chIdx < 0) chIdx = 0;
+    }
+    const chapterScrollFrac = scrollPercent / 100;
+    overallPercent = Math.min(100, Math.max(0, ((chIdx + chapterScrollFrac) / totalCh) * 100));
+
     SyncService.syncReadingProgress(
       this.currentNovel.id,
       this.currentVolumeId,
       this.currentChapter.id,
       pid,
-      scrollPercent
+      scrollPercent,
+      {
+        chapterTitle: this.currentChapter.title || '',
+        globalIndex: (this.currentChapter && this.currentChapter.global_index) || (chIdx + 1),
+        totalChapters: totalCh,
+        overallPercent: Math.round(overallPercent * 10) / 10
+      }
     );
   },
 

@@ -6,8 +6,11 @@ import urllib.parse
 import json
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
+if TESTS_DIR not in sys.path:
+    sys.path.insert(0, TESTS_DIR)
 
 import server
 import database
@@ -62,7 +65,7 @@ class PitchAndQuickSheetTests(unittest.TestCase):
         conn.close()
 
     def test_04_reading_progress_continuity_resolution(self):
-        # Simulate chapterList and candidate selection
+        # Simulate chapterList and candidate selection with new timestamp precedence
         chapter_list = [
             {"id": "ch_1", "title": "Chapter 1"},
             {"id": "ch_2", "title": "Chapter 2"},
@@ -75,29 +78,27 @@ class PitchAndQuickSheetTests(unittest.TestCase):
             has_cloud = bool(cloud and cloud.get("chapter_id"))
             has_local = bool(local and local.get("chapterId"))
 
-            cloud_idx = next((i for i, c in enumerate(ch_list) if c["id"] == cloud["chapter_id"]), -1) if has_cloud else -1
-            local_idx = next((i for i, c in enumerate(ch_list) if c["id"] == local["chapterId"]), -1) if has_local else -1
-
             choose_source = None
             if has_local and has_cloud:
-                if local_idx != -1 and cloud_idx != -1:
-                    if local_idx > cloud_idx:
-                        choose_source = 'local'
-                    elif cloud_idx > local_idx:
-                        choose_source = 'cloud'
-                    else:
+                local_time = local.get("savedAt", 0)
+                cloud_time = int(cloud.get("updated_at", 0) * 1000)
+
+                if local_time > 0 and cloud_time > 0 and abs(local_time - cloud_time) > 1500:
+                    choose_source = 'local' if local_time > cloud_time else 'cloud'
+                elif local_time > 0 and cloud_time == 0:
+                    choose_source = 'local'
+                elif cloud_time > 0 and local_time == 0:
+                    choose_source = 'cloud'
+                else:
+                    if local.get("chapterId") == cloud.get("chapter_id"):
                         local_score = (local.get("paragraphIndex", 0) * 1000) + local.get("scrollPercent", 0)
                         cloud_score = (cloud.get("paragraph_index", 0) * 1000) + cloud.get("scroll_percent", 0)
-                        if local_score > cloud_score:
-                            choose_source = 'local'
-                        elif cloud_score > local_score:
-                            choose_source = 'cloud'
+                        if local_score != cloud_score:
+                            choose_source = 'local' if local_score > cloud_score else 'cloud'
                         else:
-                            choose_source = 'local' if local.get("savedAt", 0) >= (cloud.get("updated_at", 0) * 1000) else 'cloud'
-                elif local_idx != -1:
-                    choose_source = 'local'
-                elif cloud_idx != -1:
-                    choose_source = 'cloud'
+                            choose_source = 'local' if local_time >= cloud_time else 'cloud'
+                    else:
+                        choose_source = 'local' if local_time >= cloud_time else 'cloud'
             elif has_local:
                 choose_source = 'local'
             elif has_cloud:
@@ -105,24 +106,24 @@ class PitchAndQuickSheetTests(unittest.TestCase):
 
             return choose_source
 
-        # Case 1: Local is ahead in chapter sequence -> must choose local
-        local_ahead = {"chapterId": "ch_5", "paragraphIndex": 2, "scrollPercent": 10.0, "savedAt": 2000}
-        cloud_behind = {"chapter_id": "ch_2", "paragraph_index": 15, "scroll_percent": 90.0, "updated_at": 1.0}
-        self.assertEqual(resolve_progress(local_ahead, cloud_behind, chapter_list), 'local')
+        # Case 1: Local navigated BACKWARD from Ch 5 to Ch 2 more recently -> local wins (Ch 2)
+        local_went_back = {"chapterId": "ch_2", "paragraphIndex": 0, "scrollPercent": 0.0, "savedAt": 5000}
+        cloud_old_ahead = {"chapter_id": "ch_5", "paragraph_index": 2, "scroll_percent": 10.0, "updated_at": 1.0}
+        self.assertEqual(resolve_progress(local_went_back, cloud_old_ahead, chapter_list), 'local')
 
-        # Case 2: Cloud is ahead in chapter sequence (read on another device) -> must choose cloud
+        # Case 2: Cloud read ahead on another device more recently -> cloud wins (Ch 4)
         local_behind = {"chapterId": "ch_2", "paragraphIndex": 15, "scrollPercent": 90.0, "savedAt": 1000}
-        cloud_ahead = {"chapter_id": "ch_4", "paragraph_index": 0, "scroll_percent": 0.0, "updated_at": 3.0}
+        cloud_ahead = {"chapter_id": "ch_4", "paragraph_index": 0, "scroll_percent": 0.0, "updated_at": 8.0}
         self.assertEqual(resolve_progress(local_behind, cloud_ahead, chapter_list), 'cloud')
 
-        # Case 3: Same chapter, local paragraph ahead -> must choose local
+        # Case 3: Same chapter, local paragraph ahead -> local wins
         local_same_ch_ahead = {"chapterId": "ch_3", "paragraphIndex": 8, "scrollPercent": 20.0, "savedAt": 2000}
         cloud_same_ch_behind = {"chapter_id": "ch_3", "paragraph_index": 2, "scroll_percent": 50.0, "updated_at": 1.0}
         self.assertEqual(resolve_progress(local_same_ch_ahead, cloud_same_ch_behind, chapter_list), 'local')
 
-        # Case 4: Same chapter, cloud paragraph ahead -> must choose cloud
+        # Case 4: Same chapter, cloud paragraph ahead -> cloud wins
         local_same_ch_behind = {"chapterId": "ch_3", "paragraphIndex": 2, "scrollPercent": 20.0, "savedAt": 1000}
-        cloud_same_ch_ahead = {"chapter_id": "ch_3", "paragraph_index": 5, "scroll_percent": 10.0, "updated_at": 2.0}
+        cloud_same_ch_ahead = {"chapter_id": "ch_3", "paragraph_index": 5, "scroll_percent": 10.0, "updated_at": 5.0}
         self.assertEqual(resolve_progress(local_same_ch_behind, cloud_same_ch_ahead, chapter_list), 'cloud')
 
     def test_05_settings_api_pitch_save_and_retrieve(self):
@@ -150,6 +151,117 @@ class PitchAndQuickSheetTests(unittest.TestCase):
         self.assertEqual(res_get["settings"]["tts_pitch"], -8.0)
         self.assertEqual(res_get["settings"]["tts_rate"], 1.2)
         self.assertEqual(res_get["settings"]["theme"], "dark-oled")
+
+    def test_06_novels_progress_overall_percent(self):
+        """Test that /api/novels calculates accurate progress_overall_percent."""
+        from test_api_direct import create_mock_handler
+        import sample_books
+        uid = "test_progress_bar_user"
+        database.ensure_user_exists(uid)
+        sample_books.seed_demo_novel(uid)
+
+        # Query novels
+        h = create_mock_handler(f"/api/novels?user_id={uid}", "GET")
+        h.do_GET()
+        res = json.loads(h.wfile.getvalue().decode('utf-8'))
+        self.assertIn("novels", res)
+        novels = res["novels"]
+        self.assertGreaterEqual(len(novels), 1)
+        nov = novels[0]
+        self.assertIn("progress_overall_percent", nov)
+        self.assertIsInstance(nov["progress_overall_percent"], (int, float))
+
+    def test_07_pairing_deduplication(self):
+        """Test that restoring a backup never duplicates existing novel titles or re-injects demo books."""
+        user_id = "test_dedup_user"
+        database.ensure_user_exists(user_id)
+
+        # First restore
+        b1 = {
+            "novels": [{
+                "id": "nov_real_book_1",
+                "title": "Solo Leveling Chronicles",
+                "author": "Chugong",
+                "description": "Hunter novel",
+                "cover_data": None
+            }],
+            "volumes": [],
+            "chapters": [],
+            "progress": [],
+            "settings": {}
+        }
+        database.import_backup_data(b1, user_id)
+
+        # Attempt to import demo novel when real book exists
+        b_demo = {
+            "novels": [{
+                "id": "nov_demo_test",
+                "title": "Chronicles of the Aether Sovereign",
+                "author": "Kuroyomi Team",
+                "description": "Demo book",
+                "cover_data": None
+            }],
+            "volumes": [],
+            "chapters": [],
+            "progress": [],
+            "settings": {}
+        }
+        database.import_backup_data(b_demo, user_id)
+
+        conn = database.get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT id, title FROM novels WHERE user_id = ?", (user_id,))
+        rows = cur.fetchall()
+        conn.close()
+
+        titles = [r["title"] for r in rows]
+        self.assertIn("Solo Leveling Chronicles", titles)
+        # Demo novel must be rejected because real book exists
+        self.assertNotIn("Chronicles of the Aether Sovereign", titles)
+
+    def test_08_deobfuscation_and_clean_text(self):
+        """Test that dotted words like cl.u.s.t.ered or f.u.c.k are de-obfuscated."""
+        import epub_parser
+        raw = "The monsters were cl.u.s.t.ered together. What the f.u.c.k is that? Visit example.com in the U.S.A. at 5 p.m."
+        cleaned = epub_parser.deobfuscate_censored_words(raw)
+        self.assertIn("clustered", cleaned)
+        self.assertIn("fuck", cleaned)
+        # Whitelisted acronyms and domains must remain intact
+        self.assertIn("example.com", cleaned)
+        self.assertIn("U.S.A.", cleaned)
+        self.assertIn("p.m.", cleaned)
+
+        # Also test API endpoint
+        from test_api_direct import create_mock_handler
+        import sample_books
+        uid = "test_clean_user"
+        database.ensure_user_exists(uid)
+        nid = sample_books.seed_demo_novel(uid)
+
+        # Insert a chapter with dotted words
+        conn = database.get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM chapters WHERE novel_id = ? LIMIT 1", (nid,))
+        ch_id = cur.fetchone()["id"]
+        cur.execute("UPDATE chapters SET content_html = ? WHERE id = ?", ("<p>They were cl.u.s.t.ered and s.h.i.t occurred.</p>", ch_id))
+        conn.commit()
+        conn.close()
+
+        clean_body = json.dumps({"novel_id": nid, "user_id": uid}).encode('utf-8')
+        h_clean = create_mock_handler("/api/novels/clean-text", "POST", clean_body)
+        h_clean.do_POST()
+        clean_res = json.loads(h_clean.wfile.getvalue().decode('utf-8'))
+        self.assertTrue(clean_res["success"])
+        self.assertGreaterEqual(clean_res["cleaned_chapters"], 1)
+
+        # Verify chapter content cleaned in DB
+        conn = database.get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT content_html FROM chapters WHERE id = ?", (ch_id,))
+        updated_content = cur.fetchone()["content_html"]
+        conn.close()
+        self.assertIn("clustered", updated_content)
+        self.assertIn("shit", updated_content)
 
 if __name__ == "__main__":
     unittest.main()

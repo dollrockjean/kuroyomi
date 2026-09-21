@@ -93,6 +93,7 @@ const App = {
       this.bindLibraryToolbarEvents();
       this.bindSyncEvents();
       this.bindBackupRestoreEvents();
+      this.bindNovelSettingsModalEvents();
       this.bindNetworkEvents();
 
       // Register Service Worker for Mobile PWA Offline Reading
@@ -167,6 +168,13 @@ const App = {
       if (e) {
         e.preventDefault();
         e.stopPropagation();
+      }
+      try {
+        if (typeof Reader !== 'undefined' && Reader.flushPendingProgress) {
+          Reader.flushPendingProgress();
+        }
+      } catch (err) {
+        console.warn('Reader.flushPendingProgress warning:', err);
       }
       try {
         if (typeof AutoScroll !== 'undefined' && AutoScroll.stop) AutoScroll.stop();
@@ -515,6 +523,9 @@ const App = {
       const backdrop = document.getElementById('drawerBackdrop');
       if (panel) panel.classList.add('open');
       if (backdrop) backdrop.classList.add('open');
+      if (typeof AutoScroll !== 'undefined' && AutoScroll.isActive) {
+        AutoScroll.pauseForMenu();
+      }
       this.updateSyncDisplay();
 
       // Center on active chapter if opening chapters tab from within a book
@@ -537,6 +548,9 @@ const App = {
   closeMasterPanel() {
     document.getElementById('masterSidePanel').classList.remove('open');
     document.getElementById('drawerBackdrop').classList.remove('open');
+    if (typeof AutoScroll !== 'undefined' && AutoScroll.menuPaused) {
+      AutoScroll.resumeFromMenu();
+    }
   },
 
   toggleMasterPanel(tabName = null) {
@@ -570,6 +584,7 @@ const App = {
     const autoScrollText = document.getElementById('quickSheetAutoScrollText');
     const speedVal = document.getElementById('quickSheetAutoScrollSpeedVal');
     const speedDisplay = document.getElementById('quickSheetAutoScrollSpeedDisplay');
+    const speedSlider = document.getElementById('quickSheetAutoScrollSpeedSlider');
 
     if (bar) {
       bar.style.display = isAct ? 'flex' : 'none';
@@ -586,12 +601,19 @@ const App = {
     if (speedDisplay) {
       speedDisplay.textContent = `${AutoScroll.speed} px/s`;
     }
+    if (speedSlider) {
+      speedSlider.value = AutoScroll.speed;
+    }
   },
 
   openMobileQuickSheet() {
     const sheet = document.getElementById('mobileQuickSheet');
     const backdrop = document.getElementById('quickSheetBackdrop');
     if (!sheet || !backdrop) return;
+
+    if (typeof AutoScroll !== 'undefined' && AutoScroll.isActive) {
+      AutoScroll.pauseForMenu();
+    }
 
     // Ensure state displays are fresh
     const cur = window.ReaderSettings;
@@ -674,6 +696,10 @@ const App = {
     const backdrop = document.getElementById('quickSheetBackdrop');
     if (sheet) sheet.classList.remove('open');
     if (backdrop) backdrop.classList.remove('open');
+
+    if (typeof AutoScroll !== 'undefined' && AutoScroll.menuPaused) {
+      AutoScroll.resumeFromMenu();
+    }
 
     // Restore floating controls smoothly
     const floatBar = document.getElementById('readerFloatingBar');
@@ -770,6 +796,17 @@ const App = {
       autoScrollFastBtn.addEventListener('click', () => {
         if (typeof AutoScroll !== 'undefined') {
           AutoScroll.changeSpeed(5);
+          this.updateAutoScrollUI();
+        }
+      });
+    }
+
+    const autoScrollSlider = document.getElementById('quickSheetAutoScrollSpeedSlider');
+    if (autoScrollSlider) {
+      autoScrollSlider.addEventListener('input', (e) => {
+        const val = parseInt(e.target.value, 10);
+        if (!isNaN(val) && typeof AutoScroll !== 'undefined') {
+          AutoScroll.setSpeed(val);
           this.updateAutoScrollUI();
         }
       });
@@ -1526,7 +1563,7 @@ const App = {
 
       // Auto-Shield: Check if server is missing any books present in local device mirror
       if (allowAutoRestore && typeof IDB !== 'undefined') {
-        const mirroredBackup = await IDB.getLibraryMirror(userId);
+        const mirroredBackup = await IDB.getLibraryMirror(userId, false);
         if (mirroredBackup && mirroredBackup.novels && mirroredBackup.novels.length > 0) {
           const serverNovelIds = new Set(this.novels.map(n => n.id));
           const missingNovels = mirroredBackup.novels.filter(n => !serverNovelIds.has(n.id));
@@ -1812,10 +1849,10 @@ const App = {
       // Default: last_read
       const getLastReadTime = (n) => {
         let t = n.last_read_at || 0;
-        if (typeof Storage !== 'undefined' && Storage.getProgress) {
-          const local = Storage.getProgress(SyncService.currentUserId, n.id);
-          if (local && local.updated_at) {
-            t = Math.max(t, local.updated_at);
+        if (typeof Storage !== 'undefined' && Storage.getLocalProgress) {
+          const local = Storage.getLocalProgress(n.id);
+          if (local && local.savedAt) {
+            t = Math.max(t, local.savedAt / 1000);
           }
         }
         return Math.max(t, n.created_at || 0);
@@ -1886,8 +1923,20 @@ const App = {
 
     items.forEach(n => {
       const coverSrc = n.cover_data || FALLBACK_COVER;
-      const lastReadTag = n.last_chapter_title ? `Last: ${n.last_chapter_title}` : 'Not started';
-      const readPercent = Math.round(n.progress_overall_percent !== undefined ? n.progress_overall_percent : (n.progress_scroll || 0));
+      let lastReadTag = n.last_chapter_title ? `Last: ${n.last_chapter_title}` : 'Not started';
+      let readPercent = Math.round(n.progress_overall_percent !== undefined ? n.progress_overall_percent : (n.progress_scroll || 0));
+
+      const localProg = (typeof Storage !== 'undefined' && Storage.getLocalProgress) ? Storage.getLocalProgress(n.id) : null;
+      if (localProg && localProg.overallPercent !== undefined) {
+        const localTime = localProg.savedAt || 0;
+        const serverTime = (n.last_read_at || 0) * 1000;
+        if (localTime >= serverTime || readPercent === 0) {
+          readPercent = Math.round(localProg.overallPercent);
+          if (localProg.chapterTitle) {
+            lastReadTag = `Last: ${localProg.chapterTitle}`;
+          }
+        }
+      }
 
       const triggerCover = () => {
         this.targetCoverNovelId = n.id;
@@ -1917,21 +1966,23 @@ const App = {
               <span class="badge-brutal" style="font-size: 10px; padding: 1px 5px;">${readPercent}%</span>
             </div>
           </div>
-          <div class="novel-list-actions">
+          <div class="novel-list-actions" style="display: flex; align-items: center; gap: 8px;">
             <button class="btn-brutal btn-brutal-accent btn-sm read-novel-btn" data-id="${n.id}">Read</button>
-            <button class="btn-brutal btn-sm add-vol-btn" data-id="${n.id}" title="Add another .epub volume">+ Vol</button>
-            <button class="btn-brutal btn-sm cover-novel-btn" data-id="${n.id}" title="Upload custom cover">Cover</button>
-            <button class="btn-brutal btn-sm btn-brutal-danger delete-novel-btn" data-id="${n.id}" title="Delete novel">Del</button>
+            <button class="btn-brutal btn-sm novel-settings-cog-btn" data-id="${n.id}" title="Book Settings (+ Volume, Change Cover, Fix Dotted Words, Delete)" style="padding: 6px 9px; display: flex; align-items: center; justify-content: center;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+              </svg>
+            </button>
           </div>
         `;
 
         card.querySelector('.read-novel-btn').onclick = () => Reader.openNovel(n.id, true);
         const listTitle = card.querySelector('.novel-list-title');
         if (listTitle) listTitle.onclick = () => Reader.openNovel(n.id, true);
-        card.querySelector('.add-vol-btn').onclick = () => this.openUploadModal(n.id, n.title);
-        card.querySelector('.delete-novel-btn').onclick = () => this.deleteNovel(n.id, n.title);
+        const listSettingsBtn = card.querySelector('.novel-settings-cog-btn');
+        if (listSettingsBtn) listSettingsBtn.onclick = (e) => { e.stopPropagation(); this.openNovelSettingsModal(n.id, n.title, coverSrc); };
         card.querySelector('.novel-list-cover-wrap').onclick = triggerCover;
-        card.querySelector('.cover-novel-btn').onclick = triggerCover;
 
         grid.appendChild(card);
       } else {
@@ -1961,13 +2012,14 @@ const App = {
               </div>
             </div>
             <div class="novel-card-actions">
-              <div class="novel-card-primary-action">
-                <button class="btn-brutal btn-brutal-accent read-novel-btn" data-id="${n.id}">Read</button>
-              </div>
-              <div class="novel-card-secondary-actions">
-                <button class="btn-brutal btn-sm add-vol-btn" data-id="${n.id}" title="Add another .epub volume">+ Vol</button>
-                <button class="btn-brutal btn-sm cover-novel-btn" data-id="${n.id}" title="Upload custom cover">Cover</button>
-                <button class="btn-brutal btn-sm btn-brutal-danger delete-novel-btn" data-id="${n.id}" title="Delete novel">Del</button>
+              <div class="novel-card-primary-action" style="flex: 1; display: flex; gap: 8px;">
+                <button class="btn-brutal btn-brutal-accent read-novel-btn" data-id="${n.id}" style="flex: 1;">Read</button>
+                <button class="btn-brutal btn-sm novel-settings-cog-btn" data-id="${n.id}" title="Book Settings (+ Volume, Change Cover, Fix Dotted Words, Delete)" style="padding: 7px 11px; display: flex; align-items: center; justify-content: center;">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                  </svg>
+                </button>
               </div>
             </div>
           </div>
@@ -1976,10 +2028,9 @@ const App = {
         card.querySelector('.read-novel-btn').onclick = () => Reader.openNovel(n.id, true);
         const cardTitle = card.querySelector('.novel-card-title');
         if (cardTitle) cardTitle.onclick = () => Reader.openNovel(n.id, true);
-        card.querySelector('.add-vol-btn').onclick = () => this.openUploadModal(n.id, n.title);
-        card.querySelector('.delete-novel-btn').onclick = () => this.deleteNovel(n.id, n.title);
+        const cardSettingsBtn = card.querySelector('.novel-settings-cog-btn');
+        if (cardSettingsBtn) cardSettingsBtn.onclick = (e) => { e.stopPropagation(); this.openNovelSettingsModal(n.id, n.title, coverSrc); };
         card.querySelector('.novel-card-cover-wrap').onclick = triggerCover;
-        card.querySelector('.cover-novel-btn').onclick = triggerCover;
 
         grid.appendChild(card);
       }
@@ -2021,6 +2072,109 @@ const App = {
     return files.slice().sort((a, b) => {
       return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
     });
+  },
+
+  openNovelSettingsModal(novelId, title, coverSrc) {
+    this.activeSettingsNovel = { id: novelId, title: title, coverSrc: coverSrc };
+    const modal = document.getElementById('novelSettingsModal');
+    const nameEl = document.getElementById('novelSettingsBookName');
+    const statusEl = document.getElementById('novelSettingsCleanStatus');
+    if (nameEl) nameEl.textContent = title || 'Selected Book';
+    if (statusEl) {
+      statusEl.style.display = 'none';
+      statusEl.textContent = '';
+    }
+    if (modal) modal.style.display = 'flex';
+  },
+
+  closeNovelSettingsModal() {
+    const modal = document.getElementById('novelSettingsModal');
+    if (modal) modal.style.display = 'none';
+    this.activeSettingsNovel = null;
+  },
+
+  bindNovelSettingsModalEvents() {
+    const backdrop = document.getElementById('novelSettingsBackdrop');
+    const closeBtn = document.getElementById('closeNovelSettingsBtn');
+    if (backdrop) backdrop.addEventListener('click', () => this.closeNovelSettingsModal());
+    if (closeBtn) closeBtn.addEventListener('click', () => this.closeNovelSettingsModal());
+
+    const addVolBtn = document.getElementById('novelSettingsAddVolBtn');
+    if (addVolBtn) {
+      addVolBtn.addEventListener('click', () => {
+        if (!this.activeSettingsNovel) return;
+        const { id, title } = this.activeSettingsNovel;
+        this.closeNovelSettingsModal();
+        this.openUploadModal(id, title);
+      });
+    }
+
+    const coverBtn = document.getElementById('novelSettingsCoverBtn');
+    if (coverBtn) {
+      coverBtn.addEventListener('click', () => {
+        if (!this.activeSettingsNovel) return;
+        const { id } = this.activeSettingsNovel;
+        this.closeNovelSettingsModal();
+        this.targetCoverNovelId = id;
+        const input = document.getElementById('novelCoverInput');
+        if (input) input.click();
+      });
+    }
+
+    const cleanBtn = document.getElementById('novelSettingsCleanBtn');
+    if (cleanBtn) {
+      cleanBtn.addEventListener('click', async () => {
+        if (!this.activeSettingsNovel) return;
+        const { id, title } = this.activeSettingsNovel;
+        const statusEl = document.getElementById('novelSettingsCleanStatus');
+        if (statusEl) {
+          statusEl.style.display = 'block';
+          statusEl.style.borderColor = 'var(--accent)';
+          statusEl.textContent = 'Fixing dotted words across all chapters...';
+        }
+        try {
+          const uid = (window.SyncService && window.SyncService.currentUserId) || (window.ReaderSettings && window.ReaderSettings.user_id) || 'usr_default';
+          const res = await fetch('/api/novels/clean-text', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ novel_id: id, user_id: uid })
+          });
+          const data = await res.json();
+          if (data.success) {
+            if (statusEl) {
+              statusEl.style.borderColor = 'var(--accent)';
+              statusEl.textContent = `Cleaned ${data.cleaned_chapters} of ${data.total_chapters} chapters successfully!`;
+            }
+            // If currently reading this novel, reload chapter content
+            if (window.Reader && window.Reader.currentNovel && window.Reader.currentNovel.id === id) {
+              if (window.Reader.currentChapter) {
+                window.Reader.loadChapter(window.Reader.currentChapter.id, false);
+              }
+            }
+          } else {
+            if (statusEl) {
+              statusEl.style.borderColor = '#ef4444';
+              statusEl.textContent = `Error: ${data.error || 'Failed to clean text'}`;
+            }
+          }
+        } catch (err) {
+          if (statusEl) {
+            statusEl.style.borderColor = '#ef4444';
+            statusEl.textContent = `Request failed: ${err.message}`;
+          }
+        }
+      });
+    }
+
+    const deleteBtn = document.getElementById('novelSettingsDeleteBtn');
+    if (deleteBtn) {
+      deleteBtn.addEventListener('click', () => {
+        if (!this.activeSettingsNovel) return;
+        const { id, title } = this.activeSettingsNovel;
+        this.closeNovelSettingsModal();
+        this.deleteNovel(id, title);
+      });
+    }
   },
 
   openUploadModal(targetNovelId = null, targetNovelTitle = null) {

@@ -83,9 +83,19 @@ class NovelReaderIntegrationTests(unittest.TestCase):
             self.assertEqual(devices[0]["device_name"], device_name)
 
     def test_02_novels_listing_and_auto_seed(self):
-        """Test novel library loading and automatic demo novel seeding."""
+        """Test novel library isolation for clean accounts, and listing after seeding."""
         user_id = "test_user_reader"
-        # Novel list automatically seeds the multi-volume demo novel if user has none
+        # Brand new user has 0 novels (no unwanted placeholder book automatically injected)
+        with urllib.request.urlopen(f"{BASE_URL}/api/novels?user_id={user_id}") as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            novels = data.get("novels", [])
+            self.assertEqual(len(novels), 0)
+
+        # Seed novel for this specific user
+        import sample_books
+        sample_books.seed_demo_novel(user_id)
+
+        # Novel list now reflects the seeded novel
         with urllib.request.urlopen(f"{BASE_URL}/api/novels?user_id={user_id}") as resp:
             data = json.loads(resp.read().decode('utf-8'))
             novels = data.get("novels", [])

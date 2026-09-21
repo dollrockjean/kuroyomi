@@ -2,6 +2,7 @@
 const AutoScroll = {
   isActive: false,
   isPaused: false,
+  menuPaused: false,
   speed: 35, // pixels per second
   lastFrameTime: null,
   animationId: null,
@@ -17,14 +18,19 @@ const AutoScroll = {
   },
 
   bindEvents() {
-    // Detect user manual scroll/touch to pause auto-scroll temporarily
-    const handleUserInteraction = () => {
+    // Detect user manual scroll/touch in reader area to pause auto-scroll temporarily
+    const handleUserInteraction = (e) => {
+      if (e && e.target && e.target.closest && e.target.closest('#mobileQuickSheet, #masterPanel, .modal, #quickSheetBackdrop, .master-panel-backdrop')) {
+        return;
+      }
+      if (this.menuPaused) return;
+
       if (this.isActive && !this.isPaused) {
         this.isPaused = true;
         this.updatePillUI();
         if (this.pauseTimeout) clearTimeout(this.pauseTimeout);
         this.pauseTimeout = setTimeout(() => {
-          if (this.isActive) {
+          if (this.isActive && !this.menuPaused) {
             this.isPaused = false;
             this.lastFrameTime = performance.now();
             this.updatePillUI();
@@ -38,10 +44,32 @@ const AutoScroll = {
     window.addEventListener('touchstart', handleUserInteraction, { passive: true });
   },
 
+  pauseForMenu() {
+    if (this.isActive) {
+      this.menuPaused = true;
+      this.isPaused = true;
+      if (this.pauseTimeout) clearTimeout(this.pauseTimeout);
+      this.pauseTimeout = null;
+      if (this.animationId) cancelAnimationFrame(this.animationId);
+      this.updatePillUI();
+    }
+  },
+
+  resumeFromMenu() {
+    if (this.isActive && this.menuPaused) {
+      this.menuPaused = false;
+      this.isPaused = false;
+      this.lastFrameTime = performance.now();
+      this.updatePillUI();
+      this.loop();
+    }
+  },
+
   start(speed) {
     if (speed) this.speed = speed;
     this.isActive = true;
     this.isPaused = false;
+    this.menuPaused = false;
     this.lastFrameTime = performance.now();
     this.showPill();
     if (window.App && typeof window.App.updateAutoScrollUI === 'function') {
@@ -53,6 +81,7 @@ const AutoScroll = {
   stop() {
     this.isActive = false;
     this.isPaused = false;
+    this.menuPaused = false;
     if (this.animationId) cancelAnimationFrame(this.animationId);
     if (this.pauseTimeout) clearTimeout(this.pauseTimeout);
     this.hidePill();

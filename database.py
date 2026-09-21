@@ -3,6 +3,7 @@ import os
 import json
 import time
 import uuid
+import re
 
 def _resolve_db_path():
     env_path = os.environ.get("READER_DB_PATH")
@@ -207,12 +208,17 @@ def ensure_user_exists(user_id: str, sync_key: str = None):
     cur.execute("SELECT id FROM users WHERE id = ?", (user_id,))
     if not cur.fetchone():
         now = time.time()
-        key = sync_key or f"READER-{uuid.uuid4().hex[:8].upper()}"
-        is_seeded = 0 if (user_id == 'universal_device_mirror' or user_id.startswith('test_user')) else 1
+        key = sync_key
+        if key:
+            cur.execute("SELECT id FROM users WHERE sync_key = ?", (key,))
+            if cur.fetchone():
+                key = None
+        if not key:
+            key = f"READER-{uuid.uuid4().hex[:8].upper()}"
         cur.execute("""
             INSERT OR IGNORE INTO users (id, sync_key, display_name, demo_seeded, created_at, last_active)
             VALUES (?, ?, ?, ?, ?, ?)
-        """, (user_id, key, "Reader", is_seeded, now, now))
+        """, (user_id, key, "Reader", 1, now, now))
         cur.execute("""
             INSERT OR IGNORE INTO user_settings (user_id, updated_at)
             VALUES (?, ?)
@@ -273,27 +279,9 @@ def export_backup_data(user_id: str):
     cur = conn.cursor()
 
     novels = []
-    if user_id and user_id not in ("universal_device_mirror", "READER-PRIMARY", "default_user"):
+    if user_id:
         cur.execute("SELECT * FROM novels WHERE user_id = ?", (user_id,))
         novels = [dict(r) for r in cur.fetchall()]
-
-    if not novels:
-        # Fallback to export novels from primary user collection if user_id has no novels
-        cur.execute("""
-            SELECT u.id FROM users u
-            JOIN novels n ON u.id = n.user_id
-            GROUP BY u.id
-            ORDER BY COUNT(n.id) DESC, u.last_active DESC
-            LIMIT 1
-        """)
-        top_u = cur.fetchone()
-        if top_u and top_u["id"]:
-            fallback_uid = top_u["id"]
-            cur.execute("SELECT * FROM novels WHERE user_id = ?", (fallback_uid,))
-            novels = [dict(r) for r in cur.fetchall()]
-        if not novels:
-            cur.execute("SELECT * FROM novels")
-            novels = [dict(r) for r in cur.fetchall()]
 
     novel_ids = [n["id"] for n in novels]
     volumes = []
@@ -310,19 +298,18 @@ def export_backup_data(user_id: str):
     if user_id:
         cur.execute("SELECT * FROM reading_progress WHERE user_id = ?", (user_id,))
         progress = [dict(r) for r in cur.fetchall()]
-    if not progress and novel_ids:
-        cur.execute("SELECT * FROM reading_progress ORDER BY updated_at DESC")
-        progress = [dict(r) for r in cur.fetchall()]
 
     settings = {}
+    sync_key = None
     if user_id:
         cur.execute("SELECT * FROM user_settings WHERE user_id = ?", (user_id,))
         settings_row = cur.fetchone()
         settings = dict(settings_row) if settings_row else {}
-    if not settings:
-        cur.execute("SELECT * FROM user_settings ORDER BY updated_at DESC LIMIT 1")
-        settings_row = cur.fetchone()
-        settings = dict(settings_row) if settings_row else {}
+
+        cur.execute("SELECT sync_key FROM users WHERE id = ?", (user_id,))
+        u_row = cur.fetchone()
+        if u_row:
+            sync_key = u_row["sync_key"]
 
     conn.close()
     return {
@@ -330,6 +317,7 @@ def export_backup_data(user_id: str):
         "app": "kuroyomi",
         "exported_at": time.time(),
         "user_id": user_id,
+        "sync_key": sync_key,
         "novels": novels,
         "volumes": volumes,
         "chapters": chapters,
@@ -337,18 +325,21 @@ def export_backup_data(user_id: str):
         "settings": settings
     }
 
-def import_backup_data(data: dict, user_id: str):
-    primary_uid = get_or_create_user("READER-PRIMARY")
-    target_uids = [user_id]
-    if primary_uid and primary_uid != user_id:
-        target_uids.append(primary_uid)
-
-    for uid in target_uids:
-        ensure_user_exists(uid)
-
+def import_backup_data(data: dict, user_id: str, sync_key: str = None):
     conn = get_db()
     cur = conn.cursor()
     now = time.time()
+
+    effective_sync_key = sync_key or data.get("sync_key")
+    if effective_sync_key:
+        cur.execute("SELECT id FROM users WHERE sync_key = ?", (effective_sync_key,))
+        owner = cur.fetchone()
+        if owner and owner["id"] != user_id:
+            effective_sync_key = None
+    ensure_user_exists(user_id, sync_key=effective_sync_key)
+    if effective_sync_key:
+        cur.execute("UPDATE users SET sync_key = ? WHERE id = ?", (effective_sync_key, user_id))
+        conn.commit()
 
     novels = data.get("novels", [])
     volumes = data.get("volumes", [])
@@ -356,56 +347,88 @@ def import_backup_data(data: dict, user_id: str):
     progress_list = data.get("progress", [])
     settings = data.get("settings", {})
 
-    # If user backup has novels and demo novel is not in the backup, remove auto-seeded demo
-    has_demo = any(n.get("id", "").startswith("nov_demo") or "Chronicles of the Aether" in n.get("title", "") for n in novels)
-    for uid in target_uids:
-        if not has_demo and len(novels) > 0:
-            cur.execute("DELETE FROM novels WHERE user_id = ? AND (id LIKE 'nov_demo%' OR title LIKE '%Chronicles of the Aether%')", (uid,))
-        cur.execute("UPDATE users SET demo_seeded = 1 WHERE id = ?", (uid,))
+    cur.execute("SELECT id, title FROM novels WHERE user_id = ?", (user_id,))
+    existing_novels = {r["title"].strip().lower(): r["id"] for r in cur.fetchall()}
+    user_has_real_books = any(not nid.startswith("nov_demo") for nid in existing_novels.values())
 
-        for n in novels:
-            cur.execute("""
-                INSERT OR REPLACE INTO novels (id, title, author, description, cover_data, user_id, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (n["id"], n["title"], n.get("author", "Unknown"), n.get("description", ""), n.get("cover_data"), uid, n.get("created_at", now), now))
+    # If user has real novels, remove any residual demo novel
+    if user_has_real_books:
+        cur.execute("DELETE FROM novels WHERE user_id = ? AND (id LIKE 'nov_demo%' OR title LIKE '%Chronicles of the Aether%')", (user_id,))
+    cur.execute("UPDATE users SET demo_seeded = 1 WHERE id = ?", (user_id,))
 
-        for p in progress_list:
-            cur.execute("""
-                INSERT OR REPLACE INTO reading_progress (id, user_id, novel_id, volume_id, chapter_id, paragraph_index, scroll_percent, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (p.get("id") or f"prog_{uuid.uuid4().hex[:12]}", uid, p["novel_id"], p.get("volume_id", ""), p["chapter_id"], p.get("paragraph_index", 0), p.get("scroll_percent", 0.0), now))
+    # Map old novel ID -> final novel ID for this user
+    novel_id_remap = {}
 
-        if settings:
-            cur.execute("""
-                INSERT OR REPLACE INTO user_settings (user_id, theme, font_family, font_size, line_height, content_width, auto_scroll_speed, tts_voice, tts_rate, tts_pitch, library_view_mode, library_sort_by, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                uid,
-                settings.get("theme", "monochrome-dark"),
-                settings.get("font_family", "times"),
-                settings.get("font_size", 19),
-                settings.get("line_height", 1.85),
-                settings.get("content_width", "normal"),
-                settings.get("auto_scroll_speed", 35),
-                settings.get("tts_voice", "en-US-JennyNeural"),
-                settings.get("tts_rate", 1.0),
-                settings.get("tts_pitch", 1.0),
-                settings.get("library_view_mode", "tile"),
-                settings.get("library_sort_by", "last_read"),
-                now
-            ))
+    for n in novels:
+        n_id = n.get("id", "")
+        n_title = (n.get("title") or "").strip()
+        # Do not inject demo novel if user already has real books
+        if user_has_real_books and (n_id.startswith("nov_demo") or "chronicles of the aether" in n_title.lower()):
+            continue
+        # If novel with identical title already exists for this user, reuse existing novel ID
+        if n_title.lower() in existing_novels and existing_novels[n_title.lower()] != n_id:
+            novel_id_remap[n_id] = existing_novels[n_title.lower()]
+            continue
+
+        # Check if n_id is currently owned by another user in database
+        target_nid = n_id
+        cur.execute("SELECT user_id FROM novels WHERE id = ?", (n_id,))
+        owner_row = cur.fetchone()
+        if owner_row and owner_row["user_id"] != user_id:
+            target_nid = f"nov_{uuid.uuid4().hex[:12]}"
+            novel_id_remap[n_id] = target_nid
+        else:
+            novel_id_remap[n_id] = target_nid
+
+        cur.execute("""
+            INSERT OR REPLACE INTO novels (id, title, author, description, cover_data, user_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (target_nid, n_title, n.get("author", "Unknown"), n.get("description", ""), n.get("cover_data"), user_id, n.get("created_at", now), now))
+        existing_novels[n_title.lower()] = target_nid
+
+    for p in progress_list:
+        orig_nid = p.get("novel_id")
+        final_nid = novel_id_remap.get(orig_nid, orig_nid)
+        cur.execute("""
+            INSERT OR REPLACE INTO reading_progress (id, user_id, novel_id, volume_id, chapter_id, paragraph_index, scroll_percent, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (p.get("id") or f"prog_{uuid.uuid4().hex[:12]}", user_id, final_nid, p.get("volume_id", ""), p["chapter_id"], p.get("paragraph_index", 0), p.get("scroll_percent", 0.0), now))
+
+    if settings:
+        cur.execute("""
+            INSERT OR REPLACE INTO user_settings (user_id, theme, font_family, font_size, line_height, content_width, auto_scroll_speed, tts_voice, tts_rate, tts_pitch, library_view_mode, library_sort_by, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            user_id,
+            settings.get("theme", "monochrome-dark"),
+            settings.get("font_family", "times"),
+            settings.get("font_size", 19),
+            settings.get("line_height", 1.85),
+            settings.get("content_width", "normal"),
+            settings.get("auto_scroll_speed", 35),
+            settings.get("tts_voice", "en-US-JennyNeural"),
+            settings.get("tts_rate", 1.0),
+            settings.get("tts_pitch", 0.0),
+            settings.get("library_view_mode", "tile"),
+            settings.get("library_sort_by", "last_read"),
+            now
+        ))
 
     for v in volumes:
+        orig_nid = v.get("novel_id")
+        final_nid = novel_id_remap.get(orig_nid, orig_nid)
         cur.execute("""
             INSERT OR REPLACE INTO volumes (id, novel_id, volume_number, title, file_name, total_chapters, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (v["id"], v["novel_id"], v.get("volume_number", 1), v.get("title", ""), v.get("file_name", ""), v.get("total_chapters", 0), v.get("created_at", now)))
+        """, (v["id"], final_nid, v.get("volume_number", 1), v.get("title", ""), v.get("file_name", ""), v.get("total_chapters", 0), v.get("created_at", now)))
 
     for c in chapters:
+        orig_nid = c.get("novel_id")
+        final_nid = novel_id_remap.get(orig_nid, orig_nid)
         cur.execute("""
             INSERT OR REPLACE INTO chapters (id, novel_id, volume_id, chapter_index, global_index, title, content_html, word_count)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (c["id"], c["novel_id"], c["volume_id"], c.get("chapter_index", 1), c.get("global_index", 1), c.get("title", ""), c.get("content_html", ""), c.get("word_count", 0)))
+        """, (c["id"], final_nid, c["volume_id"], c.get("chapter_index", 1), c.get("global_index", 1), c.get("title", ""), c.get("content_html", ""), c.get("word_count", 0)))
 
     conn.commit()
     conn.close()
@@ -422,3 +445,35 @@ def update_novel_cover(novel_id: str, user_id: str, cover_data: str):
     conn.commit()
     conn.close()
     return True
+
+def clean_novel_obfuscation(novel_id: str, user_id: str):
+    """
+    Cleans filter-dotted words across all chapters of a given novel.
+    Returns the count of cleaned chapters.
+    """
+    import epub_parser
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM novels WHERE id = ? AND user_id = ?", (novel_id, user_id))
+    if not cur.fetchone():
+        conn.close()
+        return {"error": "Novel not found or unauthorized", "cleaned_chapters": 0}
+
+    cur.execute("SELECT id, content_html FROM chapters WHERE novel_id = ?", (novel_id,))
+    rows = cur.fetchall()
+    cleaned_count = 0
+    now = time.time()
+    for r in rows:
+        ch_id = r["id"]
+        raw_html = r["content_html"] or ""
+        cleaned_html = epub_parser.deobfuscate_censored_words(raw_html)
+        if cleaned_html != raw_html:
+            plain = re.sub(r'<[^>]+>', ' ', cleaned_html)
+            wc = len(plain.split())
+            cur.execute("UPDATE chapters SET content_html = ?, word_count = ? WHERE id = ?", (cleaned_html, wc, ch_id))
+            cleaned_count += 1
+
+    cur.execute("UPDATE novels SET updated_at = ? WHERE id = ?", (now, novel_id))
+    conn.commit()
+    conn.close()
+    return {"success": True, "cleaned_chapters": cleaned_count, "total_chapters": len(rows)}

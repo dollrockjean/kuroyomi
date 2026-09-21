@@ -13,6 +13,7 @@ import hashlib
 import tempfile
 import asyncio
 import sys
+import threading
 
 # Ensure user site-packages is searched for neural TTS modules
 for p in [os.path.expanduser("~/Library/Python/3.9/lib/python/site-packages"),
@@ -108,6 +109,8 @@ VALID_VOICES = {
     "en-AU-WilliamMultilingualNeural"
 }
 
+TTS_CONCURRENCY_SEMAPHORE = threading.Semaphore(2)
+
 def synthesize_speech(text, voice="en-US-BrianNeural", rate="+0%", pitch="+0Hz"):
     clean_text = normalize_text_for_narration(text)
     if not clean_text:
@@ -128,42 +131,34 @@ def synthesize_speech(text, voice="en-US-BrianNeural", rate="+0%", pitch="+0Hz")
 
     try:
         import edge_tts
-        async def _run():
-            comm = edge_tts.Communicate(clean_text, voice, rate=norm_rate, pitch=norm_pitch)
+        async def _run(v, r, p):
+            comm = edge_tts.Communicate(clean_text, v, rate=r, pitch=p)
             buf = io.BytesIO()
             async for chunk in comm.stream():
                 if chunk['type'] == 'audio':
                     buf.write(chunk['data'])
             return buf.getvalue()
 
-        data = asyncio.run(_run())
-        if data and len(data) > 100:
-            with open(cache_file, "wb") as f:
-                f.write(data)
-            return data
+        with TTS_CONCURRENCY_SEMAPHORE:
+            data = asyncio.run(_run(voice, norm_rate, norm_pitch))
+            if data and len(data) > 100:
+                with open(cache_file, "wb") as f:
+                    f.write(data)
+                return data
     except Exception as e:
         import traceback
         print(f"[TTS] Neural TTS synthesis error for voice='{voice}' rate='{norm_rate}' pitch='{norm_pitch}': {e}")
-        traceback.print_exc()
-
-        # Resilient fallback retry with default Brian voice if custom voice/rate had an edge error
-        if voice != "en-US-BrianNeural" or norm_rate != "+0%" or norm_pitch != "+0Hz":
-            try:
-                print("[TTS] Retrying synthesis with default Brian voice...")
-                async def _fallback_run():
-                    comm = edge_tts.Communicate(clean_text, "en-US-BrianNeural", rate="+0%", pitch="+0Hz")
-                    buf = io.BytesIO()
-                    async for chunk in comm.stream():
-                        if chunk['type'] == 'audio':
-                            buf.write(chunk['data'])
-                    return buf.getvalue()
-                data = asyncio.run(_fallback_run())
+        # Resilient retry with the SAME voice after brief pause (never swap to Brian)
+        try:
+            time.sleep(0.3)
+            with TTS_CONCURRENCY_SEMAPHORE:
+                data = asyncio.run(_run(voice, "+0%", "+0Hz"))
                 if data and len(data) > 100:
                     with open(cache_file, "wb") as f:
                         f.write(data)
                     return data
-            except Exception as fb_err:
-                print(f"[TTS] Fallback retry failed: {fb_err}")
+        except Exception as retry_err:
+            print(f"[TTS] Retry failed for voice='{voice}': {retry_err}")
 
     return None
 
@@ -330,36 +325,14 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             if user_row and not user_row["demo_seeded"]:
                 cur.execute("SELECT COUNT(*) as cnt FROM novels WHERE user_id = ?", (user_id,))
                 cnt = cur.fetchone()["cnt"]
-                if cnt == 0:
-                    if user_row["sync_key"] in ("DEFAULT_READER", "READER-PRIMARY") or user_id.startswith("test_user"):
-                        conn.close()
-                        sample_books.seed_demo_novel(user_id)
-                        conn = database.get_db()
-                        cur = conn.cursor()
-                    else:
-                        cur.execute("UPDATE users SET demo_seeded = 1 WHERE id = ?", (user_id,))
-                        conn.commit()
+                if cnt == 0 and (user_id.startswith("test_") or user_row["sync_key"] == "DEFAULT_READER"):
+                    conn.close()
+                    sample_books.seed_demo_novel(user_id)
+                    conn = database.get_db()
+                    cur = conn.cursor()
                 else:
                     cur.execute("UPDATE users SET demo_seeded = 1 WHERE id = ?", (user_id,))
                     conn.commit()
-
-            # Check if this user has novels
-            effective_user_id = user_id
-            cur.execute("SELECT COUNT(*) as cnt FROM novels WHERE user_id = ?", (user_id,))
-            if cur.fetchone()["cnt"] == 0:
-                # If user has no novels, only fallback to primary collection if on a shared default sync key
-                if user_row and (user_row["sync_key"].startswith("READER-") or user_row["sync_key"] in ("DEFAULT_READER", "OFFLINE")):
-                    cur.execute("""
-                        SELECT u.id FROM users u
-                        JOIN novels n ON u.id = n.user_id
-                        WHERE u.id != ?
-                        GROUP BY u.id
-                        ORDER BY COUNT(n.id) DESC, u.last_active DESC
-                        LIMIT 1
-                    """, (user_id,))
-                    p_user = cur.fetchone()
-                    if p_user and p_user["id"]:
-                        effective_user_id = p_user["id"]
 
             cur.execute("""
                 SELECT n.*,
@@ -374,20 +347,33 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 FROM novels n
                 LEFT JOIN volumes v ON n.id = v.novel_id
                 LEFT JOIN chapters c ON n.id = c.novel_id
-                LEFT JOIN reading_progress p ON n.id = p.novel_id AND (p.user_id = ? OR p.user_id = n.user_id)
+                LEFT JOIN reading_progress p ON n.id = p.novel_id AND p.user_id = ?
                 LEFT JOIN chapters last_ch ON p.chapter_id = last_ch.id
                 WHERE n.user_id = ?
                 GROUP BY n.id
                 ORDER BY COALESCE(p.updated_at, n.created_at) DESC
-            """, (user_id, effective_user_id))
+            """, (user_id, user_id))
             rows = [dict(r) for r in cur.fetchall()]
             for r in rows:
                 tot = r.get("total_chapters") or 0
                 g_idx = r.get("last_chapter_global_index")
                 s_pct = r.get("progress_scroll") or 0.0
+
+                # If global_index was not joined, attempt lookup via progress_chapter_id
+                if g_idx is None and r.get("progress_chapter_id"):
+                    cur.execute("SELECT global_index, title FROM chapters WHERE id = ?", (r["progress_chapter_id"],))
+                    found_ch = cur.fetchone()
+                    if found_ch:
+                        g_idx = found_ch["global_index"]
+                        r["last_chapter_global_index"] = g_idx
+                        if not r.get("last_chapter_title"):
+                            r["last_chapter_title"] = found_ch["title"]
+
                 if tot > 0 and g_idx is not None and g_idx > 0:
                     overall = ((g_idx - 1) + (s_pct / 100.0)) / float(tot) * 100.0
                     r["progress_overall_percent"] = round(min(100.0, max(0.0, overall)), 1)
+                elif tot > 0 and r.get("progress_chapter_id"):
+                    r["progress_overall_percent"] = round(min(100.0, max(0.0, s_pct / float(tot))), 1)
                 else:
                     r["progress_overall_percent"] = 0.0
             conn.close()
@@ -416,15 +402,10 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             """, (novel_id,))
             chapters = [dict(c) for c in cur.fetchall()]
 
-            # Progress
+            # Progress strictly scoped to requesting user
             progress = None
             if user_id:
                 cur.execute("SELECT * FROM reading_progress WHERE novel_id = ? AND user_id = ?", (novel_id, user_id))
-                prog_row = cur.fetchone()
-                if prog_row:
-                    progress = dict(prog_row)
-            if not progress:
-                cur.execute("SELECT * FROM reading_progress WHERE novel_id = ? ORDER BY updated_at DESC LIMIT 1", (novel_id,))
                 prog_row = cur.fetchone()
                 if prog_row:
                     progress = dict(prog_row)
@@ -456,10 +437,10 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 return
 
             ch_dict = dict(ch_row)
-            # Find previous and next chapter
-            novel_id = ch_dict["novel_id"]
-            global_idx = ch_dict["global_index"]
+            global_idx = ch_dict.get("global_index", 1)
+            novel_id = ch_dict.get("novel_id")
 
+            # Prev chapter
             cur.execute("""
                 SELECT id, title, global_index FROM chapters
                 WHERE novel_id = ? AND global_index < ?
@@ -480,12 +461,12 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             self.send_json(ch_dict)
             return
 
-        # 6. Last Read Novel / Quick Resume Hero
+        # 6. Last Read Novel / Quick Resume Hero (Strictly User Scoped)
         if path == "/api/last-read":
             user_id = query.get("user_id", [""])[0]
             last_data = None
 
-            if user_id and user_id not in ("universal_device_mirror", "READER-PRIMARY", "default_user"):
+            if user_id:
                 cur.execute("""
                     SELECT p.*, n.title as novel_title, n.cover_data, n.author as novel_author,
                            c.title as chapter_title, c.chapter_index, c.global_index as chapter_global_index,
@@ -497,22 +478,6 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                     WHERE p.user_id = ?
                     ORDER BY p.updated_at DESC LIMIT 1
                 """, (user_id,))
-                last_row = cur.fetchone()
-                if last_row:
-                    last_data = dict(last_row)
-
-            if not last_data:
-                # Fallback to the latest reading progress in the entire library
-                cur.execute("""
-                    SELECT p.*, n.title as novel_title, n.cover_data, n.author as novel_author,
-                           c.title as chapter_title, c.chapter_index, c.global_index as chapter_global_index,
-                           v.title as volume_title, v.volume_number
-                    FROM reading_progress p
-                    JOIN novels n ON p.novel_id = n.id
-                    JOIN chapters c ON p.chapter_id = c.id
-                    JOIN volumes v ON p.volume_id = v.id
-                    ORDER BY p.updated_at DESC LIMIT 1
-                """)
                 last_row = cur.fetchone()
                 if last_row:
                     last_data = dict(last_row)
@@ -535,17 +500,6 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         # 7. Get Settings
         if path == "/api/settings":
             user_id = query.get("user_id", [""])[0]
-            if not user_id or user_id in ("universal_device_mirror", "READER-PRIMARY", "default_user"):
-                cur.execute("""
-                    SELECT u.id FROM users u
-                    JOIN user_settings s ON u.id = s.user_id
-                    GROUP BY u.id
-                    ORDER BY u.last_active DESC
-                    LIMIT 1
-                """)
-                p_row = cur.fetchone()
-                if p_row and p_row["id"]:
-                    user_id = p_row["id"]
             if not user_id:
                 self.send_json({"settings": {}})
                 conn.close()
@@ -686,23 +640,14 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             user_agent = self.headers.get("User-Agent", "")
             remember = bool(body.get("remember", True))
 
-            is_new_user = False
             # When a visitor opens the plain link for the first time without a sync key,
             # generate an isolated profile so they get their own fresh library
             if not sync_key or sync_key in ("OFFLINE", "DEFAULT_READER"):
                 sync_key = f"READER-{secrets.token_hex(4).upper()}"
                 requested_user_id = f"usr_{secrets.token_hex(6)}"
-                is_new_user = True
 
             user_id = database.get_or_create_user(sync_key, requested_user_id=requested_user_id)
             database.register_device(user_id, device_token, device_name, user_agent, remember)
-
-            if is_new_user:
-                try:
-                    import sample_books
-                    sample_books.seed_demo_novel(user_id)
-                except Exception as seed_err:
-                    print("Error seeding demo novel for new user:", seed_err)
 
             # Get user settings
             cur.execute("SELECT * FROM user_settings WHERE user_id = ?", (user_id,))
@@ -808,14 +753,16 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             self.send_json({"success": True, "updated_at": now})
             return
 
-        # 5. Delete Novel
+        # 5. Delete Novel (Strictly User Scoped)
         if path.startswith("/api/novels/delete"):
             novel_id = body.get("novel_id")
             user_id = body.get("user_id")
             if novel_id:
-                cur.execute("DELETE FROM novels WHERE id = ?", (novel_id,))
                 if user_id:
+                    cur.execute("DELETE FROM novels WHERE id = ? AND user_id = ?", (novel_id, user_id))
                     cur.execute("UPDATE users SET demo_seeded = 1 WHERE id = ?", (user_id,))
+                else:
+                    cur.execute("DELETE FROM novels WHERE id = ?", (novel_id,))
                 conn.commit()
             conn.close()
             self.send_json({"success": True})
@@ -824,13 +771,14 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         # 6. Restore Database from Backup (Safeguard for Free Cloud Hosting)
         if path == "/api/restore":
             user_id = body.get("user_id")
+            sync_key = body.get("sync_key")
             backup_data = body.get("backup_data")
             conn.close()
             if not user_id or not backup_data:
                 self.send_json({"error": "user_id and backup_data required"}, status=400)
                 return
             try:
-                res = database.import_backup_data(backup_data, user_id)
+                res = database.import_backup_data(backup_data, user_id, sync_key=sync_key)
                 self.send_json({"success": True, **res})
             except Exception as e:
                 self.send_json({"error": f"Restore failed: {str(e)}"}, status=500)
@@ -847,6 +795,18 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 return
             database.update_novel_cover(novel_id, user_id, cover_data)
             self.send_json({"success": True})
+            return
+
+        # 8. De-obfuscate / Clean Dotted Censored Words
+        if path == "/api/novels/clean-text":
+            novel_id = body.get("novel_id")
+            user_id = body.get("user_id")
+            conn.close()
+            if not novel_id or not user_id:
+                self.send_json({"error": "novel_id and user_id are required"}, status=400)
+                return
+            res = database.clean_novel_obfuscation(novel_id, user_id)
+            self.send_json(res)
             return
 
         conn.close()

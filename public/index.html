@@ -30,7 +30,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,300;0,400;0,700;1,300;1,400&family=Lora:ital,wght@0,400..700;1,400..700&family=Merriweather:ital,wght@0,300;0,400;0,700;1,300;1,400&family=Open+Sans:ital,wght@0,300..800;1,300..800&family=PT+Serif:ital,wght@0,400;0,700;1,400;1,700&family=Roboto:ital,wght@0,300;0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
 
   <!-- Styles -->
-  <link rel="stylesheet" href="/css/brutalist.css?v=25.0">
+  <link rel="stylesheet" href="/css/brutalist.css?v=27.0">
 
   <!-- Critical Quick Sheet Theme & Layout Styles (Anti-Cache Protection) -->
   <style id="quickSheetCriticalStyles">
@@ -579,6 +579,9 @@
           </div>
           <span class="quick-autoscroll-speed-val" id="quickSheetAutoScrollSpeedVal">35 px/s</span>
         </div>
+        <div class="quick-autoscroll-slider-row" style="margin: 8px 0; display: flex; align-items: center; gap: 8px;">
+          <input type="range" id="quickSheetAutoScrollSpeedSlider" min="5" max="150" step="5" value="35" style="flex: 1; accent-color: var(--accent); cursor: pointer;" />
+        </div>
         <div class="quick-autoscroll-controls">
           <div class="quick-autoscroll-stepper">
             <button class="quick-autoscroll-btn" id="quickSheetAutoScrollSlowBtn" title="Slower">-5</button>
@@ -996,6 +999,63 @@
     </div>
   </div>
 
+  <!-- Novel Settings Cog Modal -->
+  <div class="modal-overlay" id="novelSettingsModal">
+    <div class="modal-backdrop" id="novelSettingsBackdrop" style="position: absolute; inset: 0;"></div>
+    <div class="modal-content" style="max-width: 420px; z-index: 1;">
+      <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center;">
+        <h2 id="novelSettingsModalTitle">Book Settings</h2>
+        <button class="btn-brutal btn-sm" id="closeNovelSettingsBtn">X</button>
+      </div>
+      <div class="modal-body">
+        <p id="novelSettingsBookName" style="font-size: 13px; font-weight: 700; margin-bottom: 16px; color: var(--accent); line-height: 1.4;"></p>
+        
+        <div style="display: flex; flex-direction: column; gap: 10px;">
+          <!-- 1. Add Volume -->
+          <button class="btn-brutal" id="novelSettingsAddVolBtn" style="justify-content: flex-start; text-align: left; padding: 12px 14px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 10px;">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            <span>+ Add Volume (.epub / .pdf)</span>
+          </button>
+
+          <!-- 2. Change Cover -->
+          <button class="btn-brutal" id="novelSettingsCoverBtn" style="justify-content: flex-start; text-align: left; padding: 12px 14px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 10px;">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+              <circle cx="8.5" cy="8.5" r="1.5"></circle>
+              <polyline points="21 15 16 10 5 21"></polyline>
+            </svg>
+            <span>Change Cover Image</span>
+          </button>
+
+          <!-- 3. Fix Censored / Dotted Words -->
+          <button class="btn-brutal" id="novelSettingsCleanBtn" style="justify-content: flex-start; text-align: left; padding: 12px 14px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 10px;">
+              <path d="M12 20h9"></path>
+              <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+            </svg>
+            <span>Fix Dotted Words (e.g. cl.u.s.t.ered)</span>
+          </button>
+
+          <div id="novelSettingsCleanStatus" style="display: none; font-size: 11px; padding: 8px 12px; border: 1px solid var(--border-color); background: var(--bg-surface); line-height: 1.4;"></div>
+
+          <hr style="border: none; border-top: 1px solid var(--border-color); margin: 6px 0;" />
+
+          <!-- 4. Delete Novel -->
+          <button class="btn-brutal btn-brutal-danger" id="novelSettingsDeleteBtn" style="justify-content: flex-start; text-align: left; padding: 12px 14px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 10px;">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            </svg>
+            <span>Delete Novel</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Loading Overlay -->
   <div class="modal-overlay" id="loadingOverlay" style="background: rgba(0, 0, 0, 0.8);">
     <div style="text-align: center; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-surface); padding: 24px 36px; box-shadow: var(--shadow-card);">
@@ -1009,12 +1069,12 @@
   <!-- Hidden Cover Image Input -->
   <input type="file" id="novelCoverInput" accept="image/*" style="display: none;" />
 
-  <!-- Application Scripts -->
-  <script src="/js/storage.js?v=25.0"></script>
-  <script src="/js/sync.js?v=25.0"></script>
-  <script src="/js/autoscroll.js?v=25.0"></script>
-  <script src="/js/tts.js?v=25.0"></script>
-  <script src="/js/reader.js?v=25.0"></script>
-  <script src="/js/app.js?v=25.0"></script>
+  <!-- Application Logic Modules -->
+  <script src="/js/storage.js?v=27.0"></script>
+  <script src="/js/sync.js?v=27.0"></script>
+  <script src="/js/autoscroll.js?v=27.0"></script>
+  <script src="/js/tts.js?v=27.0"></script>
+  <script src="/js/reader.js?v=27.0"></script>
+  <script src="/js/app.js?v=27.0"></script>
 </body>
 </html>

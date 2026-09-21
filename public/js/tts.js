@@ -178,7 +178,6 @@ const TTSEngine = {
       this.audioElement.load();
       this.secondaryAudioElement.load();
       this.testAudioElement.load();
-      this.startKeepAlive();
       window.removeEventListener('touchstart', primeAudio);
       window.removeEventListener('click', primeAudio);
     };
@@ -795,7 +794,6 @@ const TTSEngine = {
   pause() {
     if (this.isPlaying) {
       this.isPaused = true;
-      this.stopKeepAlive();
       this.audioElement.pause();
       this.secondaryAudioElement.pause();
       if ('speechSynthesis' in window) {
@@ -1013,13 +1011,15 @@ const TTSEngine = {
     }
   },
 
-  async prefetchAhead(fromIndex, count = 5) {
+  async prefetchAhead(fromIndex, count = 4) {
     if (!this.paragraphs || this.paragraphs.length === 0) return;
     const currentVoice = this.selectedVoice;
     const currentRate = this.rate;
     const currentPitch = this.pitch;
+    const sessionId = this.playbackSessionId;
 
     for (let offset = 1; offset <= count; offset++) {
+      if (!this.isPlaying || this.isPaused || this.playbackSessionId !== sessionId) break;
       const idx = fromIndex + offset;
       if (idx < this.paragraphs.length) {
         const el = this.paragraphs[idx];
@@ -1027,7 +1027,11 @@ const TTSEngine = {
         if (text) {
           const cacheKey = `${currentVoice}_${currentRate}_${currentPitch}_${text}`;
           if (!this.blobCache.has(cacheKey) && !this.pendingFetches.has(cacheKey)) {
-            this.getAudioBlobUrl(text, currentVoice, currentRate, currentPitch).catch(() => {});
+            try {
+              await this.getAudioBlobUrl(text, currentVoice, currentRate, currentPitch);
+            } catch (e) {}
+            // Small pause between prefetch calls to prevent socket reset or rate limits
+            await new Promise(r => setTimeout(r, 120));
           }
         }
       }

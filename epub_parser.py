@@ -26,6 +26,60 @@ def sanitize_html(raw_html):
     cleaned = re.sub(r'href\s*=\s*["\']\s*javascript:[^"\']*["\']', 'href="#"', cleaned, flags=re.I)
     return cleaned
 
+COMMON_ABBREVIATIONS = {
+    "e.g", "i.e", "etc", "vs", "a.m", "p.m", "p.s", "mr", "mrs", "ms", "dr", "prof", "jr", "sr", "st"
+}
+COMMON_EXTENSIONS = {
+    "com", "org", "net", "io", "gov", "edu", "html", "htm", "jpg", "png", "epub", "pdf", "txt", "ai", "co", "me", "cc", "uk"
+}
+
+def deobfuscate_censored_words(text):
+    """
+    Restores words that were obfuscated by web novel profanity filters with internal dots.
+    For example: 'cl.u.s.t.ered' -> 'clustered', 'f.u.c.k' -> 'fuck', 's.h.i.t' -> 'shit', 'b.i.t.c.h' -> 'bitch'.
+    Preserves acronyms (e.g. 'U.S.A.'), valid abbreviations ('e.g.', '10 a.m.'), and web domains ('example.com').
+    """
+    if not text:
+        return text
+
+    def replace_dotted(match):
+        tok = match.group(0)
+        parts = tok.split(".")
+        if len(parts) < 2:
+            return tok
+
+        # Acronyms with all uppercase single-letter parts: U.S.A, U.K, F.B.I
+        if all(len(p) == 1 and p.isupper() for p in parts):
+            return tok
+
+        # Known common abbreviations
+        if tok.lower() in COMMON_ABBREVIATIONS:
+            return tok
+
+        # Domain names or file extensions
+        if parts[-1].lower() in COMMON_EXTENSIONS:
+            return tok
+
+        # Missing space between sentences e.g. "run.He" -> "run. He"
+        if len(parts) == 2 and len(parts[0]) > 1 and len(parts[1]) > 1 and parts[1][0].isupper():
+            return f"{parts[0]}. {parts[1]}"
+
+        # If it has single-letter parts or short parts separated by dots inside a word
+        if any(len(p) == 1 for p in parts) or len(tok.replace(".", "")) > 2:
+            return tok.replace(".", "")
+
+        return tok
+
+    parts = re.split(r'(<[^>]+>)', text)
+    cleaned_parts = []
+    for part in parts:
+        if part.startswith('<') and part.endswith('>'):
+            cleaned_parts.append(part)
+        else:
+            cleaned = re.sub(r'\b[A-Za-z]+(?:\.[A-Za-z]+)+\b', replace_dotted, part)
+            cleaned_parts.append(cleaned)
+    return "".join(cleaned_parts)
+
 def clean_paragraph_text(text):
     """Normalize weird spaces, unicode non-breaking spaces, and collapse consecutive whitespace."""
     if not text:
@@ -36,6 +90,8 @@ def clean_paragraph_text(text):
     text = re.sub(r'\s+style=(["\'])[^"\']*\1', '', text, flags=re.I)
     # Strip empty inline spans
     text = re.sub(r'<(?:span|font)[^>]*>\s*</(?:span|font)>', '', text, flags=re.I)
+    # De-obfuscate censorship filter dots (e.g. cl.u.s.t.ered -> clustered)
+    text = deobfuscate_censored_words(text)
     # Collapse multiple consecutive whitespace characters without damaging HTML tags
     parts = re.split(r'(<[^>]+>)', text)
     cleaned_parts = []

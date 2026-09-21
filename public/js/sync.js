@@ -191,6 +191,14 @@ const SyncService = {
     const deviceName = Storage.getDeviceName();
 
     try {
+      // Clear any temporary pre-pairing visitor data from local storage
+      if (typeof Storage !== 'undefined' && Storage.clearLocalProgress) {
+        Storage.clearLocalProgress();
+      }
+      if (typeof IDB !== 'undefined' && IDB.clearLibraryMirror) {
+        await IDB.clearLibraryMirror();
+      }
+
       const res = await fetch('/api/auth/register-device', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -247,16 +255,17 @@ const SyncService = {
     }
   },
 
-  syncReadingProgress(novelId, volumeId, chapterId, paragraphIndex, scrollPercent) {
+  syncReadingProgress(novelId, volumeId, chapterId, paragraphIndex, scrollPercent, extraMeta = {}) {
     if (!novelId || !chapterId) return;
 
-    // 1. Immediately cache locally
+    // 1. Immediately cache locally scoped to this user
     Storage.saveLocalProgress(novelId, {
       volumeId,
       chapterId,
       paragraphIndex,
-      scrollPercent
-    });
+      scrollPercent,
+      ...extraMeta
+    }, this.currentUserId);
 
     const progressRecord = {
       user_id: this.currentUserId,
@@ -366,8 +375,10 @@ const SyncService = {
 
   async pushLibraryToCloud(targetRemoteUrl = null) {
     const cloudUrl = (targetRemoteUrl || this.cloudServerUrl).replace(/\/+$/, '');
-    const userId = this.currentUserId || Storage.getUserId() || 'READER-PRIMARY';
-    const syncKey = this.currentSyncKey || Storage.getSyncKey() || 'READER-PRIMARY';
+    const userId = this.currentUserId || Storage.getUserId();
+    const syncKey = this.currentSyncKey || Storage.getSyncKey();
+
+    if (!userId) return { success: false, error: 'No user ID' };
 
     // 1. Fetch current full local backup from local server or IDB mirror
     let backupData = null;
@@ -377,25 +388,11 @@ const SyncService = {
         backupData = await res.json();
       }
     } catch (e) {
-      console.warn('Could not fetch from local /api/backup with user_id, trying root backup:', e);
-    }
-
-    if (!backupData || !backupData.novels || backupData.novels.length === 0) {
-      try {
-        const res2 = await fetch('/api/backup');
-        if (res2.ok) {
-          backupData = await res2.json();
-        }
-      } catch (e2) {
-        console.warn('Could not fetch root /api/backup, checking IDB mirror:', e2);
-      }
+      console.warn('Could not fetch from local /api/backup with user_id:', e);
     }
 
     if ((!backupData || !backupData.novels || backupData.novels.length === 0) && typeof IDB !== 'undefined') {
       backupData = await IDB.getLibraryMirror(userId);
-      if (!backupData || !backupData.novels || backupData.novels.length === 0) {
-        backupData = await IDB.getLibraryMirror('universal_device_mirror');
-      }
     }
 
     if (!backupData || !backupData.novels || backupData.novels.length === 0) {
