@@ -11,3 +11,7 @@ services:
     envVars:
       - key: PORT
         value: 8000
+      - key: PYTHONUNBUFFERED
+        value: 1
+      - key: MALLOC_ARENA_MAX
+        value: 2

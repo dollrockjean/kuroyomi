@@ -368,11 +368,13 @@ def import_backup_data(data: dict, user_id: str, sync_key: str = None):
 
     cur.execute("SELECT id, title FROM novels WHERE user_id = ?", (user_id,))
     existing_novels = {r["title"].strip().lower(): r["id"] for r in cur.fetchall()}
-    user_has_real_books = any(not nid.startswith("nov_demo") for nid in existing_novels.values())
+    user_has_real_books = any(not nid.startswith("nov_demo") and "chronicles of the aether" not in title.lower() for title, nid in existing_novels.items())
 
-    # If user has real novels, remove any residual demo novel
+    # If user has real novels, remove any residual demo novel and refresh existing_novels
     if user_has_real_books:
         cur.execute("DELETE FROM novels WHERE user_id = ? AND (id LIKE 'nov_demo%' OR title LIKE '%Chronicles of the Aether%')", (user_id,))
+        cur.execute("SELECT id, title FROM novels WHERE user_id = ?", (user_id,))
+        existing_novels = {r["title"].strip().lower(): r["id"] for r in cur.fetchall()}
     cur.execute("UPDATE users SET demo_seeded = 1 WHERE id = ?", (user_id,))
 
     # Map old novel ID -> final novel ID for this user
@@ -405,13 +407,54 @@ def import_backup_data(data: dict, user_id: str, sync_key: str = None):
         """, (target_nid, n_title, n.get("author", "Unknown"), n.get("description", ""), n.get("cover_data"), user_id, n.get("created_at", now), now))
         existing_novels[n_title.lower()] = target_nid
 
+    volume_id_remap = {}
+    for v in volumes:
+        orig_nid = v.get("novel_id")
+        final_nid = novel_id_remap.get(orig_nid, orig_nid)
+        v_id = v.get("id")
+        target_vid = v_id
+        cur.execute("SELECT novel_id FROM volumes WHERE id = ?", (v_id,))
+        v_row = cur.fetchone()
+        if v_row and (v_row["novel_id"] != final_nid or orig_nid != final_nid):
+            target_vid = f"vol_{uuid.uuid4().hex[:12]}"
+        volume_id_remap[v_id] = target_vid
+
+        cur.execute("""
+            INSERT OR REPLACE INTO volumes (id, novel_id, volume_number, title, file_name, total_chapters, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (target_vid, final_nid, v.get("volume_number", 1), v.get("title", ""), v.get("file_name", ""), v.get("total_chapters", 0), v.get("created_at", now)))
+
+    chapter_id_remap = {}
+    for c in chapters:
+        orig_nid = c.get("novel_id")
+        final_nid = novel_id_remap.get(orig_nid, orig_nid)
+        orig_vid = c.get("volume_id")
+        final_vid = volume_id_remap.get(orig_vid, orig_vid)
+        c_id = c.get("id")
+        target_cid = c_id
+        cur.execute("SELECT novel_id FROM chapters WHERE id = ?", (c_id,))
+        c_row = cur.fetchone()
+        if c_row and (c_row["novel_id"] != final_nid or orig_nid != final_nid):
+            target_cid = f"ch_{uuid.uuid4().hex[:12]}"
+        chapter_id_remap[c_id] = target_cid
+
+        cur.execute("""
+            INSERT OR REPLACE INTO chapters (id, novel_id, volume_id, chapter_index, global_index, title, content_html, word_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (target_cid, final_nid, final_vid, c.get("chapter_index", 1), c.get("global_index", 1), c.get("title", ""), c.get("content_html", ""), c.get("word_count", 0)))
+
     for p in progress_list:
         orig_nid = p.get("novel_id")
         final_nid = novel_id_remap.get(orig_nid, orig_nid)
+        orig_vid = p.get("volume_id", "")
+        final_vid = volume_id_remap.get(orig_vid, orig_vid)
+        orig_cid = p.get("chapter_id", "")
+        final_cid = chapter_id_remap.get(orig_cid, orig_cid)
+
         cur.execute("""
             INSERT OR REPLACE INTO reading_progress (id, user_id, novel_id, volume_id, chapter_id, paragraph_index, scroll_percent, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (p.get("id") or f"prog_{uuid.uuid4().hex[:12]}", user_id, final_nid, p.get("volume_id", ""), p["chapter_id"], p.get("paragraph_index", 0), p.get("scroll_percent", 0.0), now))
+        """, (p.get("id") or f"prog_{uuid.uuid4().hex[:12]}", user_id, final_nid, final_vid, final_cid, p.get("paragraph_index", 0), p.get("scroll_percent", 0.0), now))
 
     if settings:
         cur.execute("""
@@ -432,22 +475,6 @@ def import_backup_data(data: dict, user_id: str, sync_key: str = None):
             settings.get("library_sort_by", "last_read"),
             now
         ))
-
-    for v in volumes:
-        orig_nid = v.get("novel_id")
-        final_nid = novel_id_remap.get(orig_nid, orig_nid)
-        cur.execute("""
-            INSERT OR REPLACE INTO volumes (id, novel_id, volume_number, title, file_name, total_chapters, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (v["id"], final_nid, v.get("volume_number", 1), v.get("title", ""), v.get("file_name", ""), v.get("total_chapters", 0), v.get("created_at", now)))
-
-    for c in chapters:
-        orig_nid = c.get("novel_id")
-        final_nid = novel_id_remap.get(orig_nid, orig_nid)
-        cur.execute("""
-            INSERT OR REPLACE INTO chapters (id, novel_id, volume_id, chapter_index, global_index, title, content_html, word_count)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (c["id"], final_nid, c["volume_id"], c.get("chapter_index", 1), c.get("global_index", 1), c.get("title", ""), c.get("content_html", ""), c.get("word_count", 0)))
 
     conn.commit()
     conn.close()

@@ -912,23 +912,24 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         v_count_row = cur.fetchone()
         existing_vol_count = v_count_row["v_count"] if v_count_row else 0
 
-        existing_vol_ch_nums = {}
-        existing_norm_titles = {}
-        existing_fingerprints = {}
+        existing_vol_ch_nums = set()
+        existing_norm_titles = {}  # n_title -> volume_id
+        existing_fingerprints = set()
 
         if novel_id:
-            cur.execute("SELECT id, volume_id, chapter_index, global_index, title, content_html FROM chapters WHERE novel_id = ?", (novel_id,))
+            cur.execute("SELECT id, volume_id, chapter_index, global_index, title, SUBSTR(content_html, 1, 1500) as sample_html FROM chapters WHERE novel_id = ?", (novel_id,))
             for ech in cur.fetchall():
-                ech_dict = dict(ech)
-                c_num = epub_parser.extract_chapter_number(ech_dict["title"])
+                ech_vol_id = ech["volume_id"]
+                ech_title = ech["title"]
+                c_num = epub_parser.extract_chapter_number(ech_title)
                 if c_num is not None:
-                    existing_vol_ch_nums[(ech_dict["volume_id"], c_num)] = ech_dict
-                n_title = epub_parser.normalize_title(ech_dict["title"])
+                    existing_vol_ch_nums.add((ech_vol_id, c_num))
+                n_title = epub_parser.normalize_title(ech_title)
                 if n_title:
-                    existing_norm_titles[n_title] = ech_dict
-                fp = epub_parser.compute_chapter_fingerprint(ech_dict["content_html"])
+                    existing_norm_titles[n_title] = ech_vol_id
+                fp = epub_parser.compute_chapter_fingerprint(ech["sample_html"])
                 if fp and len(fp) >= 30:
-                    existing_fingerprints[fp] = ech_dict
+                    existing_fingerprints.add(fp)
 
         volumes_added = 0
         chapters_added = 0
@@ -995,11 +996,11 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 if ch_fp and len(ch_fp) >= 30 and ch_fp in existing_fingerprints:
                     is_duplicate = True
                 elif ch_norm_title and ch_norm_title in existing_norm_titles:
-                    ech = existing_norm_titles[ch_norm_title]
+                    prev_vol_id = existing_norm_titles[ch_norm_title]
                     is_generic = bool(re.match(r'^(?:chapter|ch|c)[\s._-]*\d+$', ch_norm_title, re.I))
                     if not is_generic:
                         is_duplicate = True
-                    elif ech.get("volume_id") == vol_id:
+                    elif prev_vol_id == vol_id:
                         is_duplicate = True
                 elif ch_num is not None and (vol_id, ch_num) in existing_vol_ch_nums:
                     is_duplicate = True
@@ -1022,13 +1023,12 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                     ch['content_html'],
                     ch['word_count']
                 ))
-                new_ech = {"id": ch_id, "volume_id": vol_id, "title": ch["title"], "content_html": ch["content_html"]}
                 if ch_num is not None:
-                    existing_vol_ch_nums[(vol_id, ch_num)] = new_ech
+                    existing_vol_ch_nums.add((vol_id, ch_num))
                 if ch_norm_title:
-                    existing_norm_titles[ch_norm_title] = new_ech
+                    existing_norm_titles[ch_norm_title] = vol_id
                 if ch_fp and len(ch_fp) >= 30:
-                    existing_fingerprints[ch_fp] = new_ech
+                    existing_fingerprints.add(ch_fp)
 
                 chapters_added += 1
 

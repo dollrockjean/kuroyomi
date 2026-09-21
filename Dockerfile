@@ -14,6 +14,8 @@ COPY . /app
 EXPOSE 8000
 
 ENV PORT=8000
+ENV PYTHONUNBUFFERED=1
+ENV MALLOC_ARENA_MAX=2
 
 # Start server
 CMD ["python3", "server.py"]
