@@ -20,6 +20,9 @@ def get_db():
     try:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA busy_timeout = 30000")
+        conn.execute("PRAGMA cache_size = -2000")
+        conn.execute("PRAGMA temp_store = FILE")
+        conn.execute("PRAGMA mmap_size = 0")
     except Exception:
         pass
     return conn

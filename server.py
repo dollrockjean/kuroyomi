@@ -110,6 +110,8 @@ VALID_VOICES = {
 }
 
 TTS_CONCURRENCY_SEMAPHORE = threading.Semaphore(2)
+_IN_FLIGHT_TTS = {}
+_IN_FLIGHT_LOCK = threading.Lock()
 
 def synthesize_speech(text, voice="en-US-BrianNeural", rate="+0%", pitch="+0Hz"):
     clean_text = normalize_text_for_narration(text)
@@ -129,6 +131,22 @@ def synthesize_speech(text, voice="en-US-BrianNeural", rate="+0%", pitch="+0Hz")
         with open(cache_file, "rb") as f:
             return f.read()
 
+    # Deduplicate concurrent requests for the exact same paragraph to prevent duplicate WebSockets
+    wait_event = None
+    with _IN_FLIGHT_LOCK:
+        if cache_key in _IN_FLIGHT_TTS:
+            wait_event = _IN_FLIGHT_TTS[cache_key]
+        else:
+            wait_event = None
+            _IN_FLIGHT_TTS[cache_key] = threading.Event()
+
+    if wait_event is not None:
+        wait_event.wait(timeout=12.0)
+        if os.path.exists(cache_file) and os.path.getsize(cache_file) > 0:
+            with open(cache_file, "rb") as f:
+                return f.read()
+        return None
+
     try:
         import edge_tts
         async def _run(v, r, p):
@@ -140,25 +158,28 @@ def synthesize_speech(text, voice="en-US-BrianNeural", rate="+0%", pitch="+0Hz")
             return buf.getvalue()
 
         with TTS_CONCURRENCY_SEMAPHORE:
-            data = asyncio.run(_run(voice, norm_rate, norm_pitch))
+            data = asyncio.run(asyncio.wait_for(_run(voice, norm_rate, norm_pitch), timeout=12.0))
             if data and len(data) > 100:
                 with open(cache_file, "wb") as f:
                     f.write(data)
                 return data
     except Exception as e:
-        import traceback
         print(f"[TTS] Neural TTS synthesis error for voice='{voice}' rate='{norm_rate}' pitch='{norm_pitch}': {e}")
-        # Resilient retry with the SAME voice after brief pause (never swap to Brian)
         try:
             time.sleep(0.3)
             with TTS_CONCURRENCY_SEMAPHORE:
-                data = asyncio.run(_run(voice, "+0%", "+0Hz"))
+                data = asyncio.run(asyncio.wait_for(_run(voice, "+0%", "+0Hz"), timeout=10.0))
                 if data and len(data) > 100:
                     with open(cache_file, "wb") as f:
                         f.write(data)
                     return data
         except Exception as retry_err:
             print(f"[TTS] Retry failed for voice='{voice}': {retry_err}")
+    finally:
+        with _IN_FLIGHT_LOCK:
+            ev = _IN_FLIGHT_TTS.pop(cache_key, None)
+            if ev:
+                ev.set()
 
     return None
 
@@ -876,42 +897,19 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             fname = it.filename or ''
             if fname in order_map:
                 return (0, order_map[fname])
-            return (1, natural_sort_key(fname))
+            v_num = epub_parser.detect_volume_number(fname, '')
+            return (1, v_num if v_num is not None else 9999, natural_sort_key(fname))
 
         file_items.sort(key=file_item_sort_key)
-
-        # Parse each file
-        parsed_files = []
-        for it in file_items:
-            fname = it.filename
-            data = it.file.read()
-            try:
-                if fname.lower().endswith('.pdf'):
-                    parsed_res = pdf_parser.parse_single_pdf(data, fname)
-                    vol_num = pdf_parser.detect_volume_number(fname, parsed_res['metadata']['title'])
-                else:
-                    parsed_res = epub_parser.parse_single_epub(data, fname)
-                    vol_num = epub_parser.detect_volume_number(fname, parsed_res['metadata']['title'])
-                parsed_files.append({
-                    'filename': fname,
-                    'volume_number': vol_num,
-                    'data': parsed_res
-                })
-            except Exception as ex:
-                self.send_json({"error": f"Failed to parse {fname}: {str(ex)}"}, status=400)
-                return
-
-        # If client did not provide an explicit order_map, sort by detected volume number, then natural sort filename
-        if not order_map:
-            parsed_files.sort(key=lambda x: (x['volume_number'] if x['volume_number'] is not None else 9999, natural_sort_key(x['filename'])))
 
         conn = database.get_db()
         cur = conn.cursor()
         now = time.time()
+        import gc
 
         # Determine novel
+        novel_title = None
         if novel_id:
-            # Adding volumes to existing novel
             cur.execute("SELECT * FROM novels WHERE id = ? AND user_id = ?", (novel_id, user_id))
             target_novel = cur.fetchone()
             if not target_novel:
@@ -919,80 +917,90 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 conn.close()
                 return
             novel_title = target_novel["title"]
-        else:
-            # Create new novel
-            first_meta = parsed_files[0]['data']['metadata']
-            first_fname = parsed_files[0]['filename']
-            if custom_series_title and custom_series_title.strip():
-                novel_title = custom_series_title.strip()
-            else:
-                novel_title = epub_parser.extract_base_novel_title(first_meta['title'], first_fname)
 
-            novel_id = f"nov_{uuid.uuid4().hex[:12]}"
-            cover_data = first_meta.get('cover_data')
-            cur.execute("""
-                INSERT INTO novels (id, title, author, description, cover_data, user_id, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                novel_id,
-                novel_title,
-                first_meta.get('author', 'Unknown Author'),
-                first_meta.get('description', ''),
-                cover_data,
-                user_id,
-                now,
-                now
-            ))
+        cur.execute("SELECT COUNT(*) as v_count FROM volumes WHERE novel_id = ?", (novel_id or '',))
+        v_count_row = cur.fetchone()
+        existing_vol_count = v_count_row["v_count"] if v_count_row else 0
 
-        # Check existing volumes and chapters count for deduplication and indexing
-        cur.execute("SELECT COUNT(*) as v_count FROM volumes WHERE novel_id = ?", (novel_id,))
-        existing_vol_count = cur.fetchone()["v_count"]
-
-        cur.execute("SELECT id, volume_id, chapter_index, global_index, title, content_html FROM chapters WHERE novel_id = ?", (novel_id,))
-        existing_chapters = [dict(r) for r in cur.fetchall()]
-
-        # Build deduplication lookup maps
         existing_vol_ch_nums = {}
         existing_norm_titles = {}
         existing_fingerprints = {}
 
-        for ech in existing_chapters:
-            c_num = epub_parser.extract_chapter_number(ech["title"])
-            if c_num is not None:
-                existing_vol_ch_nums[(ech["volume_id"], c_num)] = ech
-            n_title = epub_parser.normalize_title(ech["title"])
-            if n_title:
-                existing_norm_titles[n_title] = ech
-            fp = epub_parser.compute_chapter_fingerprint(ech["content_html"])
-            if fp and len(fp) >= 30:
-                existing_fingerprints[fp] = ech
+        if novel_id:
+            cur.execute("SELECT id, volume_id, chapter_index, global_index, title, content_html FROM chapters WHERE novel_id = ?", (novel_id,))
+            for ech in cur.fetchall():
+                ech_dict = dict(ech)
+                c_num = epub_parser.extract_chapter_number(ech_dict["title"])
+                if c_num is not None:
+                    existing_vol_ch_nums[(ech_dict["volume_id"], c_num)] = ech_dict
+                n_title = epub_parser.normalize_title(ech_dict["title"])
+                if n_title:
+                    existing_norm_titles[n_title] = ech_dict
+                fp = epub_parser.compute_chapter_fingerprint(ech_dict["content_html"])
+                if fp and len(fp) >= 30:
+                    existing_fingerprints[fp] = ech_dict
 
         volumes_added = 0
         chapters_added = 0
         duplicates_skipped = 0
 
-        for pf in parsed_files:
+        # Stream & parse each file one-by-one to keep memory usage under 512MB Render limit
+        for it in file_items:
+            fname = it.filename
+            data = it.file.read()
+            try:
+                if fname.lower().endswith('.pdf'):
+                    parsed_res = pdf_parser.parse_single_pdf(data, fname)
+                else:
+                    parsed_res = epub_parser.parse_single_epub(data, fname)
+            except Exception as ex:
+                conn.close()
+                self.send_json({"error": f"Failed to parse {fname}: {str(ex)}"}, status=400)
+                return
+            finally:
+                del data
+
+            meta = parsed_res['metadata']
+            ch_list = parsed_res['chapters']
+
+            # If creating a new novel, initialize it from first file
+            if not novel_id:
+                if custom_series_title and custom_series_title.strip():
+                    novel_title = custom_series_title.strip()
+                else:
+                    novel_title = epub_parser.extract_base_novel_title(meta['title'], fname)
+
+                novel_id = f"nov_{uuid.uuid4().hex[:12]}"
+                cover_data = meta.get('cover_data')
+                cur.execute("""
+                    INSERT INTO novels (id, title, author, description, cover_data, user_id, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    novel_id,
+                    novel_title,
+                    meta.get('author', 'Unknown Author'),
+                    meta.get('description', ''),
+                    cover_data,
+                    user_id,
+                    now,
+                    now
+                ))
+
             v_num = existing_vol_count + volumes_added + 1
             vol_id = f"vol_{uuid.uuid4().hex[:12]}"
-            meta = pf['data']['metadata']
-            raw_title = meta.get('title') or pf['filename']
+            raw_title = meta.get('title') or fname
             v_title = f"Volume {v_num}: {raw_title}" if "volume" not in raw_title.lower() else raw_title
 
-            ch_list = pf['data']['chapters']
-            vol_ch_count = 0
-
-            # Insert volume row first
             cur.execute("""
                 INSERT INTO volumes (id, novel_id, volume_number, title, file_name, total_chapters, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (vol_id, novel_id, v_num, v_title, pf['filename'], len(ch_list), now))
+            """, (vol_id, novel_id, v_num, v_title, fname, len(ch_list), now))
 
             for ch in ch_list:
                 ch_num = epub_parser.extract_chapter_number(ch["title"])
                 ch_norm_title = epub_parser.normalize_title(ch["title"])
                 ch_fp = epub_parser.compute_chapter_fingerprint(ch["content_html"])
 
-                # Check if chapter is already in this novel
                 is_duplicate = False
                 if ch_fp and len(ch_fp) >= 30 and ch_fp in existing_fingerprints:
                     is_duplicate = True
@@ -1033,9 +1041,12 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                     existing_fingerprints[ch_fp] = new_ech
 
                 chapters_added += 1
-                vol_ch_count += 1
 
             volumes_added += 1
+
+            del parsed_res
+            del ch_list
+            gc.collect()
 
         # Re-sequence all chapters for this novel to ensure clean, strictly continuous global_index 1..N
         cur.execute("""
@@ -1094,6 +1105,23 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
 class ThreadedHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+    _thread_semaphore = threading.Semaphore(24)
+
+    def process_request(self, request, client_address):
+        if not self._thread_semaphore.acquire(blocking=False):
+            try:
+                request.sendall(b"HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nContent-Type: text/plain\r\nContent-Length: 26\r\nConnection: close\r\n\r\nServer temporarily loaded.")
+                request.close()
+            except Exception:
+                pass
+            return
+        super().process_request(request, client_address)
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._thread_semaphore.release()
 
     def server_bind(self):
         import socket as s

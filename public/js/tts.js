@@ -987,8 +987,8 @@ const TTSEngine = {
       await this.audioElement.play();
       this.updateAudioUI();
 
-      // Proactively prefetch the next 5 paragraphs in the background buffer!
-      this.prefetchAhead(index, 5);
+      // Proactively prefetch the next 2 paragraphs with polite spacing
+      this.prefetchAhead(index, 2);
     } catch (err) {
       if (loadingTimer) clearTimeout(loadingTimer);
       if (this.playbackSessionId !== sessionId || !this.isPlaying || this.isPaused) return;
@@ -1011,7 +1011,7 @@ const TTSEngine = {
     }
   },
 
-  async prefetchAhead(fromIndex, count = 4) {
+  async prefetchAhead(fromIndex, count = 2) {
     if (!this.paragraphs || this.paragraphs.length === 0) return;
     const currentVoice = this.selectedVoice;
     const currentRate = this.rate;
@@ -1030,8 +1030,8 @@ const TTSEngine = {
             try {
               await this.getAudioBlobUrl(text, currentVoice, currentRate, currentPitch);
             } catch (e) {}
-            // Small pause between prefetch calls to prevent socket reset or rate limits
-            await new Promise(r => setTimeout(r, 120));
+            // Spaced pause between prefetch calls to prevent socket reset or hitting cloud limits
+            await new Promise(r => setTimeout(r, 350));
           }
         }
       }
