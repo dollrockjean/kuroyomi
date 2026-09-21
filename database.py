@@ -161,46 +161,54 @@ def get_or_create_user(sync_key: str, display_name: str = None, requested_user_i
     import hashlib
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM users WHERE sync_key = ?", (sync_key,))
-    row = cur.fetchone()
+    sync_key = (sync_key or "").strip().upper()
     now = time.time()
-    if row:
-        cur.execute("UPDATE users SET last_active = ? WHERE id = ?", (now, row["id"]))
-        conn.commit()
-        user_id = row["id"]
-    else:
-        # Check if requested_user_id already exists in database
-        if requested_user_id and requested_user_id.startswith("usr_"):
-            cur.execute("SELECT * FROM users WHERE id = ?", (requested_user_id,))
-            id_row = cur.fetchone()
-            if id_row:
-                cur.execute("UPDATE users SET last_active = ? WHERE id = ?", (now, requested_user_id))
-                conn.commit()
-                conn.close()
-                return requested_user_id
-            user_id = requested_user_id
-        else:
-            det_hash = hashlib.sha256(sync_key.strip().upper().encode("utf-8")).hexdigest()[:12]
-            user_id = f"usr_{det_hash}"
-            cur.execute("SELECT * FROM users WHERE id = ?", (user_id,))
-            id_row = cur.fetchone()
-            if id_row:
-                cur.execute("UPDATE users SET last_active = ? WHERE id = ?", (now, user_id))
-                conn.commit()
-                conn.close()
-                return user_id
 
-        cur.execute(
-            "INSERT OR IGNORE INTO users (id, sync_key, display_name, created_at, last_active) VALUES (?, ?, ?, ?, ?)",
-            (user_id, sync_key, display_name or f"Reader_{sync_key[:6]}", now, now)
-        )
-        cur.execute(
-            "INSERT OR IGNORE INTO user_settings (user_id, updated_at) VALUES (?, ?)",
-            (user_id, now)
-        )
+    # 1. If sync_key is provided and already exists in users table, return its user_id
+    if sync_key:
+        cur.execute("SELECT * FROM users WHERE sync_key = ?", (sync_key,))
+        row = cur.fetchone()
+        if row:
+            cur.execute("UPDATE users SET last_active = ? WHERE id = ?", (now, row["id"]))
+            conn.commit()
+            conn.close()
+            return row["id"]
+
+    # 2. Derive deterministic user_id from sync_key if available
+    if sync_key:
+        det_hash = hashlib.sha256(sync_key.encode("utf-8")).hexdigest()[:12]
+        det_user_id = f"usr_{det_hash}"
+    elif requested_user_id and requested_user_id.startswith("usr_"):
+        det_user_id = requested_user_id
+    else:
+        import secrets
+        det_user_id = f"usr_{secrets.token_hex(6)}"
+
+    # 3. Check if det_user_id exists
+    cur.execute("SELECT * FROM users WHERE id = ?", (det_user_id,))
+    id_row = cur.fetchone()
+    if id_row:
+        if sync_key and id_row["sync_key"] != sync_key:
+            cur.execute("UPDATE users SET sync_key = ?, last_active = ? WHERE id = ?", (sync_key, now, det_user_id))
+        else:
+            cur.execute("UPDATE users SET last_active = ? WHERE id = ?", (now, det_user_id))
         conn.commit()
+        conn.close()
+        return det_user_id
+
+    # 4. Insert new user row
+    final_sync_key = sync_key or f"READER-{uuid.uuid4().hex[:8].upper()}"
+    cur.execute(
+        "INSERT OR IGNORE INTO users (id, sync_key, display_name, created_at, last_active) VALUES (?, ?, ?, ?, ?)",
+        (det_user_id, final_sync_key, display_name or f"Reader_{final_sync_key[:6]}", now, now)
+    )
+    cur.execute(
+        "INSERT OR IGNORE INTO user_settings (user_id, updated_at) VALUES (?, ?)",
+        (det_user_id, now)
+    )
+    conn.commit()
     conn.close()
-    return user_id
+    return det_user_id
 
 def ensure_user_exists(user_id: str, sync_key: str = None):
     """Guarantees a valid user row exists to prevent any FOREIGN KEY failures."""
@@ -329,20 +337,28 @@ def export_backup_data(user_id: str):
     }
 
 def import_backup_data(data: dict, user_id: str, sync_key: str = None):
+    import hashlib
     conn = get_db()
     cur = conn.cursor()
     now = time.time()
 
-    effective_sync_key = sync_key or data.get("sync_key")
+    owner_dict = data.get("owner") if isinstance(data.get("owner"), dict) else {}
+    effective_sync_key = (sync_key or data.get("sync_key") or owner_dict.get("sync_key") or "").strip().upper()
     if effective_sync_key:
         cur.execute("SELECT id FROM users WHERE sync_key = ?", (effective_sync_key,))
         owner = cur.fetchone()
-        if owner and owner["id"] != user_id:
-            effective_sync_key = None
-    ensure_user_exists(user_id, sync_key=effective_sync_key)
-    if effective_sync_key:
-        cur.execute("UPDATE users SET sync_key = ? WHERE id = ?", (effective_sync_key, user_id))
-        conn.commit()
+        if owner:
+            # Reconcile user_id so books and progress restore directly to the owner of this sync key
+            user_id = owner["id"]
+        else:
+            det_hash = hashlib.sha256(effective_sync_key.encode("utf-8")).hexdigest()[:12]
+            det_user_id = f"usr_{det_hash}"
+            user_id = det_user_id
+            ensure_user_exists(user_id, sync_key=effective_sync_key)
+            cur.execute("UPDATE users SET sync_key = ? WHERE id = ?", (effective_sync_key, user_id))
+            conn.commit()
+    else:
+        ensure_user_exists(user_id)
 
     novels = data.get("novels", [])
     volumes = data.get("volumes", [])

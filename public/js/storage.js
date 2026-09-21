@@ -78,7 +78,7 @@ const Storage = {
     const uid = userId || this.getUserId() || 'guest';
     const payload = JSON.stringify({
       ...progress,
-      savedAt: Date.now()
+      savedAt: (progress && typeof progress.savedAt === 'number' && progress.savedAt > 0) ? progress.savedAt : Date.now()
     });
     localStorage.setItem(`${this.PROGRESS_PREFIX}${uid}_${novelId}`, payload);
     // Also save legacy key for backward compatibility

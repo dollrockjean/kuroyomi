@@ -253,6 +253,9 @@ def clean_html_content(raw_html, zf, base_dir):
                         break
             if full_img_path in zf.namelist():
                 img_data = zf.read(full_img_path)
+                # Skip individual inline images exceeding 3MB to prevent RAM exhaustion
+                if len(img_data) > 3 * 1024 * 1024:
+                    return ''
                 mime = mimetypes.guess_type(full_img_path)[0] or 'image/jpeg'
                 b64 = base64.b64encode(img_data).decode('utf-8')
                 new_src = f'src="data:{mime};base64,{b64}"'

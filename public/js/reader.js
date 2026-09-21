@@ -24,7 +24,12 @@ const Reader = {
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') {
         this.flushPendingProgress();
+      } else if (document.visibilityState === 'visible') {
+        this.checkRemoteSync();
       }
+    });
+    window.addEventListener('focus', () => {
+      this.checkRemoteSync();
     });
     window.addEventListener('pagehide', () => {
       this.flushPendingProgress();
@@ -424,7 +429,7 @@ const Reader = {
       let targetPid = 0;
       let targetPercent = 0;
 
-      const local = Storage.getLocalProgress(novelId);
+      const local = Storage.getLocalProgress(novelId, userId);
       if (resume) {
         const hasCloud = !!(data.progress && data.progress.chapter_id);
         const hasLocal = !!(local && local.chapterId);
@@ -513,7 +518,7 @@ const Reader = {
             globalIndex: chObj ? (chObj.global_index || chIdx + 1) : 1,
             overallPercent: cloudOverall,
             savedAt: (data.progress.updated_at || 0) * 1000
-          });
+          }, userId);
         }
       }
 
@@ -828,6 +833,60 @@ const Reader = {
     }
     if (window.SyncService && typeof window.SyncService.flushPendingSync === 'function') {
       window.SyncService.flushPendingSync();
+    }
+  },
+
+  async checkRemoteSync() {
+    if (!navigator.onLine || !this.currentNovel || !this.currentChapter) return;
+    if (window.App && window.App.currentView !== 'reader') return;
+    const userId = (window.SyncService && SyncService.currentUserId) || (window.Storage && Storage.getUserId());
+    if (!userId || userId === 'offline_user' || userId === 'universal_device_mirror') return;
+
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 6000);
+      const res = await fetch(`/api/novels/${encodeURIComponent(this.currentNovel.id)}?user_id=${encodeURIComponent(userId)}`, {
+        cache: 'no-store',
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+      if (!res.ok) return;
+
+      const data = await res.json();
+      if (!data || !data.progress || !data.progress.chapter_id) return;
+
+      const remote = data.progress;
+      const remoteTime = (remote.updated_at || 0) * 1000;
+      const local = Storage.getLocalProgress(this.currentNovel.id, userId);
+      const localTime = (local && local.savedAt) || 0;
+
+      // If remote position was updated more recently on another device (by more than 2.5 seconds)
+      if (remoteTime > (localTime + 2500)) {
+        if (remote.chapter_id !== this.currentChapter.id) {
+          // Cancel pending debounce to prevent local scroll from overwriting remote progress
+          if (this.scrollDebounce) {
+            clearTimeout(this.scrollDebounce);
+            this.scrollDebounce = null;
+          }
+
+          Storage.saveLocalProgress(this.currentNovel.id, {
+            volumeId: remote.volume_id,
+            chapterId: remote.chapter_id,
+            paragraphIndex: remote.paragraph_index || 0,
+            scrollPercent: remote.scroll_percent || 0,
+            savedAt: remoteTime
+          }, userId);
+
+          this.targetParagraphIndex = remote.paragraph_index || 0;
+          this.targetScrollPercent = remote.scroll_percent || 0;
+          await this.loadChapter(remote.chapter_id, true);
+          if (window.App && typeof window.App.showToast === 'function') {
+            window.App.showToast('Synced reading position from another device');
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('checkRemoteSync notice:', e);
     }
   },
 

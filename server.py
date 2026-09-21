@@ -201,6 +201,16 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def send_error(self, code, message=None, explain=None):
+        try:
+            self.send_json({
+                "error": message or f"HTTP {code}",
+                "status": code,
+                "explain": explain or ""
+            }, status=code)
+        except Exception:
+            super().send_error(code, message, explain)
+
     def end_headers(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
@@ -316,21 +326,10 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         # 3. Get Novels List
         if path == "/api/novels":
             user_id = query.get("user_id", [""])[0]
-            if not user_id or user_id in ("universal_device_mirror", "READER-PRIMARY", "default_user"):
-                cur.execute("""
-                    SELECT u.id FROM users u
-                    JOIN novels n ON u.id = n.user_id
-                    GROUP BY u.id
-                    ORDER BY COUNT(n.id) DESC, u.last_active DESC
-                    LIMIT 1
-                """)
-                primary_user = cur.fetchone()
-                if primary_user and primary_user["id"]:
-                    user_id = primary_user["id"]
-                elif not user_id:
-                    self.send_json({"novels": []})
-                    conn.close()
-                    return
+            if not user_id or user_id in ("universal_device_mirror", "default_user"):
+                self.send_json({"novels": []})
+                conn.close()
+                return
 
             # Ensure user row exists in users table
             cur.execute("SELECT id, demo_seeded, sync_key FROM users WHERE id = ?", (user_id,))
@@ -597,19 +596,8 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         # 11. Database Backup Export (Safeguard for Free Ephemeral Hosting)
         if path == "/api/backup":
             user_id = query.get("user_id", [""])[0]
-            if not user_id or user_id in ("universal_device_mirror", "READER-PRIMARY", "default_user"):
-                cur.execute("""
-                    SELECT u.id FROM users u
-                    JOIN novels n ON u.id = n.user_id
-                    GROUP BY u.id
-                    ORDER BY COUNT(n.id) DESC, u.last_active DESC
-                    LIMIT 1
-                """)
-                primary_user = cur.fetchone()
-                if primary_user and primary_user["id"]:
-                    user_id = primary_user["id"]
             conn.close()
-            if not user_id:
+            if not user_id or user_id in ("universal_device_mirror", "default_user"):
                 self.send_json({"error": "user_id required"}, status=400)
                 return
             backup_data = database.export_backup_data(user_id)
@@ -623,17 +611,17 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
 
+        content_length = int(self.headers.get("Content-Length", 0))
+        MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50MB limit safeguard
+        if content_length > MAX_UPLOAD_SIZE:
+            self.send_json({"error": "Payload exceeds 50MB upload limit. Upload files individually."}, status=413)
+            return
+
         if path == "/api/upload":
             try:
                 self.handle_upload()
             except Exception as e:
                 self.send_json({"error": f"Upload failed: {str(e)}"}, status=500)
-            return
-
-        content_length = int(self.headers.get("Content-Length", 0))
-        MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50MB limit safeguard
-        if content_length > MAX_UPLOAD_SIZE:
-            self.send_json({"error": "Payload exceeds 50MB upload limit"}, status=413)
             return
 
         post_data = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
@@ -664,8 +652,10 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             # When a visitor opens the plain link for the first time without a sync key,
             # generate an isolated profile so they get their own fresh library
             if not sync_key or sync_key in ("OFFLINE", "DEFAULT_READER"):
+                import hashlib
                 sync_key = f"READER-{secrets.token_hex(4).upper()}"
-                requested_user_id = f"usr_{secrets.token_hex(6)}"
+                det_hash = hashlib.sha256(sync_key.encode("utf-8")).hexdigest()[:12]
+                requested_user_id = f"usr_{det_hash}"
 
             user_id = database.get_or_create_user(sync_key, requested_user_id=requested_user_id)
             database.register_device(user_id, device_token, device_name, user_agent, remember)

@@ -1232,6 +1232,13 @@ const App = {
         if (result && result.settings && Object.keys(result.settings).length > 0) {
           this.applySettings(result.settings, false);
         }
+        // Clear cached novels to prevent old account books from remaining in memory
+        this.novels = [];
+        this.updateSyncDisplay();
+        if (this.currentView === 'reader') {
+          if (typeof Reader !== 'undefined') Reader.currentNovel = null;
+          this.switchView('library');
+        }
         await this.loadLibrary();
         this.hideLoading();
         this.closeMasterPanel();
@@ -1261,7 +1268,8 @@ const App = {
                         /^192\.168\.\d+\.\d+$/.test(host) ||
                         /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/.test(host);
         const baseUrl = isLocal ? SyncService.cloudServerUrl : window.location.origin;
-        const link = `${baseUrl}/?pair=${encodeURIComponent(key)}`;
+        const uid = SyncService.currentUserId || Storage.getUserId() || '';
+        const link = `${baseUrl}/?pair=${encodeURIComponent(key)}${uid ? `&uid=${encodeURIComponent(uid)}` : ''}`;
         navigator.clipboard.writeText(link).then(() => {
           this.showToast('1-Click Pairing Link copied!');
         }).catch(() => {
@@ -1321,6 +1329,9 @@ const App = {
         try {
           this.showLoading('Exporting backup...');
           const res = await fetch(`/api/backup?user_id=${encodeURIComponent(SyncService.currentUserId)}`);
+          if (!res.ok) {
+            throw new Error(`Server returned HTTP ${res.status}`);
+          }
           const backupData = await res.json();
           this.hideLoading();
 
@@ -1367,14 +1378,18 @@ const App = {
             })
           });
 
-          const data = await res.json();
+          let data = null;
+          const contentType = res.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            try { data = await res.json(); } catch (je) { data = null; }
+          }
           this.hideLoading();
-          if (data.success) {
+          if (res.ok && data && data.success) {
             this.showToast(`Restored ${data.novels_restored || 0} novel(s), ${data.chapters_restored || 0} chapters`);
             await this.loadLibrary();
             fileInput.value = '';
           } else {
-            alert('Restore failed: ' + (data.error || 'Unknown error'));
+            alert('Restore failed: ' + (data && data.error ? data.error : `HTTP ${res.status}`));
           }
         } catch (err) {
           this.hideLoading();
@@ -1438,6 +1453,8 @@ const App = {
             this._lastWakeCheck = Date.now();
             if (this.currentView === 'library') {
               this.loadLibrary(false);
+            } else if (this.currentView === 'reader' && typeof Reader !== 'undefined' && Reader.checkRemoteSync) {
+              Reader.checkRemoteSync();
             }
           }
         }
@@ -2355,9 +2372,30 @@ const App = {
         method: 'POST',
         body: formData
       });
-      const data = await res.json();
-      if (!data.success) {
-        throw new Error(data.error || 'Upload failed');
+
+      let data = null;
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        try {
+          data = await res.json();
+        } catch (jsonErr) {
+          data = null;
+        }
+      }
+
+      if (!res.ok || !data || !data.success) {
+        if (res.status === 413) {
+          throw new Error('File exceeds upload limit (50MB). Please upload a smaller file or one volume at a time.');
+        } else if (res.status === 502 || res.status === 503) {
+          throw new Error('Server is currently waking up or restarting. Please wait 10 seconds and try again.');
+        } else if (res.status === 504) {
+          throw new Error('Upload timed out. Try uploading fewer files or one volume at a time.');
+        } else if (data && data.error) {
+          throw new Error(data.error);
+        } else {
+          const rawText = await res.text().catch(() => '');
+          throw new Error(`Server returned HTTP ${res.status}: ${rawText.slice(0, 100) || 'Upload failed'}`);
+        }
       }
 
       progressFill.style.width = '100%';

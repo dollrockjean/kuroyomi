@@ -88,9 +88,6 @@ const SyncService = {
       if (uidParam && uidParam.startsWith('usr_')) {
         Storage.setUserId(uidParam.trim());
       }
-      if (pairParam || uidParam) {
-        window.history.replaceState({}, document.title, window.location.pathname);
-      }
     } catch (e) {}
 
     const deviceToken = Storage.getDeviceToken();
@@ -101,6 +98,9 @@ const SyncService = {
       if (pairKeyDetected) {
         console.log('Pairing device via 1-Click link:', pairKeyDetected);
         const pairData = await this.pairDeviceWithKey(pairKeyDetected, isRemembered);
+        try {
+          window.history.replaceState({}, document.title, window.location.pathname);
+        } catch (e) {}
         return { userId: pairData.user_id, syncKey: pairData.sync_key, settings: pairData.settings };
       }
 
@@ -199,7 +199,7 @@ const SyncService = {
         await IDB.clearLibraryMirror();
       }
 
-      const res = await fetch('/api/auth/register-device', {
+      const res = await fetchWithTimeout('/api/auth/register-device', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -208,10 +208,18 @@ const SyncService = {
           device_name: deviceName,
           remember: remember
         })
-      });
+      }, 45000);
 
-      const data = await res.json();
-      if (data.success) {
+      const contentType = res.headers.get('content-type') || '';
+      let data = null;
+      if (contentType.includes('application/json')) {
+        data = await res.json();
+      } else {
+        const txt = await res.text().catch(() => '');
+        throw new Error(res.status === 502 || res.status === 503 ? 'Cloud server is waking up, please retry in a few seconds' : `Server returned HTTP ${res.status}`);
+      }
+
+      if (data && data.success) {
         this.currentUserId = data.user_id;
         this.currentSyncKey = data.sync_key;
         Storage.setUserId(data.user_id);
@@ -220,7 +228,7 @@ const SyncService = {
         this.updateStatus('synced', 'SYNCED');
         return data;
       } else {
-        throw new Error(data.error || 'Pairing failed');
+        throw new Error((data && data.error) || 'Pairing failed');
       }
     } catch (e) {
       this.updateStatus('offline', 'PAIR FAILED');
@@ -311,6 +319,15 @@ const SyncService = {
       }).then(res => res.json()).then(data => {
         if (data && data.success) {
           this.updateStatus('synced', 'SAVED');
+          if (data.updated_at) {
+            Storage.saveLocalProgress(record.novel_id, {
+              volumeId: record.volume_id,
+              chapterId: record.chapter_id,
+              paragraphIndex: record.paragraph_index,
+              scrollPercent: record.scroll_percent,
+              savedAt: Math.round(data.updated_at * 1000)
+            }, record.user_id);
+          }
         }
       }).catch(e => {
         console.warn('Progress cloud sync error, queuing offline:', e);
@@ -340,6 +357,15 @@ const SyncService = {
         const data = await res.json();
         if (data.success) {
           syncedCount++;
+          if (data.updated_at) {
+            Storage.saveLocalProgress(record.novel_id, {
+              volumeId: record.volume_id,
+              chapterId: record.chapter_id,
+              paragraphIndex: record.paragraph_index,
+              scrollPercent: record.scroll_percent,
+              savedAt: Math.round(data.updated_at * 1000)
+            }, this.currentUserId || record.user_id);
+          }
         }
       } catch (e) {
         console.warn('Error syncing queued offline progress:', e);
