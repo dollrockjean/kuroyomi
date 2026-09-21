@@ -1,3 +1,12 @@
+---
+title: Kuroyomi Web Novel Reader
+colorFrom: gray
+colorTo: red
+sdk: docker
+app_port: 8000
+pinned: false
+---
+
 # KuroYomi · Modern Web Novel Reader
 
 A clean, minimalist web novel reader inspired by services like **WebNovel**. Built with an elegant **monochrome theme (black, grey, white)**, classic **Times New Roman** typography, subtle soft curves, smooth auto-hiding menus, natural human-like voice narration with a sleep timer, context-aware navigation, and cloud progress synchronization across devices.
