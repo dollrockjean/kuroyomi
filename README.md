@@ -2,8 +2,8 @@
 title: Kuroyomi Web Novel Reader
 colorFrom: gray
 colorTo: red
-sdk: docker
-app_port: 8000
+sdk: gradio
+app_file: app.py
 pinned: false
 ---
 
