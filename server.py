@@ -30,7 +30,7 @@ PORT = int(os.environ.get("PORT", 8000))
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PUBLIC_DIR = os.path.join(BASE_DIR, "public")
 
-TTS_CACHE_DIR = os.path.join(tempfile.gettempdir(), "kuroyomi_tts_cache")
+TTS_CACHE_DIR = os.path.join(tempfile.gettempdir(), "byob_tts_cache")
 os.makedirs(TTS_CACHE_DIR, exist_ok=True)
 
 BUILTIN_NEURAL_VOICES = [
@@ -109,7 +109,7 @@ VALID_VOICES = {
     "en-AU-WilliamMultilingualNeural"
 }
 
-TTS_CONCURRENCY_SEMAPHORE = threading.Semaphore(2)
+TTS_CONCURRENCY_SEMAPHORE = threading.Semaphore(6)
 _IN_FLIGHT_TTS = {}
 _IN_FLIGHT_LOCK = threading.Lock()
 
@@ -590,7 +590,7 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         # 10. Health Check (for Cloud Deployments: Render, Railway, Fly.io)
         if path in ("/health", "/api/health"):
             conn.close()
-            self.send_json({"status": "healthy", "service": "kuroyomi", "timestamp": time.time()})
+            self.send_json({"status": "healthy", "service": "byob", "timestamp": time.time()})
             return
 
         # 11. Database Backup Export (Safeguard for Free Ephemeral Hosting)
@@ -1127,7 +1127,7 @@ def run(port=PORT, host="0.0.0.0"):
     database.init_db()
     os.makedirs(PUBLIC_DIR, exist_ok=True)
     with ThreadedHTTPServer((host, port), NovelReaderHandler) as httpd:
-        print(f"=== KuroYomi Web Novel Server ===")
+        print(f"=== BYoB · Bring Your Own Books Server ===")
         print(f"Server running at: http://{host}:{port}")
         try:
             httpd.serve_forever()

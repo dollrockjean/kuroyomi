@@ -1,4 +1,4 @@
-// Realistic Built-In Neural TTS Engine for KuroYomi
+// Realistic Built-In Neural TTS Engine for BYoB
 // Uses Blob-based local audio streaming for 100% compatibility across iOS Safari, macOS, Chrome, Edge, and Android
 const TTS_ICONS = {
   play: '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>',
@@ -144,6 +144,30 @@ const TTSEngine = {
     this.audioElement.addEventListener('ended', this._onEndedHandler);
     this.audioElement.addEventListener('timeupdate', this._onTimeUpdateHandler);
     this.audioElement.addEventListener('error', this._onErrorHandler);
+  },
+
+  swapAudioBuffers() {
+    if (this._onEndedHandler) {
+      this.audioElement.removeEventListener('ended', this._onEndedHandler);
+    }
+    if (this._onTimeUpdateHandler) {
+      this.audioElement.removeEventListener('timeupdate', this._onTimeUpdateHandler);
+    }
+    if (this._onErrorHandler) {
+      this.audioElement.removeEventListener('error', this._onErrorHandler);
+    }
+
+    const temp = this.audioElement;
+    this.audioElement = this.secondaryAudioElement;
+    this.secondaryAudioElement = temp;
+
+    try {
+      this.secondaryAudioElement.pause();
+      this.secondaryAudioElement.removeAttribute('src');
+      this.secondaryAudioElement.load();
+    } catch (e) {}
+
+    this.bindAudioElementEvents();
   },
 
   init(onChapterEnd) {
@@ -552,7 +576,7 @@ const TTSEngine = {
     const originalText = testBtn ? testBtn.textContent : 'Test Voice';
     
     if (testBtn) testBtn.textContent = 'Loading...';
-    const testSentence = "Welcome to KuroYomi. This is how I sound reading your novel.";
+    const testSentence = "Welcome to BYoB. This is how I sound reading your books.";
 
     try {
       this.testAudioElement.pause();
@@ -670,7 +694,10 @@ const TTSEngine = {
     if (window.App && typeof window.App.cancelPendingSleepResume === 'function') {
       window.App.cancelPendingSleepResume();
     } else {
-      try { localStorage.removeItem('kuroyomi_pending_sleep_resume'); } catch (e) {}
+      try {
+        localStorage.removeItem('byob_pending_sleep_resume');
+        localStorage.removeItem('kuroyomi_pending_sleep_resume');
+      } catch (e) {}
     }
     this.sleepModeExpired = false;
 
@@ -807,7 +834,10 @@ const TTSEngine = {
     if (window.App && typeof window.App.cancelPendingSleepResume === 'function') {
       window.App.cancelPendingSleepResume();
     } else {
-      try { localStorage.removeItem('kuroyomi_pending_sleep_resume'); } catch (e) {}
+      try {
+        localStorage.removeItem('byob_pending_sleep_resume');
+        localStorage.removeItem('kuroyomi_pending_sleep_resume');
+      } catch (e) {}
     }
     this.sleepModeExpired = false;
 
@@ -883,13 +913,23 @@ const TTSEngine = {
     this.playbackSessionId = (this.playbackSessionId || 0) + 1;
     const sessionId = this.playbackSessionId;
 
-    // 1. Immediately pause prior playback & cancel speech synthesis so skipping is instantaneous
-    this.audioElement.pause();
-    this.audioElement.loop = false;
-    try {
-      this.secondaryAudioElement.pause();
-      this.secondaryAudioElement.removeAttribute('src');
-    } catch (e) {}
+    // 1. Check if next paragraph was preloaded in secondary audio buffer for 0ms gapless handoff
+    const hasPreloaded = (this.preloadedIndex === index && Boolean(this.preloadedBlobUrl));
+
+    if (!hasPreloaded) {
+      this.audioElement.pause();
+      this.audioElement.loop = false;
+      try {
+        this.secondaryAudioElement.pause();
+        this.secondaryAudioElement.removeAttribute('src');
+      } catch (e) {}
+      this.preloadedIndex = -1;
+      this.preloadedBlobUrl = null;
+    } else {
+      this.audioElement.pause();
+      this.audioElement.loop = false;
+    }
+
     this.isTransitioning = false;
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
@@ -917,17 +957,12 @@ const TTSEngine = {
       return;
     }
 
-    this.isLoading = true;
-
     // Visual highlight on reader text (bypass smooth scroll in background to prevent animation frame freeze)
     this.clearHighlight();
     el.classList.add('speaking-active');
     if (!document.hidden && el.scrollIntoView) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
-
-    this.updateAudioUI();
-    this.updateMediaSessionMetadata();
 
     // Silently save progress with accurate scroll percentage
     if (window.Reader) {
@@ -938,16 +973,21 @@ const TTSEngine = {
 
     // Check if audio blob is already in memory cache
     const cacheKey = `${this.selectedVoice}_${this.rate}_${this.pitch}_${textToSpeak}`;
-    const isCached = this.blobCache.has(cacheKey);
+    const isCached = hasPreloaded || this.blobCache.has(cacheKey);
+
+    // Only set loading state true if uncached fetch is needed
+    this.isLoading = !isCached;
+    this.updateAudioUI();
+    this.updateMediaSessionMetadata();
 
     let loadingTimer = null;
     if (!isCached && navigator.onLine) {
-      // Only show soundbars if synthesis takes longer than 120ms
+      // 450ms debounce before showing soundbars to prevent flicker on rapid network hops
       loadingTimer = setTimeout(() => {
         if (this.isLoading && this.currentIndex === index && this.playbackSessionId === sessionId) {
           this.showAudiobookLoading();
         }
-      }, 120);
+      }, 450);
     } else {
       this.updateAudiobookModalContent();
     }
@@ -955,6 +995,13 @@ const TTSEngine = {
     // If device is offline
     if (!navigator.onLine) {
       if (loadingTimer) clearTimeout(loadingTimer);
+      this.audioElement.pause();
+      try {
+        this.secondaryAudioElement.pause();
+        this.secondaryAudioElement.removeAttribute('src');
+      } catch (e) {}
+      this.preloadedIndex = -1;
+      this.preloadedBlobUrl = null;
       this.isLoading = false;
       this.setDeviceVoiceMode(true);
       this.updateAudiobookModalContent();
@@ -966,7 +1013,22 @@ const TTSEngine = {
     try {
       this.playKeepAliveSilence();
 
-      const blobUrl = await this.getAudioBlobUrl(textToSpeak, this.selectedVoice, this.rate, this.pitch);
+      if (hasPreloaded) {
+        // Dual-buffer 0ms handoff: swap preloaded secondary element into primary role
+        this.swapAudioBuffers();
+        this.audioElement.loop = false;
+        this.audioElement.playbackRate = this.rate;
+        this.preloadedIndex = -1;
+        this.preloadedBlobUrl = null;
+      } else {
+        const blobUrl = await this.getAudioBlobUrl(textToSpeak, this.selectedVoice, this.rate, this.pitch);
+
+        if (this.playbackSessionId !== sessionId || !this.isPlaying || this.isPaused) return;
+
+        this.audioElement.loop = false;
+        this.audioElement.src = blobUrl;
+        this.audioElement.playbackRate = this.rate;
+      }
 
       if (loadingTimer) clearTimeout(loadingTimer);
 
@@ -980,15 +1042,13 @@ const TTSEngine = {
         this.setDeviceVoiceMode(false);
       }
 
-      this.audioElement.loop = false;
-      this.audioElement.src = blobUrl;
-      this.audioElement.playbackRate = this.rate;
       this.updateAudiobookModalContent();
       await this.audioElement.play();
       this.updateAudioUI();
 
-      // Proactively prefetch the next 2 paragraphs with polite spacing
-      this.prefetchAhead(index, 2);
+      // Proactively prefetch next 6 paragraphs and prepare secondary audio buffer
+      this.prefetchAhead(index, 6);
+      this.prepareNextParagraph(index + 1);
     } catch (err) {
       if (loadingTimer) clearTimeout(loadingTimer);
       if (this.playbackSessionId !== sessionId || !this.isPlaying || this.isPaused) return;
@@ -1002,16 +1062,25 @@ const TTSEngine = {
 
   async prepareNextParagraph(nextIndex) {
     if (!this.paragraphs || nextIndex >= this.paragraphs.length) return;
+    if (!this.isPlaying || this.isPaused) return;
     const el = this.paragraphs[nextIndex];
     const text = el ? el.innerText.trim() : '';
-    if (text) {
-      try {
-        await this.getAudioBlobUrl(text, this.selectedVoice, this.rate, this.pitch);
-      } catch (e) {}
-    }
+    if (!text) return;
+
+    try {
+      const nextBlobUrl = await this.getAudioBlobUrl(text, this.selectedVoice, this.rate, this.pitch);
+      if (!this.isPlaying || this.isPaused) return;
+      if (this.preloadedIndex !== nextIndex) {
+        this.preloadedIndex = nextIndex;
+        this.preloadedBlobUrl = nextBlobUrl;
+        this.secondaryAudioElement.src = nextBlobUrl;
+        this.secondaryAudioElement.playbackRate = this.rate;
+        this.secondaryAudioElement.load();
+      }
+    } catch (e) {}
   },
 
-  async prefetchAhead(fromIndex, count = 2) {
+  async prefetchAhead(fromIndex, count = 6) {
     if (!this.paragraphs || this.paragraphs.length === 0) return;
     const currentVoice = this.selectedVoice;
     const currentRate = this.rate;
@@ -1028,10 +1097,24 @@ const TTSEngine = {
           const cacheKey = `${currentVoice}_${currentRate}_${currentPitch}_${text}`;
           if (!this.blobCache.has(cacheKey) && !this.pendingFetches.has(cacheKey)) {
             try {
-              await this.getAudioBlobUrl(text, currentVoice, currentRate, currentPitch);
+              const url = await this.getAudioBlobUrl(text, currentVoice, currentRate, currentPitch);
+              if (offset === 1 && this.preloadedIndex !== idx && this.isPlaying && !this.isPaused) {
+                this.preloadedIndex = idx;
+                this.preloadedBlobUrl = url;
+                this.secondaryAudioElement.src = url;
+                this.secondaryAudioElement.playbackRate = currentRate;
+                this.secondaryAudioElement.load();
+              }
             } catch (e) {}
-            // Spaced pause between prefetch calls to prevent socket reset or hitting cloud limits
-            await new Promise(r => setTimeout(r, 350));
+            // Rapid 40ms yield to prevent event loop starvation while filling buffer quickly
+            await new Promise(r => setTimeout(r, 40));
+          } else if (offset === 1 && this.blobCache.has(cacheKey) && this.preloadedIndex !== idx && this.isPlaying && !this.isPaused) {
+            const url = this.blobCache.get(cacheKey);
+            this.preloadedIndex = idx;
+            this.preloadedBlobUrl = url;
+            this.secondaryAudioElement.src = url;
+            this.secondaryAudioElement.playbackRate = currentRate;
+            this.secondaryAudioElement.load();
           }
         }
       }
@@ -1260,6 +1343,7 @@ const TTSEngine = {
         },
         timestamp: Date.now()
       };
+      localStorage.setItem('byob_pending_sleep_resume', JSON.stringify(resumeRecord));
       localStorage.setItem('kuroyomi_pending_sleep_resume', JSON.stringify(resumeRecord));
     } catch (e) {
       console.warn('Could not save sleep resume record:', e);
@@ -1360,7 +1444,7 @@ const TTSEngine = {
     const badgeEl = document.getElementById('audiobookParaBadge');
 
     if (window.Reader && window.Reader.currentNovel) {
-      if (titleEl) titleEl.textContent = window.Reader.currentNovel.title || 'KuroYomi Audiobook';
+      if (titleEl) titleEl.textContent = window.Reader.currentNovel.title || 'BYoB Audiobook';
     }
     if (window.Reader && window.Reader.currentChapter) {
       if (chEl) chEl.textContent = window.Reader.currentChapter.title || 'Chapter';
@@ -1502,7 +1586,7 @@ const TTSEngine = {
     const badgeEl = document.getElementById('audiobookParaBadge');
 
     if (window.Reader && window.Reader.currentNovel) {
-      if (titleEl) titleEl.textContent = window.Reader.currentNovel.title || 'KuroYomi Audiobook';
+      if (titleEl) titleEl.textContent = window.Reader.currentNovel.title || 'BYoB Audiobook';
     }
     if (window.Reader && window.Reader.currentChapter) {
       if (chEl) chEl.textContent = window.Reader.currentChapter.title || 'Chapter';
@@ -1631,13 +1715,13 @@ const TTSEngine = {
   updateMediaSessionMetadata() {
     if (!('mediaSession' in navigator) || !window.MediaMetadata) return;
     try {
-      const novelTitle = (window.Reader && window.Reader.currentNovel && window.Reader.currentNovel.title) || 'KuroYomi';
+      const novelTitle = (window.Reader && window.Reader.currentNovel && window.Reader.currentNovel.title) || 'BYoB';
       const chTitle = (window.Reader && window.Reader.currentChapter && window.Reader.currentChapter.title) || 'Audiobook';
 
       navigator.mediaSession.metadata = new MediaMetadata({
         title: chTitle,
         artist: novelTitle,
-        album: 'KuroYomi Audiobook',
+        album: 'BYoB Audiobook',
         artwork: [
           { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' }
@@ -1658,7 +1742,7 @@ const TTSEngine = {
       return;
     }
 
-    const corner = localStorage.getItem('kuroyomi_tts_badge_corner') || 'bottom-right';
+    const corner = localStorage.getItem('byob_tts_badge_corner') || localStorage.getItem('kuroyomi_tts_badge_corner') || 'bottom-right';
     badge.style.transition = 'none';
 
     if (corner === 'top-left') {
@@ -1750,6 +1834,7 @@ const TTSEngine = {
       badge.style.bottom = isTop ? 'auto' : 'calc(75px + var(--safe-bottom))';
 
       const corner = (isTop ? 'top' : 'bottom') + '-' + (isLeft ? 'left' : 'right');
+      localStorage.setItem('byob_tts_badge_corner', corner);
       localStorage.setItem('kuroyomi_tts_badge_corner', corner);
     });
   }

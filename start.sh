@@ -11,7 +11,7 @@ if [ -n "$OLD_PID" ]; then
 fi
 
 echo "=========================================================="
-echo "  KUROYOMI · CLOUD-SYNCED WEB NOVEL READER"
+echo "  BYOB · BRING YOUR OWN BOOKS"
 echo "=========================================================="
 echo "Starting server on port $PORT..."
 echo "Access locally: http://localhost:$PORT"

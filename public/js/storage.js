@@ -1,15 +1,22 @@
 // Storage & Device Token Manager (iOS & Web)
 const Storage = {
-  DEVICE_TOKEN_KEY: 'kuroyomi_device_token',
-  SYNC_KEY_KEY: 'kuroyomi_sync_key',
-  USER_ID_KEY: 'kuroyomi_user_id',
-  REMEMBER_KEY: 'kuroyomi_remember_device',
-  DEVICE_NAME_KEY: 'kuroyomi_device_name',
-  SETTINGS_KEY: 'kuroyomi_settings',
-  PROGRESS_PREFIX: 'kuroyomi_prog_',
+  DEVICE_TOKEN_KEY: 'byob_device_token',
+  LEGACY_DEVICE_TOKEN_KEY: 'kuroyomi_device_token',
+  SYNC_KEY_KEY: 'byob_sync_key',
+  LEGACY_SYNC_KEY_KEY: 'kuroyomi_sync_key',
+  USER_ID_KEY: 'byob_user_id',
+  LEGACY_USER_ID_KEY: 'kuroyomi_user_id',
+  REMEMBER_KEY: 'byob_remember_device',
+  LEGACY_REMEMBER_KEY: 'kuroyomi_remember_device',
+  DEVICE_NAME_KEY: 'byob_device_name',
+  LEGACY_DEVICE_NAME_KEY: 'kuroyomi_device_name',
+  SETTINGS_KEY: 'byob_settings',
+  LEGACY_SETTINGS_KEY: 'kuroyomi_settings',
+  PROGRESS_PREFIX: 'byob_prog_',
+  LEGACY_PROGRESS_PREFIX: 'kuroyomi_prog_',
 
   getDeviceToken() {
-    let token = localStorage.getItem(this.DEVICE_TOKEN_KEY);
+    let token = localStorage.getItem(this.DEVICE_TOKEN_KEY) || localStorage.getItem(this.LEGACY_DEVICE_TOKEN_KEY);
     if (!token) {
       token = 'dev_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
       localStorage.setItem(this.DEVICE_TOKEN_KEY, token);
@@ -18,7 +25,7 @@ const Storage = {
   },
 
   getDeviceName() {
-    let name = localStorage.getItem(this.DEVICE_NAME_KEY);
+    let name = localStorage.getItem(this.DEVICE_NAME_KEY) || localStorage.getItem(this.LEGACY_DEVICE_NAME_KEY);
     if (!name) {
       const ua = navigator.userAgent;
       if (/iPhone/.test(ua)) name = 'iPhone';
@@ -37,7 +44,8 @@ const Storage = {
   },
 
   isRemembered() {
-    const val = localStorage.getItem(this.REMEMBER_KEY);
+    let val = localStorage.getItem(this.REMEMBER_KEY);
+    if (val === null) val = localStorage.getItem(this.LEGACY_REMEMBER_KEY);
     return val === null ? true : val === 'true';
   },
 
@@ -46,7 +54,7 @@ const Storage = {
   },
 
   getSyncKey() {
-    return localStorage.getItem(this.SYNC_KEY_KEY) || '';
+    return localStorage.getItem(this.SYNC_KEY_KEY) || localStorage.getItem(this.LEGACY_SYNC_KEY_KEY) || '';
   },
 
   setSyncKey(key) {
@@ -54,7 +62,7 @@ const Storage = {
   },
 
   getUserId() {
-    return localStorage.getItem(this.USER_ID_KEY) || '';
+    return localStorage.getItem(this.USER_ID_KEY) || localStorage.getItem(this.LEGACY_USER_ID_KEY) || '';
   },
 
   setUserId(id) {
@@ -63,7 +71,7 @@ const Storage = {
 
   getLocalSettings() {
     try {
-      const s = localStorage.getItem(this.SETTINGS_KEY);
+      const s = localStorage.getItem(this.SETTINGS_KEY) || localStorage.getItem(this.LEGACY_SETTINGS_KEY);
       return s ? JSON.parse(s) : null;
     } catch {
       return null;
@@ -81,18 +89,22 @@ const Storage = {
       savedAt: (progress && typeof progress.savedAt === 'number' && progress.savedAt > 0) ? progress.savedAt : Date.now()
     });
     localStorage.setItem(`${this.PROGRESS_PREFIX}${uid}_${novelId}`, payload);
-    // Also save legacy key for backward compatibility
     localStorage.setItem(this.PROGRESS_PREFIX + novelId, payload);
+    // Also save legacy key for backward compatibility
+    localStorage.setItem(`${this.LEGACY_PROGRESS_PREFIX}${uid}_${novelId}`, payload);
+    localStorage.setItem(this.LEGACY_PROGRESS_PREFIX + novelId, payload);
   },
 
   getLocalProgress(novelId, userId = null) {
     try {
       const uid = userId || this.getUserId();
       if (uid) {
-        const pScoped = localStorage.getItem(`${this.PROGRESS_PREFIX}${uid}_${novelId}`);
+        const pScoped = localStorage.getItem(`${this.PROGRESS_PREFIX}${uid}_${novelId}`) ||
+                        localStorage.getItem(`${this.LEGACY_PROGRESS_PREFIX}${uid}_${novelId}`);
         if (pScoped) return JSON.parse(pScoped);
       }
-      const pLegacy = localStorage.getItem(this.PROGRESS_PREFIX + novelId);
+      const pLegacy = localStorage.getItem(this.PROGRESS_PREFIX + novelId) ||
+                      localStorage.getItem(this.LEGACY_PROGRESS_PREFIX + novelId);
       return pLegacy ? JSON.parse(pLegacy) : null;
     } catch {
       return null;
@@ -104,7 +116,7 @@ const Storage = {
       const keysToRemove = [];
       for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
-        if (k && k.startsWith(this.PROGRESS_PREFIX)) {
+        if (k && (k.startsWith(this.PROGRESS_PREFIX) || k.startsWith(this.LEGACY_PROGRESS_PREFIX))) {
           keysToRemove.push(k);
         }
       }
@@ -116,12 +128,15 @@ const Storage = {
 
   clearSession() {
     localStorage.removeItem(this.SYNC_KEY_KEY);
+    localStorage.removeItem(this.LEGACY_SYNC_KEY_KEY);
     localStorage.removeItem(this.USER_ID_KEY);
+    localStorage.removeItem(this.LEGACY_USER_ID_KEY);
     this.clearLocalProgress();
   },
 
   // Offline Progress Queue Management
-  OFFLINE_QUEUE_KEY: 'kuroyomi_offline_progress_queue',
+  OFFLINE_QUEUE_KEY: 'byob_offline_progress_queue',
+  LEGACY_OFFLINE_QUEUE_KEY: 'kuroyomi_offline_progress_queue',
 
   queueOfflineProgress(record) {
     try {
@@ -140,7 +155,7 @@ const Storage = {
 
   getOfflineProgressQueue() {
     try {
-      const val = localStorage.getItem(this.OFFLINE_QUEUE_KEY);
+      const val = localStorage.getItem(this.OFFLINE_QUEUE_KEY) || localStorage.getItem(this.LEGACY_OFFLINE_QUEUE_KEY);
       return val ? JSON.parse(val) : [];
     } catch {
       return [];
@@ -149,12 +164,14 @@ const Storage = {
 
   clearOfflineProgressQueue() {
     localStorage.removeItem(this.OFFLINE_QUEUE_KEY);
+    localStorage.removeItem(this.LEGACY_OFFLINE_QUEUE_KEY);
   }
 };
 
 // IndexedDB Persistent Device Storage (Survives server redeploys and cloud restarts)
 const IDB = {
-  dbName: 'kuroyomi_cache_v2',
+  dbName: 'byob_cache_v2',
+  legacyDbName: 'kuroyomi_cache_v2',
   storeName: 'library_mirror',
   chapterStore: 'chapter_cache',
 
@@ -216,6 +233,37 @@ const IDB = {
     }
   },
 
+  getLegacyMirror(userId) {
+    return new Promise((resolve) => {
+      try {
+        if (!window.indexedDB) return resolve(null);
+        const req = indexedDB.open(this.legacyDbName);
+        req.onerror = () => resolve(null);
+        req.onsuccess = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains(this.storeName)) {
+            db.close();
+            return resolve(null);
+          }
+          const tx = db.transaction(this.storeName, 'readonly');
+          const store = tx.objectStore(this.storeName);
+          const getReq = store.get(userId);
+          getReq.onsuccess = () => {
+            const res = getReq.result && getReq.result.backup_data ? getReq.result.backup_data : null;
+            db.close();
+            resolve(res);
+          };
+          getReq.onerror = () => {
+            db.close();
+            resolve(null);
+          };
+        };
+      } catch {
+        resolve(null);
+      }
+    });
+  },
+
   async getLibraryMirror(userId) {
     if (!userId) return null;
     try {
@@ -224,10 +272,18 @@ const IDB = {
         const tx = db.transaction(this.storeName, 'readonly');
         const store = tx.objectStore(this.storeName);
         const req = store.get(userId);
-        req.onsuccess = () => {
+        req.onsuccess = async () => {
           if (req.result && req.result.backup_data) {
             resolve(req.result.backup_data);
           } else {
+            try {
+              const legacyData = await this.getLegacyMirror(userId);
+              if (legacyData) {
+                await this.saveLibraryMirror(userId, legacyData);
+                resolve(legacyData);
+                return;
+              }
+            } catch (e) {}
             resolve(null);
           }
         };

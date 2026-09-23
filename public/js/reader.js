@@ -1,4 +1,4 @@
-// WebNovel Reader Controller for KuroYomi
+// WebNovel Reader Controller for BYoB
 const Reader = {
   currentNovel: null,
   currentVolumeId: null,

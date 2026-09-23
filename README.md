@@ -1,5 +1,5 @@
 ---
-title: Kuroyomi Web Novel Reader
+title: BYoB · Bring Your Own Books
 colorFrom: gray
 colorTo: red
 sdk: gradio
@@ -7,7 +7,7 @@ app_file: app.py
 pinned: false
 ---
 
-# KuroYomi · Modern Web Novel Reader
+# BYoB · Bring Your Own Books
 
 A clean, minimalist web novel reader inspired by services like **WebNovel**. Built with an elegant **monochrome theme (black, grey, white)**, classic **Times New Roman** typography, subtle soft curves, smooth auto-hiding menus, natural human-like voice narration with a sleep timer, context-aware navigation, and cloud progress synchronization across devices.
 
@@ -46,7 +46,7 @@ A clean, minimalist web novel reader inspired by services like **WebNovel**. Bui
 
 ## Free 24/7 Cloud Hosting Guide & Safeguards
 
-KuroYomi is engineered to run seamlessly on free cloud platforms without requiring you to keep your Mac turned on.
+BYoB is engineered to run seamlessly on free cloud platforms without requiring you to keep your Mac turned on.
 
 ### Safeguards for Free Ephemeral Hosting
 Most free cloud hosts (like Render free web services or Railway starter tiers) use ephemeral containers—meaning if the container sleeps or restarts, local files can be reset. We built in multiple safeguards to protect your data:
@@ -69,7 +69,7 @@ Most free cloud hosts (like Render free web services or Railway starter tiers) u
 2. Go to [Render.com](https://render.com) and sign in.
 3. Click **New + > Blueprint**, connect your GitHub repo, and select `render.yaml`.
    - *Alternatively*, click **New + > Web Service**, select your repo, choose **Docker** environment, and set Health Check Path to `/health`.
-4. Click **Deploy**. Render will build the Docker container and give you a free permanent HTTPS URL (e.g. `https://kuroyomi-reader.onrender.com`).
+4. Click **Deploy**. Render will build the Docker container and give you a free permanent HTTPS URL (e.g. `https://byob-reader.onrender.com`).
 5. Open this URL on your iPhone Safari, tap **Share > Add to Home Screen**, and read anytime!
 
 ---

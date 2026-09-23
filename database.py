@@ -325,7 +325,7 @@ def export_backup_data(user_id: str):
     conn.close()
     return {
         "version": "1.0",
-        "app": "kuroyomi",
+        "app": "byob",
         "exported_at": time.time(),
         "user_id": user_id,
         "sync_key": sync_key,

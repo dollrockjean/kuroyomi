@@ -1,4 +1,4 @@
-app = "kuroyomi-novel-reader"
+app = "byob-novel-reader"
 primary_region = "iad"
 
 [build]

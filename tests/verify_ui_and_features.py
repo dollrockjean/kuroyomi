@@ -388,7 +388,7 @@ async def test_ui():
                     },
                     timestamp: Date.now()
                 };
-                localStorage.setItem('kuroyomi_pending_sleep_resume', JSON.stringify(testRecord));
+                localStorage.setItem('byob_pending_sleep_resume', JSON.stringify(testRecord));
                 window.App.checkSleepTimerResume();
                 
                 const modal = document.getElementById('sleepResumeModal');
@@ -410,7 +410,7 @@ async def test_ui():
                     hasStartBtn: !!startBtn,
                     finText,
                     startText,
-                    clearedFromStorage: !localStorage.getItem('kuroyomi_pending_sleep_resume')
+                    clearedFromStorage: !localStorage.getItem('byob_pending_sleep_resume') && !localStorage.getItem('kuroyomi_pending_sleep_resume')
                 };
             })()
             """)
@@ -906,19 +906,19 @@ async def test_ui():
 
                 // 1. Simulate sleep timeout
                 TTSEngine.triggerSleepTimeout();
-                const recordAfterSleep = localStorage.getItem('kuroyomi_pending_sleep_resume');
+                const recordAfterSleep = localStorage.getItem('byob_pending_sleep_resume');
                 const isExpiredSet = TTSEngine.sleepModeExpired;
 
                 // 2. Simulate user scrolling down after sleep ended
                 TTSEngine.sleepExpiredAt = Date.now() - 1500;
                 window.dispatchEvent(new Event('scroll'));
-                const recordAfterScroll = localStorage.getItem('kuroyomi_pending_sleep_resume');
+                const recordAfterScroll = localStorage.getItem('byob_pending_sleep_resume');
 
                 // 3. Test invalidation on restart/play
                 TTSEngine.triggerSleepTimeout();
-                const recordBeforePlay = localStorage.getItem('kuroyomi_pending_sleep_resume');
+                const recordBeforePlay = localStorage.getItem('byob_pending_sleep_resume');
                 TTSEngine.start(0);
-                const recordAfterPlay = localStorage.getItem('kuroyomi_pending_sleep_resume');
+                const recordAfterPlay = localStorage.getItem('byob_pending_sleep_resume');
                 TTSEngine.stop();
 
                 return {

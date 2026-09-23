@@ -1,7 +1,7 @@
 {
-  "name": "KuroYomi · Web Novel Reader",
-  "short_name": "KuroYomi",
-  "description": "Minimalist web novel reader with cloud sync, auto-scroll, realistic neural audio, and multi-volume EPUB support",
+  "name": "BYoB · Bring Your Own Books",
+  "short_name": "BYoB",
+  "description": "Minimalist web novel and book reader with cloud sync, auto-scroll, realistic neural audio, and multi-volume EPUB support",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#141518",

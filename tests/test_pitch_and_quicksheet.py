@@ -197,7 +197,7 @@ class PitchAndQuickSheetTests(unittest.TestCase):
             "novels": [{
                 "id": "nov_demo_test",
                 "title": "Chronicles of the Aether Sovereign",
-                "author": "Kuroyomi Team",
+                "author": "BYoB Team",
                 "description": "Demo book",
                 "cover_data": None
             }],

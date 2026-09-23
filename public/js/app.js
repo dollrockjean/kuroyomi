@@ -1,4 +1,4 @@
-// KuroYomi Main Application Controller
+// BYoB Main Application Controller
 function escapeHtml(str) {
   if (!str) return '';
   return String(str)
@@ -1340,7 +1340,7 @@ const App = {
           const a = document.createElement('a');
           const dateStr = new Date().toISOString().slice(0, 10);
           a.href = url;
-          a.download = `kuroyomi_backup_${dateStr}.json`;
+          a.download = `byob_backup_${dateStr}.json`;
           document.body.appendChild(a);
           a.click();
           a.remove();
@@ -1750,10 +1750,11 @@ const App = {
 
   checkSleepTimerResume() {
     try {
-      const raw = localStorage.getItem('kuroyomi_pending_sleep_resume');
+      const raw = localStorage.getItem('byob_pending_sleep_resume') || localStorage.getItem('kuroyomi_pending_sleep_resume');
       if (!raw) return;
       const record = JSON.parse(raw);
       if (!record || !record.finish) {
+        localStorage.removeItem('byob_pending_sleep_resume');
         localStorage.removeItem('kuroyomi_pending_sleep_resume');
         return;
       }
@@ -1794,6 +1795,7 @@ const App = {
       const hide = () => {
         modal.style.display = 'none';
         backdrop.style.display = 'none';
+        localStorage.removeItem('byob_pending_sleep_resume');
         localStorage.removeItem('kuroyomi_pending_sleep_resume');
       };
 
@@ -1828,12 +1830,14 @@ const App = {
       backdrop.style.display = 'block';
     } catch (e) {
       console.warn('Error checking sleep timer resume:', e);
+      localStorage.removeItem('byob_pending_sleep_resume');
       localStorage.removeItem('kuroyomi_pending_sleep_resume');
     }
   },
 
   cancelPendingSleepResume() {
     try {
+      localStorage.removeItem('byob_pending_sleep_resume');
       localStorage.removeItem('kuroyomi_pending_sleep_resume');
     } catch (e) {}
     if (typeof TTSEngine !== 'undefined') {

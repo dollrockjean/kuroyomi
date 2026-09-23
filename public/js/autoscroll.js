@@ -1,4 +1,4 @@
-// Auto-Scroll Engine for KuroYomi WebNovel Reader
+// Auto-Scroll Engine for BYoB WebNovel Reader
 const AutoScroll = {
   isActive: false,
   isPaused: false,
