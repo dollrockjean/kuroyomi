@@ -27,10 +27,10 @@
   <!-- WebNovel & Reading Typography Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,300;0,400;0,700;1,300;1,400&family=Lora:ital,wght@0,400..700;1,400..700&family=Merriweather:ital,wght@0,300;0,400;0,700;1,300;1,400&family=Open+Sans:ital,wght@0,300..800;1,300..800&family=PT+Serif:ital,wght@0,400;0,700;1,400;1,700&family=Roboto:ital,wght@0,300;0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,300;0,400;0,700;1,300;1,400;1,700&family=Lora:ital,wght@0,400..700;1,400..700&family=Merriweather:ital,wght@0,300;0,400;0,700;1,300;1,400;1,700&family=Open+Sans:ital,wght@0,300..800;1,300..800&family=PT+Serif:ital,wght@0,400;0,700;1,400;1,700&family=Roboto:ital,wght@0,300;0,400;0,500;0,700;1,400;1,700&display=swap" rel="stylesheet">
 
   <!-- Styles -->
-  <link rel="stylesheet" href="/css/brutalist.css?v=31.0">
+  <link rel="stylesheet" href="/css/brutalist.css?v=32.0">
 
   <!-- Critical Quick Sheet Theme & Layout Styles (Anti-Cache Protection) -->
   <style id="quickSheetCriticalStyles">
@@ -41,6 +41,7 @@
       box-sizing: border-box; padding: 10px 16px calc(22px + var(--safe-bottom)) 16px;
       transform: translateY(105%); transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1);
       display: flex; flex-direction: column; gap: 8px;
+      max-height: 88vh; overflow-y: auto; -webkit-overflow-scrolling: touch;
     }
     .mobile-quick-sheet button {
       appearance: none; -webkit-appearance: none; outline: none; font-family: inherit;
@@ -116,6 +117,32 @@
       border: 1px solid var(--border-color); border-radius: 10px; height: 36px; font-size: 11.5px; font-weight: 600;
       color: var(--text-secondary); cursor: pointer; width: 100%; box-sizing: border-box;
       appearance: none; -webkit-appearance: none;
+    }
+    .quick-sheet-bionic-bar {
+      display: flex; align-items: center; justify-content: space-between; width: 100%; box-sizing: border-box;
+      background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 7px 12px;
+      cursor: pointer; transition: all 0.15s ease; min-height: 38px;
+    }
+    .quick-sheet-bionic-bar:hover { border-color: var(--accent); }
+    .quick-bionic-info { display: flex; align-items: center; gap: 8px; }
+    .quick-bionic-badge {
+      font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+      padding: 2px 6px; border-radius: 4px; background: var(--bg-surface); border: 1px solid var(--border-color);
+      color: var(--text-muted);
+    }
+    .quick-bionic-title { font-size: 12.5px; font-weight: 700; color: var(--text-primary); letter-spacing: 0.2px; }
+    .quick-bionic-btn {
+      display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 20px;
+      border: 1px solid var(--border-color); background: var(--bg-surface); color: var(--text-secondary);
+      font-size: 11px; font-weight: 700; cursor: pointer; transition: all 0.15s ease;
+      appearance: none; -webkit-appearance: none;
+    }
+    .quick-bionic-indicator { width: 8px; height: 8px; border-radius: 50%; background: var(--border-color); transition: background 0.15s ease; }
+    .quick-bionic-btn.active { background: var(--accent); color: #000; border-color: var(--accent); }
+    .quick-bionic-btn.active .quick-bionic-indicator { background: #000; box-shadow: 0 0 6px rgba(0,0,0,0.4); }
+    .bionic-fixation { font-weight: 700 !important; font-family: inherit !important; display: inline; }
+    em .bionic-fixation, i .bionic-fixation, cite .bionic-fixation, dfn .bionic-fixation, .italic .bionic-fixation, [style*="italic"] .bionic-fixation {
+      font-style: italic !important; font-weight: 700 !important; font-family: inherit !important;
     }
   </style>
 </head>
@@ -555,8 +582,21 @@
         </button>
       </div>
 
-      <!-- 3. Narration Speed Chips Row (Identical presets as Audiobook Modal) -->
-      <div class="quick-sheet-speed-row">
+      <!-- 2.5 Bionic Reading Mode Bar (Prominent in Middle Menu) -->
+      <div class="quick-sheet-bionic-bar" id="quickSheetBionicBar">
+        <div class="quick-bionic-info">
+          <span class="quick-bionic-badge">Text Mode</span>
+          <span class="quick-bionic-title">Bionic Reading</span>
+        </div>
+        <button class="quick-bionic-btn" id="quickSheetBionicBtn" type="button" aria-pressed="false">
+          <span class="quick-bionic-indicator"></span>
+          <span class="quick-bionic-status" id="quickSheetBionicStatus">OFF</span>
+        </button>
+        <input type="checkbox" id="quickSheetBionicToggle" style="display: none;" />
+      </div>
+
+      <!-- 3. Narration Speed Chips Row (Only visible when Narration is active) -->
+      <div class="quick-sheet-speed-row" id="quickSheetSpeedRow" style="display: none;">
         <div class="quick-sheet-speed-header">
           <div class="quick-sheet-speed-title">
             <svg class="quick-sheet-clipart" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -635,16 +675,7 @@
         </div>
       </div>
 
-      <!-- 5. Bionic Reading Quick Toggle -->
-      <div class="quick-sheet-bionic-row">
-        <label class="quick-sheet-bionic-label" for="quickSheetBionicToggle">
-          <span class="quick-bionic-title">Bionic Reading</span>
-          <span class="quick-bionic-sub">Guided word fixations</span>
-        </label>
-        <input type="checkbox" id="quickSheetBionicToggle" class="quick-sheet-checkbox" />
-      </div>
-
-      <!-- 6. Quick Toggles Row (Margin & Theme Switch) -->
+      <!-- 4. Quick Toggles Row (Margin & Theme Switch) -->
       <div class="quick-sheet-footer-row">
         <button class="btn-brutal quick-sheet-footer-btn" id="quickSheetMarginsBtn">
           Margin: <span id="quickSheetMarginVal" style="font-weight: 700; margin-left: 4px;">Edge</span>
@@ -841,14 +872,12 @@
         </div>
 
         <div class="form-group">
-          <label class="form-label">Reading Mode</label>
-          <div class="toggle-control-row">
-            <label class="toggle-label" for="panelBionicToggle">
-              <span class="toggle-label-title">Bionic Reading</span>
-              <span class="toggle-subtext">Bold initial word fixations for faster reading</span>
-            </label>
-            <input type="checkbox" id="panelBionicToggle" class="settings-checkbox" />
+          <label class="form-label">Text Reading Mode</label>
+          <div class="grid-choices">
+            <button class="choice-btn reading-mode-btn selected" id="panelModeStandardBtn" data-mode="standard">Standard</button>
+            <button class="choice-btn reading-mode-btn" id="panelModeBionicBtn" data-mode="bionic">Bionic Reading</button>
           </div>
+          <input type="checkbox" id="panelBionicToggle" style="display: none;" />
         </div>
       </div>
 
@@ -1100,11 +1129,11 @@
   <input type="file" id="novelCoverInput" accept="image/*" style="display: none;" />
 
   <!-- Application Logic Modules -->
-  <script src="/js/storage.js?v=31.0"></script>
-  <script src="/js/sync.js?v=31.0"></script>
-  <script src="/js/autoscroll.js?v=31.0"></script>
-  <script src="/js/tts.js?v=31.0"></script>
-  <script src="/js/reader.js?v=31.0"></script>
-  <script src="/js/app.js?v=31.0"></script>
+  <script src="/js/storage.js?v=32.0"></script>
+  <script src="/js/sync.js?v=32.0"></script>
+  <script src="/js/autoscroll.js?v=32.0"></script>
+  <script src="/js/tts.js?v=32.0"></script>
+  <script src="/js/reader.js?v=32.0"></script>
+  <script src="/js/app.js?v=32.0"></script>
 </body>
 </html>

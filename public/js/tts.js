@@ -1657,6 +1657,12 @@ const TTSEngine = {
     const quickTtsText = document.getElementById('quickSheetTTSText');
     if (quickTtsText) quickTtsText.textContent = isPlayingState ? 'Pause' : 'Read Aloud';
 
+    // Toggle narration speed row in quick sheet (only visible when narration is active)
+    const qsSpeedRow = document.getElementById('quickSheetSpeedRow');
+    if (qsSpeedRow) {
+      qsSpeedRow.style.display = (this.isPlaying || this.isPaused) ? 'flex' : 'none';
+    }
+
     // Rate Label
     const rateLabel = document.getElementById('ttsRateLabel');
     if (rateLabel) rateLabel.textContent = `${this.rate}x`;

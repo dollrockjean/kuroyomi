@@ -113,22 +113,26 @@ class TestUIImprovements(unittest.TestCase):
         self.assertIn(".audiobook-bar-btn.audiobook-bar-play", css)
 
     def test_bionic_reading_integration_and_algorithm(self):
-        """Verify Bionic Reading settings, toggles, and algorithm logic."""
+        """Verify Bionic Reading settings, toggles, italics support, and algorithm logic."""
         index_path = os.path.join(server.PUBLIC_DIR, "index.html")
         with open(index_path, "r", encoding="utf-8") as f:
             html = f.read()
 
+        self.assertIn('id="quickSheetBionicBar"', html)
+        self.assertIn('id="quickSheetBionicBtn"', html)
+        self.assertIn('id="panelModeStandardBtn"', html)
+        self.assertIn('id="panelModeBionicBtn"', html)
         self.assertIn('id="quickSheetBionicToggle"', html)
         self.assertIn('id="panelBionicToggle"', html)
-        self.assertIn('class="quick-sheet-bionic-row"', html)
 
         app_js_path = os.path.join(server.PUBLIC_DIR, "js", "app.js")
         with open(app_js_path, "r", encoding="utf-8") as f:
             app_js = f.read()
 
         self.assertIn("bionic_reading: false", app_js)
-        self.assertIn("quickSheetBionicToggle", app_js)
-        self.assertIn("panelBionicToggle", app_js)
+        self.assertIn("quickSheetBionicBtn", app_js)
+        self.assertIn("panelModeStandardBtn", app_js)
+        self.assertIn("panelModeBionicBtn", app_js)
 
         reader_js_path = os.path.join(server.PUBLIC_DIR, "js", "reader.js")
         with open(reader_js_path, "r", encoding="utf-8") as f:
@@ -138,13 +142,17 @@ class TestUIImprovements(unittest.TestCase):
         self.assertIn("applyBionicToContent", reader_js)
         self.assertIn("toggleBionicReading", reader_js)
         self.assertIn("bionic-fixation", reader_js)
+        self.assertIn("isItalic", reader_js)
 
         css_path = os.path.join(server.PUBLIC_DIR, "css", "brutalist.css")
         with open(css_path, "r", encoding="utf-8") as f:
             css = f.read()
 
         self.assertIn(".bionic-fixation", css)
-        self.assertIn(".quick-sheet-bionic-row", css)
+        self.assertIn(".quick-sheet-bionic-bar", css)
+        self.assertIn(".quick-bionic-btn", css)
+        self.assertIn("em .bionic-fixation", css)
+        self.assertIn("i .bionic-fixation", css)
 
         import math
         def bionic_word(w):
@@ -162,6 +170,50 @@ class TestUIImprovements(unittest.TestCase):
         self.assertEqual(bionic_word("reader"), "<b>re</b>ader")
         self.assertEqual(bionic_word("reading"), "<b>read</b>ing")
         self.assertEqual(bionic_word("extraordinary"), "<b>extrao</b>rdinary")
+
+    def test_narration_speed_row_visibility(self):
+        """Verify Narration Speed row is hidden by default and only shown when active."""
+        index_path = os.path.join(server.PUBLIC_DIR, "index.html")
+        with open(index_path, "r", encoding="utf-8") as f:
+            html = f.read()
+
+        self.assertIn('id="quickSheetSpeedRow" style="display: none;"', html)
+
+        app_js_path = os.path.join(server.PUBLIC_DIR, "js", "app.js")
+        with open(app_js_path, "r", encoding="utf-8") as f:
+            app_js = f.read()
+
+        self.assertIn("quickSheetSpeedRow", app_js)
+        self.assertIn("isAudioActive", app_js)
+
+        tts_js_path = os.path.join(server.PUBLIC_DIR, "js", "tts.js")
+        with open(tts_js_path, "r", encoding="utf-8") as f:
+            tts_js = f.read()
+
+        self.assertIn("quickSheetSpeedRow", tts_js)
+
+    def test_cover_upload_resilience_and_storage_methods(self):
+        """Verify cover persistence with novel insert fallback and storage methods."""
+        novel_id = f"nov_nonexistent_{int(time.time()*1000)}"
+        test_cover = "data:image/jpeg;base64,sample_fallback_cover_data"
+        updated = database.update_novel_cover(novel_id, "test_resilient_user", test_cover)
+        self.assertTrue(updated)
+
+        conn = database.get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT cover_data FROM novels WHERE id = ?", (novel_id,))
+        row = cur.fetchone()
+        conn.close()
+        self.assertIsNotNone(row)
+        self.assertEqual(row[0], test_cover)
+
+        storage_js_path = os.path.join(server.PUBLIC_DIR, "js", "storage.js")
+        with open(storage_js_path, "r", encoding="utf-8") as f:
+            storage_js = f.read()
+
+        self.assertIn("setNovelCover", storage_js)
+        self.assertIn("getNovelCover", storage_js)
+        self.assertIn("updateCoverInMirror", storage_js)
 
 if __name__ == '__main__':
     unittest.main()

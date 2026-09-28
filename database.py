@@ -487,17 +487,32 @@ def import_backup_data(data: dict, user_id: str, sync_key: str = None):
 def update_novel_cover(novel_id: str, user_id: str, cover_data: str):
     conn = get_db()
     cur = conn.cursor()
+    now = time.time()
     cur.execute(
         "UPDATE novels SET cover_data = ?, updated_at = ? WHERE id = ? AND (user_id = ? OR user_id IS NULL OR user_id = '' OR user_id = 'guest')",
-        (cover_data, time.time(), novel_id, user_id)
+        (cover_data, now, novel_id, user_id)
     )
     if cur.rowcount == 0:
         cur.execute(
             "UPDATE novels SET cover_data = ?, updated_at = ? WHERE id = ?",
-            (cover_data, time.time(), novel_id)
+            (cover_data, now, novel_id)
         )
+    if cur.rowcount == 0:
+        cur.execute("SELECT id FROM novels WHERE id = ?", (novel_id,))
+        if not cur.fetchone():
+            effective_uid = user_id or "guest"
+            cur.execute(
+                "INSERT OR IGNORE INTO users (id, sync_key, display_name, created_at, last_active) VALUES (?, ?, ?, ?, ?)",
+                (effective_uid, f"BYOB-{effective_uid[:8].upper()}", effective_uid, now, now)
+            )
+            cur.execute(
+                "INSERT INTO novels (id, title, author, description, cover_data, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (novel_id, "Novel", "Unknown Author", "", cover_data, effective_uid, now, now)
+            )
     conn.commit()
-    updated = cur.rowcount > 0
+    cur.execute("SELECT cover_data FROM novels WHERE id = ?", (novel_id,))
+    row = cur.fetchone()
+    updated = bool(row and row[0] == cover_data)
     conn.close()
     return updated
 

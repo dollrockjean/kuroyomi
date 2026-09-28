@@ -1080,7 +1080,7 @@ const Reader = {
 
     for (const textNode of textNodes) {
       const text = textNode.nodeValue;
-      const bionicHtml = text.replace(/([a-zA-Z0-9\u00C0-\u024F\u1E00-\u1EFF]+)/g, (word) => {
+      const bionicHtml = text.replace(/([a-zA-Z0-9\u00C0-\u024F\u1E00-\u1EFF]+(?:['’][a-zA-Z0-9\u00C0-\u024F\u1E00-\u1EFF]+)*)/g, (word) => {
         const len = word.length;
         if (len === 1) {
           return `<b class="bionic-fixation">${word}</b>`;
@@ -1090,8 +1090,18 @@ const Reader = {
       });
 
       if (bionicHtml !== text) {
+        const parent = textNode.parentElement;
+        const isItalic = parent && (
+          ['em', 'i', 'cite', 'dfn'].includes(parent.tagName.toLowerCase()) ||
+          parent.closest('em, i, cite, dfn, .italic') !== null ||
+          (window.getComputedStyle && window.getComputedStyle(parent).fontStyle === 'italic')
+        );
+
         const span = document.createElement('span');
         span.className = 'bionic-fragment';
+        if (isItalic) {
+          span.style.fontStyle = 'italic';
+        }
         span.innerHTML = bionicHtml;
         textNode.parentNode.replaceChild(span, textNode);
       }
@@ -1104,14 +1114,33 @@ const Reader = {
     } else {
       window.ReaderSettings.bionic_reading = !window.ReaderSettings.bionic_reading;
     }
+    const isBionic = !!window.ReaderSettings.bionic_reading;
     if (window.Storage) {
       window.Storage.saveSettings(window.ReaderSettings);
     }
 
+    // Synchronize quick sheet button & status indicator
+    const qsBtn = document.getElementById('quickSheetBionicBtn');
+    const qsStatus = document.getElementById('quickSheetBionicStatus');
+    if (qsBtn) {
+      qsBtn.classList.toggle('active', isBionic);
+      qsBtn.setAttribute('aria-pressed', isBionic ? 'true' : 'false');
+    }
+    if (qsStatus) {
+      qsStatus.textContent = isBionic ? 'ON' : 'OFF';
+    }
+
+    // Synchronize master panel choice buttons
+    const stdBtn = document.getElementById('panelModeStandardBtn');
+    const bionicBtn = document.getElementById('panelModeBionicBtn');
+    if (stdBtn) stdBtn.classList.toggle('selected', !isBionic);
+    if (bionicBtn) bionicBtn.classList.toggle('selected', isBionic);
+
+    // Synchronize checkboxes
     const qsToggle = document.getElementById('quickSheetBionicToggle');
-    if (qsToggle) qsToggle.checked = !!window.ReaderSettings.bionic_reading;
+    if (qsToggle) qsToggle.checked = isBionic;
     const panelToggle = document.getElementById('panelBionicToggle');
-    if (panelToggle) panelToggle.checked = !!window.ReaderSettings.bionic_reading;
+    if (panelToggle) panelToggle.checked = isBionic;
 
     if (this.currentChapter && document.getElementById('readerView').style.display !== 'none') {
       const scrollPos = window.scrollY;

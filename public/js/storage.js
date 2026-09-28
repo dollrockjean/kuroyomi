@@ -14,6 +14,8 @@ const Storage = {
   LEGACY_SETTINGS_KEY: 'kuroyomi_settings',
   PROGRESS_PREFIX: 'byob_prog_',
   LEGACY_PROGRESS_PREFIX: 'kuroyomi_prog_',
+  COVER_PREFIX: 'byob_cover_',
+  LEGACY_COVER_PREFIX: 'kuroyomi_cover_',
 
   getDeviceToken() {
     let token = localStorage.getItem(this.DEVICE_TOKEN_KEY) || localStorage.getItem(this.LEGACY_DEVICE_TOKEN_KEY);
@@ -84,6 +86,28 @@ const Storage = {
 
   saveSettings(settings) {
     this.setLocalSettings(settings);
+  },
+
+  setNovelCover(novelId, coverData) {
+    if (!novelId) return;
+    try {
+      if (coverData) {
+        localStorage.setItem(this.COVER_PREFIX + novelId, coverData);
+        localStorage.setItem(this.LEGACY_COVER_PREFIX + novelId, coverData);
+      } else {
+        localStorage.removeItem(this.COVER_PREFIX + novelId);
+        localStorage.removeItem(this.LEGACY_COVER_PREFIX + novelId);
+      }
+    } catch (e) {
+      console.warn('Storage.setNovelCover quota or access error:', e);
+    }
+  },
+
+  getNovelCover(novelId) {
+    if (!novelId) return null;
+    return localStorage.getItem(this.COVER_PREFIX + novelId) ||
+           localStorage.getItem(this.LEGACY_COVER_PREFIX + novelId) ||
+           null;
   },
 
   saveLocalProgress(novelId, progress, userId = null) {
@@ -218,6 +242,25 @@ const IDB = {
       });
     } catch (e) {
       console.warn('IDB save error:', e);
+      return false;
+    }
+  },
+
+  async updateCoverInMirror(userId, novelId, coverData) {
+    if (!userId || !novelId) return false;
+    try {
+      const mirror = await this.getLibraryMirror(userId);
+      if (mirror && mirror.novels && mirror.novels.length > 0) {
+        const novel = mirror.novels.find(n => n.id === novelId);
+        if (novel) {
+          novel.cover_data = coverData;
+          await this.saveLibraryMirror(userId, mirror);
+          return true;
+        }
+      }
+      return false;
+    } catch (e) {
+      console.warn('IDB updateCoverInMirror error:', e);
       return false;
     }
   },

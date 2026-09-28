@@ -342,16 +342,89 @@ const App = {
     const coverInput = document.getElementById('novelCoverInput');
     if (coverInput) {
       coverInput.addEventListener('change', (e) => {
-        const file = e.target.files[0];
+        const file = e.target.files && e.target.files[0];
         if (!file || !this.targetCoverNovelId) return;
 
+        const targetId = this.targetCoverNovelId;
         this.showLoading('Updating cover...');
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-          const img = new Image();
-          img.onload = async () => {
+
+        const processAndSave = async (dataUrl) => {
+          try {
+            // 1. Immediately cache locally in Storage
+            if (typeof Storage !== 'undefined' && Storage.setNovelCover) {
+              Storage.setNovelCover(targetId, dataUrl);
+            }
+
+            // 2. Immediately update in-memory novel item
+            const novel = (this.novels || []).find(n => n.id === targetId);
+            if (novel) {
+              novel.cover_data = dataUrl;
+            }
+
+            // 3. Immediately update IndexedDB mirror
+            const currentUid = (window.SyncService && SyncService.currentUserId) || (window.Storage && Storage.getUserId()) || 'guest';
+            if (typeof IDB !== 'undefined' && IDB.updateCoverInMirror) {
+              try { await IDB.updateCoverInMirror(currentUid, targetId, dataUrl); } catch (_) {}
+            }
+
+            // 4. Immediately re-render library cards & hero cover
+            this.renderLibraryGrid();
+
+            const resumeCover = document.getElementById('resumeCover');
+            if (resumeCover && this.lastReadNovelId === targetId) {
+              resumeCover.src = dataUrl;
+            }
+
+            const modalCover = document.getElementById('novelSettingsModalCover');
+            if (modalCover) {
+              modalCover.src = dataUrl;
+            }
+
+            this.hideLoading();
+            this.showToast('Cover updated');
+
+            // 5. Asynchronously persist to server
             try {
-              // Scale to max 360x540 maintaining aspect ratio for ultra-lightweight storage (~25KB-35KB)
+              fetch('/api/novels/cover', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  novel_id: targetId,
+                  user_id: currentUid,
+                  cover_data: dataUrl
+                })
+              }).then(r => r.json()).then(resData => {
+                if (resData && !resData.success) {
+                  console.warn('Cover upload server notice:', resData);
+                }
+              }).catch(err => {
+                console.warn('Cover upload server offline, retained locally:', err);
+              });
+            } catch (_) {}
+          } catch (saveErr) {
+            this.hideLoading();
+            alert('Failed to apply cover: ' + saveErr.message);
+          } finally {
+            coverInput.value = '';
+          }
+        };
+
+        const reader = new FileReader();
+        reader.onerror = () => {
+          this.hideLoading();
+          coverInput.value = '';
+          alert('Could not read selected image file.');
+        };
+        reader.onload = (ev) => {
+          const rawDataUrl = ev.target.result;
+          const img = new Image();
+          img.onerror = () => {
+            // Fallback to raw data url if image canvas decode fails
+            processAndSave(rawDataUrl);
+          };
+          img.onload = () => {
+            try {
+              // Scale to max 360x540 maintaining aspect ratio for lightweight storage (~25KB-35KB)
               const maxW = 360;
               const maxH = 540;
               let w = img.width;
@@ -366,58 +439,13 @@ const App = {
               const ctx = canvas.getContext('2d');
               ctx.drawImage(img, 0, 0, w, h);
               const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
-
-              const currentUid = (window.SyncService && SyncService.currentUserId) || (window.Storage && Storage.getUserId()) || 'guest';
-              const targetId = this.targetCoverNovelId;
-
-              const res = await fetch('/api/novels/cover', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  novel_id: targetId,
-                  user_id: currentUid,
-                  cover_data: dataUrl
-                })
-              });
-              const resData = await res.json();
-              this.hideLoading();
-              if (resData.success) {
-                // Update in-memory novel item immediately
-                const novel = (this.novels || []).find(n => n.id === targetId);
-                if (novel) {
-                  novel.cover_data = dataUrl;
-                }
-                if (typeof IDB !== 'undefined') {
-                  try { await IDB.saveLibraryMirror(this.novels); } catch (_) {}
-                }
-
-                // Update rendered DOM cover thumbnails immediately
-                const domCovers = document.querySelectorAll(
-                  `.novel-card[data-id="${targetId}"] img, .novel-card-list[data-id="${targetId}"] img`
-                );
-                domCovers.forEach(imgEl => { imgEl.src = dataUrl; });
-
-                const resumeCover = document.getElementById('resumeCover');
-                if (resumeCover && this.lastReadNovelId === targetId) {
-                  resumeCover.src = dataUrl;
-                }
-
-                const modalCover = document.getElementById('novelSettingsModalCover');
-                if (modalCover) {
-                  modalCover.src = dataUrl;
-                }
-
-                this.showToast('Cover updated');
-              } else {
-                alert('Could not update cover: ' + (resData.error || 'Unknown error'));
-              }
-            } catch (err) {
-              this.hideLoading();
-              alert('Cover upload failed: ' + err.message);
+              processAndSave(dataUrl);
+            } catch (canvasErr) {
+              console.warn('Canvas resize fallback to raw image:', canvasErr);
+              processAndSave(rawDataUrl);
             }
-            coverInput.value = '';
           };
-          img.src = ev.target.result;
+          img.src = rawDataUrl;
         };
         reader.readAsDataURL(file);
       });
@@ -674,6 +702,29 @@ const App = {
     }
 
     this.updateAutoScrollUI();
+
+    // Show narration speed only when narration is active (playing or paused)
+    const isAudioActive = typeof TTSEngine !== 'undefined' && (TTSEngine.isPlaying || TTSEngine.isPaused);
+    const qsSpeedRow = document.getElementById('quickSheetSpeedRow');
+    if (qsSpeedRow) {
+      qsSpeedRow.style.display = isAudioActive ? 'flex' : 'none';
+    }
+
+    // Synchronize Bionic Reading state in quick sheet
+    const isBionic = !!(window.ReaderSettings && window.ReaderSettings.bionic_reading);
+    const qsBionicBtn = document.getElementById('quickSheetBionicBtn');
+    const qsBionicStatus = document.getElementById('quickSheetBionicStatus');
+    if (qsBionicBtn) {
+      qsBionicBtn.classList.toggle('active', isBionic);
+      qsBionicBtn.setAttribute('aria-pressed', isBionic ? 'true' : 'false');
+    }
+    if (qsBionicStatus) {
+      qsBionicStatus.textContent = isBionic ? 'ON' : 'OFF';
+    }
+    const qsBionicToggle = document.getElementById('quickSheetBionicToggle');
+    if (qsBionicToggle) {
+      qsBionicToggle.checked = isBionic;
+    }
 
     // Update speed chips in quick sheet
     const curSpeed = (typeof TTSEngine !== 'undefined') ? TTSEngine.rate : 1.0;
@@ -935,6 +986,20 @@ const App = {
       });
     }
 
+    const qsBionicBar = document.getElementById('quickSheetBionicBar');
+    const qsBionicBtn = document.getElementById('quickSheetBionicBtn');
+    const toggleQuickBionic = (e) => {
+      if (e) e.stopPropagation();
+      if (window.Reader && window.Reader.toggleBionicReading) {
+        window.Reader.toggleBionicReading();
+      }
+    };
+    if (qsBionicBtn) {
+      qsBionicBtn.addEventListener('click', toggleQuickBionic);
+    }
+    if (qsBionicBar) {
+      qsBionicBar.addEventListener('click', toggleQuickBionic);
+    }
     const qsBionicToggle = document.getElementById('quickSheetBionicToggle');
     if (qsBionicToggle) {
       qsBionicToggle.addEventListener('change', (e) => {
@@ -946,6 +1011,22 @@ const App = {
   },
 
   bindSettingsEvents() {
+    const stdBtn = document.getElementById('panelModeStandardBtn');
+    const bionicBtn = document.getElementById('panelModeBionicBtn');
+    if (stdBtn) {
+      stdBtn.addEventListener('click', () => {
+        if (window.Reader && window.Reader.toggleBionicReading) {
+          window.Reader.toggleBionicReading(false);
+        }
+      });
+    }
+    if (bionicBtn) {
+      bionicBtn.addEventListener('click', () => {
+        if (window.Reader && window.Reader.toggleBionicReading) {
+          window.Reader.toggleBionicReading(true);
+        }
+      });
+    }
     const panelBionicToggle = document.getElementById('panelBionicToggle');
     if (panelBionicToggle) {
       panelBionicToggle.addEventListener('change', (e) => {
@@ -1156,14 +1237,30 @@ const App = {
       if (speedVal) speedVal.textContent = `${scrollSpeed} px/s`;
     }
 
-    // 7b. Bionic Reading Checkboxes Sync
+    // 7b. Bionic Reading State & Controls Sync
+    const isBionic = !!cur.bionic_reading;
+    const qsBionicBtn = document.getElementById('quickSheetBionicBtn');
+    const qsBionicStatus = document.getElementById('quickSheetBionicStatus');
+    if (qsBionicBtn) {
+      qsBionicBtn.classList.toggle('active', isBionic);
+      qsBionicBtn.setAttribute('aria-pressed', isBionic ? 'true' : 'false');
+    }
+    if (qsBionicStatus) {
+      qsBionicStatus.textContent = isBionic ? 'ON' : 'OFF';
+    }
+
+    const stdBtn = document.getElementById('panelModeStandardBtn');
+    const bionicBtn = document.getElementById('panelModeBionicBtn');
+    if (stdBtn) stdBtn.classList.toggle('selected', !isBionic);
+    if (bionicBtn) bionicBtn.classList.toggle('selected', isBionic);
+
     const qsBionicToggle = document.getElementById('quickSheetBionicToggle');
     if (qsBionicToggle) {
-      qsBionicToggle.checked = !!cur.bionic_reading;
+      qsBionicToggle.checked = isBionic;
     }
     const panelBionicToggle = document.getElementById('panelBionicToggle');
     if (panelBionicToggle) {
-      panelBionicToggle.checked = !!cur.bionic_reading;
+      panelBionicToggle.checked = isBionic;
     }
 
     // 8. Library View Mode (Tile / List)
@@ -1787,7 +1884,20 @@ const App = {
     }
 
     hero.style.display = 'grid';
-    document.getElementById('resumeCover').src = lastRead.cover_data || FALLBACK_COVER;
+    const resumeCoverEl = document.getElementById('resumeCover');
+    if (resumeCoverEl) {
+      resumeCoverEl.src = (typeof Storage !== 'undefined' && Storage.getNovelCover(lastRead.novel_id)) || lastRead.cover_data || FALLBACK_COVER;
+      resumeCoverEl.style.cursor = 'pointer';
+      resumeCoverEl.title = 'Click to change cover image';
+      resumeCoverEl.onclick = () => {
+        this.targetCoverNovelId = lastRead.novel_id;
+        const input = document.getElementById('novelCoverInput');
+        if (input) {
+          input.value = '';
+          input.click();
+        }
+      };
+    }
     const resumeTitle = document.getElementById('resumeNovelTitle');
     resumeTitle.textContent = lastRead.novel_title;
     resumeTitle.onclick = () => {
@@ -2000,7 +2110,7 @@ const App = {
     }
 
     items.forEach(n => {
-      const coverSrc = n.cover_data || FALLBACK_COVER;
+      const coverSrc = (typeof Storage !== 'undefined' && Storage.getNovelCover(n.id)) || n.cover_data || FALLBACK_COVER;
       let lastReadTag = n.last_chapter_title ? `Last: ${n.last_chapter_title}` : 'Not started';
       let readPercent = Math.round(n.progress_overall_percent !== undefined ? n.progress_overall_percent : (n.progress_scroll || 0));
 
@@ -2019,12 +2129,16 @@ const App = {
       const triggerCover = () => {
         this.targetCoverNovelId = n.id;
         const input = document.getElementById('novelCoverInput');
-        if (input) input.click();
+        if (input) {
+          input.value = '';
+          input.click();
+        }
       };
 
       if (viewMode === 'list') {
         const card = document.createElement('div');
         card.className = 'novel-card-list';
+        card.setAttribute('data-id', n.id);
         card.innerHTML = `
           <div class="novel-list-cover-wrap" style="cursor: pointer;" title="Click to change cover image">
             <img src="${coverSrc}" class="novel-list-cover" alt="${escapeHtml(n.title)}" loading="lazy" />
@@ -2066,6 +2180,7 @@ const App = {
       } else {
         const card = document.createElement('div');
         card.className = 'novel-card';
+        card.setAttribute('data-id', n.id);
         card.innerHTML = `
           <div class="novel-card-cover-wrap" style="position: relative; cursor: pointer;" title="Click to change cover image">
             <img src="${coverSrc}" class="novel-card-cover" alt="${escapeHtml(n.title)}" loading="lazy" />
@@ -2195,7 +2310,10 @@ const App = {
         this.closeNovelSettingsModal();
         this.targetCoverNovelId = id;
         const input = document.getElementById('novelCoverInput');
-        if (input) input.click();
+        if (input) {
+          input.value = '';
+          input.click();
+        }
       });
     }
 
