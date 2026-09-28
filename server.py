@@ -494,11 +494,24 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                     FROM reading_progress p
                     JOIN novels n ON p.novel_id = n.id
                     JOIN chapters c ON p.chapter_id = c.id
-                    JOIN volumes v ON p.volume_id = v.id
+                    LEFT JOIN volumes v ON p.volume_id = v.id
                     WHERE p.user_id = ?
                     ORDER BY p.updated_at DESC LIMIT 1
                 """, (user_id,))
                 last_row = cur.fetchone()
+                if not last_row and user_id != "guest":
+                    cur.execute("""
+                        SELECT p.*, n.title as novel_title, n.cover_data, n.author as novel_author,
+                               c.title as chapter_title, c.chapter_index, c.global_index as chapter_global_index,
+                               v.title as volume_title, v.volume_number
+                        FROM reading_progress p
+                        JOIN novels n ON p.novel_id = n.id
+                        JOIN chapters c ON p.chapter_id = c.id
+                        LEFT JOIN volumes v ON p.volume_id = v.id
+                        WHERE p.user_id = 'guest'
+                        ORDER BY p.updated_at DESC LIMIT 1
+                    """)
+                    last_row = cur.fetchone()
                 if last_row:
                     last_data = dict(last_row)
 
@@ -689,17 +702,28 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
 
         # 3. Save Reading Progress (Exact paragraph and scroll percent)
         if path == "/api/progress":
-            user_id = body.get("user_id")
+            user_id = body.get("user_id") or "guest"
             novel_id = body.get("novel_id")
             volume_id = body.get("volume_id")
             chapter_id = body.get("chapter_id")
             paragraph_index = int(body.get("paragraph_index", 0))
             scroll_percent = float(body.get("scroll_percent", 0.0))
 
-            if not all([user_id, novel_id, volume_id, chapter_id]):
-                self.send_json({"error": "Missing required progress fields"}, status=400)
+            if not novel_id or not chapter_id:
+                self.send_json({"error": "Missing novel_id or chapter_id"}, status=400)
                 conn.close()
                 return
+
+            if not volume_id:
+                cur.execute("SELECT volume_id FROM chapters WHERE id = ?", (chapter_id,))
+                row = cur.fetchone()
+                volume_id = row[0] if (row and row[0]) else "vol_default"
+
+            # Ensure volume row exists to satisfy relational consistency
+            cur.execute("SELECT id FROM volumes WHERE id = ?", (volume_id,))
+            if not cur.fetchone():
+                cur.execute("INSERT OR IGNORE INTO volumes (id, novel_id, volume_number, title, file_name, created_at) VALUES (?, ?, 1, 'Volume 1', 'default.epub', ?)", (volume_id, novel_id, time.time()))
+                conn.commit()
 
             database.ensure_user_exists(user_id)
             now = time.time()

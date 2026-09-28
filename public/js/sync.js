@@ -266,22 +266,26 @@ const SyncService = {
   syncReadingProgress(novelId, volumeId, chapterId, paragraphIndex, scrollPercent, extraMeta = {}) {
     if (!novelId || !chapterId) return;
 
+    const activeUserId = this.currentUserId || (window.Storage && Storage.getUserId()) || 'guest';
+    const activeVolumeId = volumeId || 'vol_default';
+
     // 1. Immediately cache locally scoped to this user
     Storage.saveLocalProgress(novelId, {
-      volumeId,
+      volumeId: activeVolumeId,
       chapterId,
       paragraphIndex,
       scrollPercent,
       ...extraMeta
-    }, this.currentUserId);
+    }, activeUserId);
 
     const progressRecord = {
-      user_id: this.currentUserId,
+      user_id: activeUserId,
       novel_id: novelId,
-      volume_id: volumeId,
+      volume_id: activeVolumeId,
       chapter_id: chapterId,
       paragraph_index: paragraphIndex,
-      scroll_percent: scrollPercent
+      scroll_percent: scrollPercent,
+      extraMeta: { ...extraMeta }
     };
 
     // 2. If offline, queue for later sync
@@ -307,24 +311,34 @@ const SyncService = {
       this.syncTimeout = null;
     }
     const record = this.lastPendingProgress;
-    if (!record || !record.user_id) return;
+    if (!record) return;
+    const uid = record.user_id || this.currentUserId || (window.Storage && Storage.getUserId()) || 'guest';
+    record.user_id = uid;
     this.lastPendingProgress = null;
 
     try {
       fetch('/api/progress', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(record),
+        body: JSON.stringify({
+          user_id: record.user_id,
+          novel_id: record.novel_id,
+          volume_id: record.volume_id || 'vol_default',
+          chapter_id: record.chapter_id,
+          paragraph_index: record.paragraph_index,
+          scroll_percent: record.scroll_percent
+        }),
         keepalive: true
       }).then(res => res.json()).then(data => {
         if (data && data.success) {
           this.updateStatus('synced', 'SAVED');
           if (data.updated_at) {
             Storage.saveLocalProgress(record.novel_id, {
-              volumeId: record.volume_id,
+              volumeId: record.volume_id || 'vol_default',
               chapterId: record.chapter_id,
               paragraphIndex: record.paragraph_index,
               scrollPercent: record.scroll_percent,
+              ...(record.extraMeta || {}),
               savedAt: Math.round(data.updated_at * 1000)
             }, record.user_id);
           }
@@ -343,28 +357,35 @@ const SyncService = {
     const queue = Storage.getOfflineProgressQueue();
     if (!queue || queue.length === 0) return;
 
+    const activeUid = this.currentUserId || (window.Storage && Storage.getUserId()) || 'guest';
     let syncedCount = 0;
     for (const record of queue) {
       try {
+        const uid = record.user_id || activeUid;
         const res = await fetch('/api/progress', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            ...record,
-            user_id: this.currentUserId || record.user_id
+            user_id: uid,
+            novel_id: record.novel_id,
+            volume_id: record.volume_id || 'vol_default',
+            chapter_id: record.chapter_id,
+            paragraph_index: record.paragraph_index,
+            scroll_percent: record.scroll_percent
           })
         });
         const data = await res.json();
-        if (data.success) {
+        if (data && data.success) {
           syncedCount++;
           if (data.updated_at) {
             Storage.saveLocalProgress(record.novel_id, {
-              volumeId: record.volume_id,
+              volumeId: record.volume_id || 'vol_default',
               chapterId: record.chapter_id,
               paragraphIndex: record.paragraph_index,
               scrollPercent: record.scroll_percent,
+              ...(record.extraMeta || {}),
               savedAt: Math.round(data.updated_at * 1000)
-            }, this.currentUserId || record.user_id);
+            }, uid);
           }
         }
       } catch (e) {

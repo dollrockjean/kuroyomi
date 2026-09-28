@@ -2775,9 +2775,11 @@ body {
 
 /* Bionic Reading Fixation (Font-Agnostic & Italics-Compatible) */
 .bionic-fixation {
-  font-weight: 700 !important;
+  font-weight: var(--bionic-fixation-weight, 850) !important;
+  font-size: var(--bionic-fixation-scale, 1.2em);
   font-family: inherit !important;
   display: inline;
+  color: var(--text-primary);
 }
 
 em .bionic-fixation,
@@ -2788,7 +2790,8 @@ dfn .bionic-fixation,
 [style*="italic"] .bionic-fixation,
 [style*="oblique"] .bionic-fixation {
   font-style: italic !important;
-  font-weight: 700 !important;
+  font-weight: var(--bionic-fixation-weight, 850) !important;
+  font-size: var(--bionic-fixation-scale, 1.2em);
   font-family: inherit !important;
 }
 
@@ -2842,6 +2845,49 @@ dfn .bionic-fixation,
   font-weight: 700;
   color: var(--text-primary);
   letter-spacing: 0.2px;
+}
+
+.quick-bionic-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.quick-bionic-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  padding: 2px 6px;
+}
+
+.quick-bionic-step-btn {
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  padding: 1px 6px;
+  line-height: 1;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+}
+
+.quick-bionic-step-btn:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+
+.quick-bionic-step-val {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  min-width: 28px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 .quick-bionic-btn {

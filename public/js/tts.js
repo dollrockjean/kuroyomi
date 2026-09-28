@@ -113,6 +113,18 @@ const TTSEngine = {
     if (this._onErrorHandler) {
       this.audioElement.removeEventListener('error', this._onErrorHandler);
     }
+    if (this._onPlayHandler) {
+      this.audioElement.removeEventListener('play', this._onPlayHandler);
+    }
+
+    this._onPlayHandler = () => {
+      try {
+        if (this.rate) {
+          this.audioElement.playbackRate = this.rate;
+          this.audioElement.defaultPlaybackRate = this.rate;
+        }
+      } catch (e) {}
+    };
 
     this._onEndedHandler = () => {
       if (!this.isPlaying || this.isPaused || this.audioElement.loop) return;
@@ -144,6 +156,7 @@ const TTSEngine = {
     this.audioElement.addEventListener('ended', this._onEndedHandler);
     this.audioElement.addEventListener('timeupdate', this._onTimeUpdateHandler);
     this.audioElement.addEventListener('error', this._onErrorHandler);
+    this.audioElement.addEventListener('play', this._onPlayHandler);
   },
 
   swapAudioBuffers() {
@@ -155,6 +168,9 @@ const TTSEngine = {
     }
     if (this._onErrorHandler) {
       this.audioElement.removeEventListener('error', this._onErrorHandler);
+    }
+    if (this._onPlayHandler) {
+      this.audioElement.removeEventListener('play', this._onPlayHandler);
     }
 
     const temp = this.audioElement;
@@ -329,6 +345,16 @@ const TTSEngine = {
         if (!isNaN(s)) this.setRate(s);
       });
     });
+
+    // Wire speed sliders across Audio tab and Audiobook modal
+    const bindSpeedSlider = (id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('input', (e) => this.setRate(e.target.value));
+      el.addEventListener('change', (e) => this.setRate(e.target.value));
+    };
+    bindSpeedSlider('ttsRateSlider');
+    bindSpeedSlider('audiobookModalSpeedSlider');
 
     // Wire pitch sliders (decoupled input for instant UI feedback + change for commit)
     const bindPitchSlider = (id) => {
@@ -592,19 +618,41 @@ const TTSEngine = {
   },
 
   setRate(val) {
-    this.rate = parseFloat(val);
+    const newRate = parseFloat(val);
+    if (isNaN(newRate) || newRate <= 0) return;
+    this.rate = Math.round(newRate * 100) / 100;
     this.blobCache.clear();
     this.pendingFetches.clear();
+    this.preloadedIndex = -1;
+    this.preloadedBlobUrl = null;
+    try {
+      if (this.secondaryAudioElement) {
+        this.secondaryAudioElement.pause();
+        this.secondaryAudioElement.removeAttribute('src');
+      }
+    } catch (e) {}
+
     if (window.ReaderSettings) {
       window.ReaderSettings.tts_rate = this.rate;
-      if (window.SyncService) {
+      if (typeof Storage !== 'undefined' && typeof Storage.setLocalSettings === 'function') {
+        Storage.setLocalSettings(window.ReaderSettings);
+      }
+      if (window.SyncService && typeof window.SyncService.syncSettings === 'function') {
         window.SyncService.syncSettings(window.ReaderSettings);
       }
     }
+
+    const rateText = `${this.rate.toFixed(2).replace(/\.?0+$/, '')}x`;
+
     const slider = document.getElementById('ttsRateSlider');
-    if (slider) slider.value = this.rate;
+    if (slider && Math.abs(parseFloat(slider.value) - this.rate) > 0.01) slider.value = this.rate;
     const rateVal = document.getElementById('ttsRateVal');
-    if (rateVal) rateVal.textContent = `${this.rate}x`;
+    if (rateVal) rateVal.textContent = rateText;
+
+    const modalSlider = document.getElementById('audiobookModalSpeedSlider');
+    if (modalSlider && Math.abs(parseFloat(modalSlider.value) - this.rate) > 0.01) modalSlider.value = this.rate;
+    const modalRateVal = document.getElementById('audiobookModalSpeedVal');
+    if (modalRateVal) modalRateVal.textContent = rateText;
 
     // Update speed chips UI across audiobook modal and middle quick sheet
     document.querySelectorAll('.speed-chip, .quick-sheet-speed-chip').forEach(chip => {
@@ -612,18 +660,29 @@ const TTSEngine = {
       chip.classList.toggle('selected', Math.abs(s - this.rate) < 0.05);
     });
     const qsSpeedVal = document.getElementById('quickSheetSpeedVal');
-    if (qsSpeedVal) qsSpeedVal.textContent = `${this.rate}x`;
+    if (qsSpeedVal) qsSpeedVal.textContent = rateText;
 
     this.updateAudioUI();
-    if (this.isPlaying && !this.isPaused) {
-      if (this.audioElement && !this.audioElement.paused) {
+
+    // Immediately enforce playbackRate on active elements
+    if (this.audioElement) {
+      try {
         this.audioElement.playbackRate = this.rate;
-      }
-      if (this.secondaryAudioElement && !this.secondaryAudioElement.paused) {
+        this.audioElement.defaultPlaybackRate = this.rate;
+      } catch (e) {}
+    }
+    if (this.secondaryAudioElement) {
+      try {
         this.secondaryAudioElement.playbackRate = this.rate;
-      }
+        this.secondaryAudioElement.defaultPlaybackRate = this.rate;
+      } catch (e) {}
+    }
+
+    if (this.isPlaying && !this.isPaused) {
       if (this.isUsingDeviceVoice) {
         this.speakParagraph(this.currentIndex);
+      } else {
+        this.prepareNextParagraph(this.currentIndex + 1);
       }
     }
   },
@@ -1042,8 +1101,11 @@ const TTSEngine = {
         this.setDeviceVoiceMode(false);
       }
 
-      this.updateAudiobookModalContent();
       await this.audioElement.play();
+      try {
+        this.audioElement.playbackRate = this.rate;
+        this.audioElement.defaultPlaybackRate = this.rate;
+      } catch (e) {}
       this.updateAudioUI();
 
       // Proactively prefetch next 6 paragraphs and prepare secondary audio buffer

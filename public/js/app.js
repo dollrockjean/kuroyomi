@@ -159,10 +159,8 @@ const App = {
   },
 
   bindGlobalEvents() {
-    document.getElementById('logoBtn').addEventListener('click', () => {
-      AutoScroll.stop();
-      TTSEngine.stop();
-      this.switchView('library');
+    document.getElementById('logoBtn').addEventListener('click', (e) => {
+      handleGoToLibrary(e);
     });
 
     const handleGoToLibrary = (e) => {
@@ -1000,6 +998,32 @@ const App = {
     if (qsBionicBar) {
       qsBionicBar.addEventListener('click', toggleQuickBionic);
     }
+
+    const qsStepper = document.getElementById('quickSheetBionicSizeStepper');
+    if (qsStepper) {
+      qsStepper.addEventListener('click', (e) => e.stopPropagation());
+    }
+
+    const qsBionicDown = document.getElementById('qsBionicSizeDown');
+    if (qsBionicDown) {
+      qsBionicDown.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (window.Reader && window.Reader.stepBionicFixationSize) {
+          window.Reader.stepBionicFixationSize(-0.1);
+        }
+      });
+    }
+
+    const qsBionicUp = document.getElementById('qsBionicSizeUp');
+    if (qsBionicUp) {
+      qsBionicUp.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (window.Reader && window.Reader.stepBionicFixationSize) {
+          window.Reader.stepBionicFixationSize(0.1);
+        }
+      });
+    }
+
     const qsBionicToggle = document.getElementById('quickSheetBionicToggle');
     if (qsBionicToggle) {
       qsBionicToggle.addEventListener('change', (e) => {
@@ -1035,6 +1059,15 @@ const App = {
         }
       });
     }
+
+    document.querySelectorAll('.bionic-size-choice-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const sz = btn.getAttribute('data-bionic-size');
+        if (window.Reader && window.Reader.setBionicFixationSize) {
+          window.Reader.setBionicFixationSize(sz);
+        }
+      });
+    });
     document.querySelectorAll('.theme-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         document.querySelectorAll('.theme-btn').forEach(b => b.classList.remove('selected'));
@@ -1261,6 +1294,13 @@ const App = {
     const panelBionicToggle = document.getElementById('panelBionicToggle');
     if (panelBionicToggle) {
       panelBionicToggle.checked = isBionic;
+    }
+    const bionicSizeGroup = document.getElementById('bionicFixationSizeGroup');
+    if (bionicSizeGroup) {
+      bionicSizeGroup.style.display = isBionic ? 'block' : 'none';
+    }
+    if (window.Reader && window.Reader.applyBionicSettings) {
+      window.Reader.applyBionicSettings();
     }
 
     // 8. Library View Mode (Tile / List)
@@ -2114,12 +2154,17 @@ const App = {
       let lastReadTag = n.last_chapter_title ? `Last: ${n.last_chapter_title}` : 'Not started';
       let readPercent = Math.round(n.progress_overall_percent !== undefined ? n.progress_overall_percent : (n.progress_scroll || 0));
 
-      const localProg = (typeof Storage !== 'undefined' && Storage.getLocalProgress) ? Storage.getLocalProgress(n.id) : null;
-      if (localProg && localProg.overallPercent !== undefined) {
+      const activeUserId = (window.SyncService && SyncService.currentUserId) || (window.Storage && Storage.getUserId()) || 'guest';
+      const localProg = (typeof Storage !== 'undefined' && Storage.getLocalProgress) ? Storage.getLocalProgress(n.id, activeUserId) : null;
+      if (localProg) {
         const localTime = localProg.savedAt || 0;
         const serverTime = (n.last_read_at || 0) * 1000;
         if (localTime >= serverTime || readPercent === 0) {
-          readPercent = Math.round(localProg.overallPercent);
+          if (localProg.overallPercent !== undefined) {
+            readPercent = Math.round(localProg.overallPercent);
+          } else if (localProg.scrollPercent !== undefined) {
+            readPercent = Math.round(localProg.scrollPercent);
+          }
           if (localProg.chapterTitle) {
             lastReadTag = `Last: ${localProg.chapterTitle}`;
           }

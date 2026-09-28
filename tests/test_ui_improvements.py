@@ -215,5 +215,152 @@ class TestUIImprovements(unittest.TestCase):
         self.assertIn("getNovelCover", storage_js)
         self.assertIn("updateCoverInMirror", storage_js)
 
+    def test_audiobook_modal_speed_slider(self):
+        """Verify narrator speed buttons replaced with slider in audiobook modal and live speed updates."""
+        index_path = os.path.join(server.PUBLIC_DIR, "index.html")
+        with open(index_path, "r", encoding="utf-8") as f:
+            html = f.read()
+
+        self.assertIn('id="audiobookModalSpeedSlider"', html)
+        self.assertIn('id="audiobookModalSpeedVal"', html)
+        self.assertNotIn('id="audiobookSpeedChips"', html)
+        self.assertIn('min="0.5"', html)
+        self.assertIn('max="2.5"', html)
+        self.assertIn('step="0.05"', html)
+
+        tts_js_path = os.path.join(server.PUBLIC_DIR, "js", "tts.js")
+        with open(tts_js_path, "r", encoding="utf-8") as f:
+            tts_js = f.read()
+
+        self.assertIn("audiobookModalSpeedSlider", tts_js)
+        self.assertIn("audiobookModalSpeedVal", tts_js)
+        self.assertIn("this.blobCache.clear()", tts_js)
+        self.assertIn("this.preloadedIndex = -1", tts_js)
+        self.assertIn("this.audioElement.playbackRate = this.rate", tts_js)
+
+    def test_bionic_fixation_stepper_and_controls(self):
+        """Verify bionic fixation size stepper on quick sheet and options in preferences drawer."""
+        index_path = os.path.join(server.PUBLIC_DIR, "index.html")
+        with open(index_path, "r", encoding="utf-8") as f:
+            html = f.read()
+
+        self.assertIn('id="quickSheetBionicSizeStepper"', html)
+        self.assertIn('id="qsBionicSizeDown"', html)
+        self.assertIn('id="qsBionicSizeVal"', html)
+        self.assertIn('id="qsBionicSizeUp"', html)
+        self.assertIn('id="bionicFixationSizeGroup"', html)
+        self.assertIn('bionic-size-choice-btn', html)
+
+        css_path = os.path.join(server.PUBLIC_DIR, "css", "brutalist.css")
+        with open(css_path, "r", encoding="utf-8") as f:
+            css = f.read()
+
+        self.assertIn("--bionic-fixation-scale", css)
+        self.assertIn("--bionic-fixation-weight", css)
+        self.assertIn(".quick-bionic-stepper", css)
+        self.assertIn(".quick-bionic-step-btn", css)
+
+        reader_js_path = os.path.join(server.PUBLIC_DIR, "js", "reader.js")
+        with open(reader_js_path, "r", encoding="utf-8") as f:
+            reader_js = f.read()
+
+        self.assertIn("applyBionicSettings", reader_js)
+        self.assertIn("setBionicFixationSize", reader_js)
+        self.assertIn("stepBionicFixationSize", reader_js)
+
+        app_js_path = os.path.join(server.PUBLIC_DIR, "js", "app.js")
+        with open(app_js_path, "r", encoding="utf-8") as f:
+            app_js = f.read()
+
+        self.assertIn("qsBionicSizeDown", app_js)
+        self.assertIn("qsBionicSizeUp", app_js)
+        self.assertIn("bionic-size-choice-btn", app_js)
+
+    def test_progress_save_resilience_and_backward_navigation(self):
+        """Verify progress saves handle missing volume_id, guest fallback, and bidirectional updates."""
+        nov_id = f"nov_prog_test_{int(time.time()*1000)}"
+        ch_id = f"ch_prog_test_{int(time.time()*1000)}"
+        user_id = database.get_or_create_user("test_user_progress")
+        database.ensure_user_exists("guest")
+
+        conn = database.get_db()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO novels (id, title, author, description, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (nov_id, "Progress Test Novel", "Author", "Desc", user_id, time.time(), time.time())
+        )
+        vol_id = f"vol_prog_test_{int(time.time()*1000)}"
+        cur.execute(
+            "INSERT INTO volumes (id, novel_id, volume_number, title, file_name, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (vol_id, nov_id, 1, "Volume 1", "test.epub", time.time())
+        )
+        cur.execute(
+            "INSERT INTO chapters (id, novel_id, volume_id, chapter_index, global_index, title, content_html, word_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (ch_id, nov_id, vol_id, 0, 0, "Chapter 1", "<p>Content</p>", 10)
+        )
+        conn.commit()
+        conn.close()
+
+        class MockHandler:
+            def __init__(self):
+                self.sent_json = None
+                self.sent_status = 200
+                self.headers = {}
+            def send_json(self, data, status=200):
+                self.sent_json = data
+                self.sent_status = status
+
+        # POST /api/progress without volume_id and without user_id (tests guest fallback and volume lookup)
+        h_prog = MockHandler()
+        server.NovelReaderHandler.handle_api_post(h_prog, "/api/progress", {
+            "novel_id": nov_id,
+            "chapter_id": ch_id,
+            "scroll_percent": 42.5
+        })
+        self.assertEqual(h_prog.sent_status, 200)
+        self.assertTrue(h_prog.sent_json.get("success"))
+
+        # GET /api/last-read for guest
+        h_last = MockHandler()
+        server.NovelReaderHandler.handle_api_get(h_last, "/api/last-read", {"user_id": ["guest"]})
+        self.assertEqual(h_last.sent_status, 200)
+        last_read = h_last.sent_json.get("last_read")
+        self.assertIsNotNone(last_read)
+        self.assertEqual(last_read.get("novel_id"), nov_id)
+        self.assertEqual(last_read.get("chapter_id"), ch_id)
+
+        # Check reader.js doesn't freeze saves or block backward navigation
+        reader_js_path = os.path.join(server.PUBLIC_DIR, "js", "reader.js")
+        with open(reader_js_path, "r", encoding="utf-8") as f:
+            reader_js = f.read()
+
+        self.assertNotIn("localScore > cloudScore", reader_js)
+        self.assertIn("isRestoringScroll = false", reader_js)
+
+        # Check sync.js preserves extraMeta
+        sync_js_path = os.path.join(server.PUBLIC_DIR, "js", "sync.js")
+        with open(sync_js_path, "r", encoding="utf-8") as f:
+            sync_js = f.read()
+
+        self.assertIn("record.extraMeta", sync_js)
+
+    def test_service_worker_and_asset_version_bump(self):
+        """Verify service worker cache name and asset version query strings match v34."""
+        sw_path = os.path.join(server.PUBLIC_DIR, "sw.js")
+        with open(sw_path, "r", encoding="utf-8") as f:
+            sw_js = f.read()
+
+        self.assertIn("byob-v34", sw_js)
+        self.assertIn("v=34.0", sw_js)
+
+        index_path = os.path.join(server.PUBLIC_DIR, "index.html")
+        with open(index_path, "r", encoding="utf-8") as f:
+            index_html = f.read()
+
+        self.assertIn("brutalist.css?v=34.0", index_html)
+        self.assertIn("app.js?v=34.0", index_html)
+        self.assertIn("reader.js?v=34.0", index_html)
+        self.assertIn("tts.js?v=34.0", index_html)
+
 if __name__ == '__main__':
     unittest.main()

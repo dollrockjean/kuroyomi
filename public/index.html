@@ -30,7 +30,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,300;0,400;0,700;1,300;1,400;1,700&family=Lora:ital,wght@0,400..700;1,400..700&family=Merriweather:ital,wght@0,300;0,400;0,700;1,300;1,400;1,700&family=Open+Sans:ital,wght@0,300..800;1,300..800&family=PT+Serif:ital,wght@0,400;0,700;1,400;1,700&family=Roboto:ital,wght@0,300;0,400;0,500;0,700;1,400;1,700&display=swap" rel="stylesheet">
 
   <!-- Styles -->
-  <link rel="stylesheet" href="/css/brutalist.css?v=32.0">
+  <link rel="stylesheet" href="/css/brutalist.css?v=34.0">
 
   <!-- Critical Quick Sheet Theme & Layout Styles (Anti-Cache Protection) -->
   <style id="quickSheetCriticalStyles">
@@ -140,9 +140,31 @@
     .quick-bionic-indicator { width: 8px; height: 8px; border-radius: 50%; background: var(--border-color); transition: background 0.15s ease; }
     .quick-bionic-btn.active { background: var(--accent); color: #000; border-color: var(--accent); }
     .quick-bionic-btn.active .quick-bionic-indicator { background: #000; box-shadow: 0 0 6px rgba(0,0,0,0.4); }
-    .bionic-fixation { font-weight: 700 !important; font-family: inherit !important; display: inline; }
+    .quick-bionic-controls { display: inline-flex; align-items: center; gap: 8px; }
+    .quick-bionic-stepper {
+      display: inline-flex; align-items: center; gap: 3px;
+      background: var(--bg-surface); border: 1px solid var(--border-color);
+      border-radius: 16px; padding: 2px 6px;
+    }
+    .quick-bionic-step-btn {
+      background: none; border: none; color: var(--text-primary);
+      font-size: 13px; font-weight: 800; cursor: pointer; padding: 1px 6px;
+      line-height: 1; border-radius: 4px;
+    }
+    .quick-bionic-step-btn:hover { background: var(--bg-hover); color: var(--accent); }
+    .quick-bionic-step-val { font-size: 11px; font-weight: 700; color: var(--text-secondary); min-width: 28px; text-align: center; font-variant-numeric: tabular-nums; }
+    .bionic-fixation {
+      font-weight: var(--bionic-fixation-weight, 850) !important;
+      font-size: var(--bionic-fixation-scale, 1.2em);
+      font-family: inherit !important;
+      display: inline;
+      color: var(--text-primary);
+    }
     em .bionic-fixation, i .bionic-fixation, cite .bionic-fixation, dfn .bionic-fixation, .italic .bionic-fixation, [style*="italic"] .bionic-fixation {
-      font-style: italic !important; font-weight: 700 !important; font-family: inherit !important;
+      font-style: italic !important;
+      font-weight: var(--bionic-fixation-weight, 850) !important;
+      font-size: var(--bionic-fixation-scale, 1.2em);
+      font-family: inherit !important;
     }
   </style>
 </head>
@@ -431,17 +453,13 @@
         </button>
       </div>
 
-      <!-- Compact Speed Presets & Voice Settings -->
+      <!-- Compact Speed Slider & Voice Settings -->
       <div class="audiobook-settings-compact">
         <div class="audiobook-compact-row">
           <span class="audiobook-compact-label">Speed:</span>
-          <div class="audiobook-speed-chips" id="audiobookSpeedChips">
-            <button class="speed-chip" data-speed="0.8">0.8x</button>
-            <button class="speed-chip selected" data-speed="1.0">1.0x</button>
-            <button class="speed-chip" data-speed="1.2">1.2x</button>
-            <button class="speed-chip" data-speed="1.4">1.4x</button>
-            <button class="speed-chip" data-speed="1.6">1.6x</button>
-            <button class="speed-chip" data-speed="1.8">1.8x</button>
+          <div style="display: flex; align-items: center; gap: 8px; flex: 1;">
+            <input type="range" id="audiobookModalSpeedSlider" class="range-slider" min="0.5" max="2.5" step="0.05" value="1.0" style="flex: 1;" />
+            <span id="audiobookModalSpeedVal" style="font-size: 11px; font-weight: 700; min-width: 44px; text-align: right; color: var(--text-primary);">1.0x</span>
           </div>
         </div>
 
@@ -588,10 +606,17 @@
           <span class="quick-bionic-badge">Text Mode</span>
           <span class="quick-bionic-title">Bionic Reading</span>
         </div>
-        <button class="quick-bionic-btn" id="quickSheetBionicBtn" type="button" aria-pressed="false">
-          <span class="quick-bionic-indicator"></span>
-          <span class="quick-bionic-status" id="quickSheetBionicStatus">OFF</span>
-        </button>
+        <div class="quick-bionic-controls">
+          <div class="quick-bionic-stepper" id="quickSheetBionicSizeStepper" title="Adjust Fixation Size">
+            <button class="quick-bionic-step-btn" id="qsBionicSizeDown" type="button" aria-label="Decrease Fixation Size">-</button>
+            <span class="quick-bionic-step-val" id="qsBionicSizeVal">1.2x</span>
+            <button class="quick-bionic-step-btn" id="qsBionicSizeUp" type="button" aria-label="Increase Fixation Size">+</button>
+          </div>
+          <button class="quick-bionic-btn" id="quickSheetBionicBtn" type="button" aria-pressed="false">
+            <span class="quick-bionic-indicator"></span>
+            <span class="quick-bionic-status" id="quickSheetBionicStatus">OFF</span>
+          </button>
+        </div>
         <input type="checkbox" id="quickSheetBionicToggle" style="display: none;" />
       </div>
 
@@ -879,6 +904,19 @@
           </div>
           <input type="checkbox" id="panelBionicToggle" style="display: none;" />
         </div>
+
+        <div class="form-group" id="bionicFixationSizeGroup" style="display: none;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <label class="form-label" style="margin-bottom: 0;">Bionic Fixation Prominence</label>
+            <span id="bionicFixationSizeVal" style="font-size: 11px; font-weight: 700; color: var(--accent);">Medium (1.2x)</span>
+          </div>
+          <div class="grid-choices">
+            <button class="choice-btn bionic-size-choice-btn" data-bionic-size="1.0">Subtle (1.0x)</button>
+            <button class="choice-btn bionic-size-choice-btn selected" data-bionic-size="1.2">Medium (1.2x)</button>
+            <button class="choice-btn bionic-size-choice-btn" data-bionic-size="1.4">Bold (1.4x)</button>
+            <button class="choice-btn bionic-size-choice-btn" data-bionic-size="1.6">Max (1.6x)</button>
+          </div>
+        </div>
       </div>
 
       <!-- Tab 5: Sync, Devices & Cloud Safeguard Backup -->
@@ -1129,11 +1167,11 @@
   <input type="file" id="novelCoverInput" accept="image/*" style="display: none;" />
 
   <!-- Application Logic Modules -->
-  <script src="/js/storage.js?v=32.0"></script>
-  <script src="/js/sync.js?v=32.0"></script>
-  <script src="/js/autoscroll.js?v=32.0"></script>
-  <script src="/js/tts.js?v=32.0"></script>
-  <script src="/js/reader.js?v=32.0"></script>
-  <script src="/js/app.js?v=32.0"></script>
+  <script src="/js/storage.js?v=34.0"></script>
+  <script src="/js/sync.js?v=34.0"></script>
+  <script src="/js/autoscroll.js?v=34.0"></script>
+  <script src="/js/tts.js?v=34.0"></script>
+  <script src="/js/reader.js?v=34.0"></script>
+  <script src="/js/app.js?v=34.0"></script>
 </body>
 </html>

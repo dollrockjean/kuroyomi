@@ -20,6 +20,7 @@ const Reader = {
     this.initOverscrollNavigation();
     this.bindDesktopHover();
     this.bindKeyboardShortcuts();
+    this.applyBionicSettings();
 
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') {
@@ -443,31 +444,17 @@ const Reader = {
           const localTime = local.savedAt || 0;
           const cloudTime = (data.progress.updated_at || 0) * 1000;
 
-          // If one is clearly newer (by more than 1.5s), newer position wins (forward OR backward)
-          if (localTime > 0 && cloudTime > 0 && Math.abs(localTime - cloudTime) > 1500) {
+          // If one is clearly newer (by more than 2s), newer position wins (forward OR backward)
+          if (localTime > 0 && cloudTime > 0 && Math.abs(localTime - cloudTime) > 2000) {
             chooseSource = (localTime > cloudTime) ? 'local' : 'cloud';
           } else if (localTime > 0 && cloudTime === 0) {
             chooseSource = 'local';
           } else if (cloudTime > 0 && localTime === 0) {
             chooseSource = 'cloud';
           } else {
-            // Timestamps are close or identical: check position
-            if (local.chapterId === data.progress.chapter_id) {
-              const localPid = local.paragraphIndex || 0;
-              const cloudPid = data.progress.paragraph_index || 0;
-              const localPct = local.scrollPercent || 0;
-              const cloudPct = data.progress.scroll_percent || 0;
-              const localScore = (localPid * 1000) + localPct;
-              const cloudScore = (cloudPid * 1000) + cloudPct;
-              if (localScore !== cloudScore) {
-                chooseSource = (localScore > cloudScore) ? 'local' : 'cloud';
-              } else {
-                chooseSource = (localTime >= cloudTime) ? 'local' : 'cloud';
-              }
-            } else {
-              // Different chapters with close timestamps: break tie with timestamp
-              chooseSource = (localTime >= cloudTime) ? 'local' : 'cloud';
-            }
+            // Timestamps are close or identical (within 2s): always honor local device progress
+            // because the user's active touch/interaction occurred directly on this device
+            chooseSource = (localTime >= cloudTime) ? 'local' : 'cloud';
           }
         } else if (hasLocal) {
           chooseSource = 'local';
@@ -480,23 +467,19 @@ const Reader = {
           targetPid = local.paragraphIndex || 0;
           targetPercent = local.scrollPercent || 0;
 
-          // If local was newer than cloud, push it to cloud so all devices sync to it
-          const localTime = local.savedAt || 0;
-          const cloudTime = (data.progress ? (data.progress.updated_at || 0) : 0) * 1000;
-          if (!hasCloud || localTime > cloudTime) {
-            SyncService.syncReadingProgress(
-              novelId,
-              local.volumeId || this.currentVolumeId,
-              targetChapterId,
-              targetPid,
-              targetPercent,
-              {
-                chapterTitle: local.chapterTitle || '',
-                globalIndex: local.globalIndex || 1,
-                overallPercent: local.overallPercent !== undefined ? local.overallPercent : 0
-              }
-            );
-          }
+          // Ensure cloud is in sync with this device position
+          SyncService.syncReadingProgress(
+            novelId,
+            local.volumeId || this.currentVolumeId || 'vol_default',
+            targetChapterId,
+            targetPid,
+            targetPercent,
+            {
+              chapterTitle: local.chapterTitle || '',
+              globalIndex: local.globalIndex || 1,
+              overallPercent: local.overallPercent !== undefined ? local.overallPercent : 0
+            }
+          );
         } else if (chooseSource === 'cloud') {
           targetChapterId = data.progress.chapter_id;
           targetPid = data.progress.paragraph_index || 0;
@@ -668,6 +651,7 @@ const Reader = {
       // Reliable reading spot restoration
       if (scrollToBottom) {
         this.isRestoringScroll = true;
+        setTimeout(() => { this.isRestoringScroll = false; }, 600);
         const performScrollBottom = () => {
           const docEl = document.documentElement;
           const bodyEl = document.body;
@@ -700,6 +684,7 @@ const Reader = {
         }, 450);
       } else if (scrollToTarget && (this.targetParagraphIndex > 0 || this.targetScrollPercent > 0)) {
         this.isRestoringScroll = true;
+        setTimeout(() => { this.isRestoringScroll = false; }, 600);
         const targetPid = this.targetParagraphIndex;
         const targetPct = this.targetScrollPercent;
 
@@ -793,9 +778,11 @@ const Reader = {
     const chapterScrollFrac = scrollPercent / 100;
     overallPercent = Math.min(100, Math.max(0, ((chIdx + chapterScrollFrac) / totalCh) * 100));
 
+    const volId = this.currentVolumeId || (this.currentChapter && this.currentChapter.volume_id) || 'vol_default';
+
     SyncService.syncReadingProgress(
       this.currentNovel.id,
-      this.currentVolumeId,
+      volId,
       this.currentChapter.id,
       pid,
       scrollPercent,
@@ -843,8 +830,8 @@ const Reader = {
       const local = Storage.getLocalProgress(this.currentNovel.id, userId);
       const localTime = (local && local.savedAt) || 0;
 
-      // If remote position was updated more recently on another device (by more than 2.5 seconds)
-      if (remoteTime > (localTime + 2500)) {
+      // If remote position was updated more recently on another device (by more than 4 seconds)
+      if (remoteTime > (localTime + 4000)) {
         if (remote.chapter_id !== this.currentChapter.id) {
           // Cancel pending debounce to prevent local scroll from overwriting remote progress
           if (this.scrollDebounce) {
@@ -1142,6 +1129,12 @@ const Reader = {
     const panelToggle = document.getElementById('panelBionicToggle');
     if (panelToggle) panelToggle.checked = isBionic;
 
+    const bionicSizeGroup = document.getElementById('bionicFixationSizeGroup');
+    if (bionicSizeGroup) {
+      bionicSizeGroup.style.display = isBionic ? 'block' : 'none';
+    }
+    this.applyBionicSettings();
+
     if (this.currentChapter && document.getElementById('readerView').style.display !== 'none') {
       const scrollPos = window.scrollY;
       this.renderChapterHtml(this.currentChapter);
@@ -1150,6 +1143,51 @@ const Reader = {
       }
       window.scrollTo({ top: scrollPos, behavior: 'instant' });
     }
+  },
+
+  applyBionicSettings() {
+    const s = (window.ReaderSettings && parseFloat(window.ReaderSettings.bionic_size)) || 1.2;
+    const clamped = Math.max(1.0, Math.min(2.0, Math.round(s * 10) / 10));
+    const weight = clamped >= 1.5 ? 900 : (clamped >= 1.3 ? 850 : (clamped >= 1.1 ? 800 : 700));
+    document.documentElement.style.setProperty('--bionic-fixation-scale', `${clamped}em`);
+    document.documentElement.style.setProperty('--bionic-fixation-weight', `${weight}`);
+
+    const qsVal = document.getElementById('qsBionicSizeVal');
+    if (qsVal) qsVal.textContent = `${clamped.toFixed(1)}x`;
+
+    const panelVal = document.getElementById('bionicFixationSizeVal');
+    if (panelVal) {
+      const desc = clamped <= 1.0 ? 'Subtle' : (clamped <= 1.2 ? 'Medium' : (clamped <= 1.4 ? 'Bold' : 'Max'));
+      panelVal.textContent = `${desc} (${clamped.toFixed(1)}x)`;
+    }
+
+    document.querySelectorAll('.bionic-size-choice-btn').forEach(btn => {
+      const btnSize = parseFloat(btn.getAttribute('data-bionic-size'));
+      btn.classList.toggle('selected', Math.abs(btnSize - clamped) < 0.05);
+    });
+  },
+
+  setBionicFixationSize(scale) {
+    let s = parseFloat(scale);
+    if (isNaN(s)) s = 1.2;
+    s = Math.max(1.0, Math.min(2.0, Math.round(s * 10) / 10));
+
+    if (!window.ReaderSettings) window.ReaderSettings = {};
+    window.ReaderSettings.bionic_size = s;
+
+    this.applyBionicSettings();
+
+    // If Bionic reading is currently OFF, turn it ON automatically when user adjusts fixation size!
+    if (!window.ReaderSettings.bionic_reading) {
+      this.toggleBionicReading(true);
+    } else if (window.Storage) {
+      window.Storage.saveSettings(window.ReaderSettings);
+    }
+  },
+
+  stepBionicFixationSize(delta) {
+    const cur = (window.ReaderSettings && parseFloat(window.ReaderSettings.bionic_size)) || 1.2;
+    this.setBionicFixationSize(cur + delta);
   }
 };
 
