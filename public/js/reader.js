@@ -1133,6 +1133,10 @@ const Reader = {
     if (bionicSizeGroup) {
       bionicSizeGroup.style.display = isBionic ? 'block' : 'none';
     }
+    const sliderRow = document.getElementById('quickBionicSliderRow');
+    if (sliderRow) {
+      sliderRow.style.opacity = isBionic ? '1' : '0.65';
+    }
     this.applyBionicSettings();
 
     if (this.currentChapter && document.getElementById('readerView').style.display !== 'none') {
@@ -1147,30 +1151,37 @@ const Reader = {
 
   applyBionicSettings() {
     const s = (window.ReaderSettings && parseFloat(window.ReaderSettings.bionic_size)) || 1.2;
-    const clamped = Math.max(1.0, Math.min(2.0, Math.round(s * 10) / 10));
+    const clamped = Math.max(1.0, Math.min(2.0, Math.round(s * 100) / 100));
     const weight = clamped >= 1.5 ? 900 : (clamped >= 1.3 ? 850 : (clamped >= 1.1 ? 800 : 700));
     document.documentElement.style.setProperty('--bionic-fixation-scale', `${clamped}em`);
     document.documentElement.style.setProperty('--bionic-fixation-weight', `${weight}`);
 
+    const sizeText = `${clamped % 1 === 0 ? clamped.toFixed(1) : (Math.round(clamped * 10) === clamped * 10 ? clamped.toFixed(1) : clamped.toFixed(2))}x`;
+
+    const bionicSlider = document.getElementById('quickSheetBionicSlider');
+    if (bionicSlider && Math.abs(parseFloat(bionicSlider.value) - clamped) > 0.01) {
+      bionicSlider.value = clamped;
+    }
+
     const qsVal = document.getElementById('qsBionicSizeVal');
-    if (qsVal) qsVal.textContent = `${clamped.toFixed(1)}x`;
+    if (qsVal) qsVal.textContent = sizeText;
 
     const panelVal = document.getElementById('bionicFixationSizeVal');
     if (panelVal) {
-      const desc = clamped <= 1.0 ? 'Subtle' : (clamped <= 1.2 ? 'Medium' : (clamped <= 1.4 ? 'Bold' : 'Max'));
-      panelVal.textContent = `${desc} (${clamped.toFixed(1)}x)`;
+      const desc = clamped <= 1.05 ? 'Subtle' : (clamped <= 1.3 ? 'Medium' : (clamped <= 1.6 ? 'Bold' : 'Max'));
+      panelVal.textContent = `${desc} (${sizeText})`;
     }
 
     document.querySelectorAll('.bionic-size-choice-btn').forEach(btn => {
       const btnSize = parseFloat(btn.getAttribute('data-bionic-size'));
-      btn.classList.toggle('selected', Math.abs(btnSize - clamped) < 0.05);
+      btn.classList.toggle('selected', Math.abs(btnSize - clamped) < 0.06);
     });
   },
 
   setBionicFixationSize(scale) {
     let s = parseFloat(scale);
     if (isNaN(s)) s = 1.2;
-    s = Math.max(1.0, Math.min(2.0, Math.round(s * 10) / 10));
+    s = Math.max(1.0, Math.min(2.0, Math.round(s * 100) / 100));
 
     if (!window.ReaderSettings) window.ReaderSettings = {};
     window.ReaderSettings.bionic_size = s;
@@ -1187,7 +1198,8 @@ const Reader = {
 
   stepBionicFixationSize(delta) {
     const cur = (window.ReaderSettings && parseFloat(window.ReaderSettings.bionic_size)) || 1.2;
-    this.setBionicFixationSize(cur + delta);
+    const d = typeof delta === 'number' ? delta : 0.05;
+    this.setBionicFixationSize(cur + d);
   }
 };
 

@@ -2780,6 +2780,8 @@ body {
   font-family: inherit !important;
   display: inline;
   color: var(--text-primary);
+  line-height: 1;
+  vertical-align: baseline;
 }
 
 em .bionic-fixation,
@@ -2793,6 +2795,8 @@ dfn .bionic-fixation,
   font-weight: var(--bionic-fixation-weight, 850) !important;
   font-size: var(--bionic-fixation-scale, 1.2em);
   font-family: inherit !important;
+  line-height: 1;
+  vertical-align: baseline;
 }
 
 .bionic-fragment {
@@ -2805,21 +2809,28 @@ dfn .bionic-fixation,
 /* Quick Sheet Bionic Reading Bar */
 .quick-sheet-bionic-bar {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 7px;
   width: 100%;
   box-sizing: border-box;
   background: var(--bg-card);
   border: 1px solid var(--border-color);
   border-radius: 12px;
-  padding: 7px 12px;
+  padding: 8px 12px;
   cursor: pointer;
   transition: all 0.15s ease;
-  min-height: 38px;
 }
 
 .quick-sheet-bionic-bar:hover {
   border-color: var(--accent);
+}
+
+.quick-bionic-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .quick-bionic-info {
@@ -2847,6 +2858,35 @@ dfn .bionic-fixation,
   letter-spacing: 0.2px;
 }
 
+.quick-bionic-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  transition: opacity 0.15s ease;
+}
+
+.quick-bionic-slider-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+  min-width: 24px;
+}
+
+.quick-bionic-slider-row input[type="range"],
+.quick-sheet-speed-row input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  height: 6px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  margin: 0;
+  padding: 0;
+}
+
 .quick-bionic-controls {
   display: inline-flex;
   align-items: center;
@@ -2860,7 +2900,7 @@ dfn .bionic-fixation,
   background: var(--bg-surface);
   border: 1px solid var(--border-color);
   border-radius: 16px;
-  padding: 2px 6px;
+  padding: 2px 4px;
 }
 
 .quick-bionic-step-btn {
@@ -2884,9 +2924,9 @@ dfn .bionic-fixation,
 .quick-bionic-step-val {
   font-size: 11px;
   font-weight: 700;
-  color: var(--text-secondary);
-  min-width: 28px;
-  text-align: center;
+  color: var(--text-primary);
+  min-width: 34px;
+  text-align: right;
   font-variant-numeric: tabular-nums;
 }
 

@@ -723,11 +723,21 @@ const App = {
     if (qsBionicToggle) {
       qsBionicToggle.checked = isBionic;
     }
+    if (window.Reader && window.Reader.applyBionicSettings) {
+      window.Reader.applyBionicSettings();
+    }
+    const qsBionicSliderRow = document.getElementById('quickBionicSliderRow');
+    if (qsBionicSliderRow) {
+      qsBionicSliderRow.style.opacity = isBionic ? '1' : '0.65';
+    }
 
-    // Update speed chips in quick sheet
+    // Update speed slider and chips in quick sheet
     const curSpeed = (typeof TTSEngine !== 'undefined') ? TTSEngine.rate : 1.0;
+    const speedText = `${(curSpeed % 1 === 0 ? curSpeed.toFixed(1) : curSpeed)}x`;
     const qsSpeedVal = document.getElementById('quickSheetSpeedVal');
-    if (qsSpeedVal) qsSpeedVal.textContent = `${curSpeed}x`;
+    if (qsSpeedVal) qsSpeedVal.textContent = speedText;
+    const qsSpeedSlider = document.getElementById('quickSheetSpeedSlider');
+    if (qsSpeedSlider) qsSpeedSlider.value = curSpeed;
     document.querySelectorAll('.quick-sheet-speed-chip').forEach(chip => {
       const s = parseFloat(chip.getAttribute('data-speed'));
       chip.classList.toggle('selected', Math.abs(s - curSpeed) < 0.05);
@@ -985,6 +995,7 @@ const App = {
     }
 
     const qsBionicBar = document.getElementById('quickSheetBionicBar');
+    const qsBionicHeader = document.getElementById('quickBionicHeader');
     const qsBionicBtn = document.getElementById('quickSheetBionicBtn');
     const toggleQuickBionic = (e) => {
       if (e) e.stopPropagation();
@@ -995,8 +1006,32 @@ const App = {
     if (qsBionicBtn) {
       qsBionicBtn.addEventListener('click', toggleQuickBionic);
     }
-    if (qsBionicBar) {
+    if (qsBionicHeader) {
+      qsBionicHeader.addEventListener('click', toggleQuickBionic);
+    } else if (qsBionicBar) {
       qsBionicBar.addEventListener('click', toggleQuickBionic);
+    }
+
+    const bionicSliderRow = document.getElementById('quickBionicSliderRow');
+    if (bionicSliderRow) {
+      bionicSliderRow.addEventListener('click', (e) => e.stopPropagation());
+    }
+
+    const bionicSlider = document.getElementById('quickSheetBionicSlider');
+    if (bionicSlider) {
+      bionicSlider.addEventListener('click', (e) => e.stopPropagation());
+      bionicSlider.addEventListener('input', (e) => {
+        e.stopPropagation();
+        if (window.Reader && window.Reader.setBionicFixationSize) {
+          window.Reader.setBionicFixationSize(e.target.value);
+        }
+      });
+      bionicSlider.addEventListener('change', (e) => {
+        e.stopPropagation();
+        if (window.Reader && window.Reader.setBionicFixationSize) {
+          window.Reader.setBionicFixationSize(e.target.value);
+        }
+      });
     }
 
     const qsStepper = document.getElementById('quickSheetBionicSizeStepper');
@@ -1009,7 +1044,7 @@ const App = {
       qsBionicDown.addEventListener('click', (e) => {
         e.stopPropagation();
         if (window.Reader && window.Reader.stepBionicFixationSize) {
-          window.Reader.stepBionicFixationSize(-0.1);
+          window.Reader.stepBionicFixationSize(-0.05);
         }
       });
     }
@@ -1019,7 +1054,7 @@ const App = {
       qsBionicUp.addEventListener('click', (e) => {
         e.stopPropagation();
         if (window.Reader && window.Reader.stepBionicFixationSize) {
-          window.Reader.stepBionicFixationSize(0.1);
+          window.Reader.stepBionicFixationSize(0.05);
         }
       });
     }
@@ -1029,6 +1064,21 @@ const App = {
       qsBionicToggle.addEventListener('change', (e) => {
         if (window.Reader && window.Reader.toggleBionicReading) {
           window.Reader.toggleBionicReading(e.target.checked);
+        }
+      });
+    }
+
+    // Narration speed slider in quick sheet
+    const qsSpeedSlider = document.getElementById('quickSheetSpeedSlider');
+    if (qsSpeedSlider) {
+      qsSpeedSlider.addEventListener('input', (e) => {
+        if (typeof TTSEngine !== 'undefined' && TTSEngine.setRate) {
+          TTSEngine.setRate(e.target.value);
+        }
+      });
+      qsSpeedSlider.addEventListener('change', (e) => {
+        if (typeof TTSEngine !== 'undefined' && TTSEngine.setRate) {
+          TTSEngine.setRate(e.target.value);
         }
       });
     }

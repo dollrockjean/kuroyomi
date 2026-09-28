@@ -30,7 +30,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,300;0,400;0,700;1,300;1,400;1,700&family=Lora:ital,wght@0,400..700;1,400..700&family=Merriweather:ital,wght@0,300;0,400;0,700;1,300;1,400;1,700&family=Open+Sans:ital,wght@0,300..800;1,300..800&family=PT+Serif:ital,wght@0,400;0,700;1,400;1,700&family=Roboto:ital,wght@0,300;0,400;0,500;0,700;1,400;1,700&display=swap" rel="stylesheet">
 
   <!-- Styles -->
-  <link rel="stylesheet" href="/css/brutalist.css?v=34.0">
+  <link rel="stylesheet" href="/css/brutalist.css?v=35.0">
 
   <!-- Critical Quick Sheet Theme & Layout Styles (Anti-Cache Protection) -->
   <style id="quickSheetCriticalStyles">
@@ -119,11 +119,12 @@
       appearance: none; -webkit-appearance: none;
     }
     .quick-sheet-bionic-bar {
-      display: flex; align-items: center; justify-content: space-between; width: 100%; box-sizing: border-box;
-      background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 7px 12px;
-      cursor: pointer; transition: all 0.15s ease; min-height: 38px;
+      display: flex; flex-direction: column; gap: 7px; width: 100%; box-sizing: border-box;
+      background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 8px 12px;
+      cursor: pointer; transition: all 0.15s ease;
     }
     .quick-sheet-bionic-bar:hover { border-color: var(--accent); }
+    .quick-bionic-header { display: flex; align-items: center; justify-content: space-between; width: 100%; box-sizing: border-box; }
     .quick-bionic-info { display: flex; align-items: center; gap: 8px; }
     .quick-bionic-badge {
       font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
@@ -140,11 +141,23 @@
     .quick-bionic-indicator { width: 8px; height: 8px; border-radius: 50%; background: var(--border-color); transition: background 0.15s ease; }
     .quick-bionic-btn.active { background: var(--accent); color: #000; border-color: var(--accent); }
     .quick-bionic-btn.active .quick-bionic-indicator { background: #000; box-shadow: 0 0 6px rgba(0,0,0,0.4); }
+    .quick-bionic-slider-row {
+      display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box;
+      transition: opacity 0.15s ease;
+    }
+    .quick-bionic-slider-label {
+      font-size: 10px; font-weight: 700; text-transform: uppercase; color: var(--text-muted);
+      letter-spacing: 0.5px; min-width: 24px;
+    }
+    .quick-bionic-slider-row input[type="range"],
+    .quick-sheet-speed-row input[type="range"] {
+      flex: 1; min-width: 0; height: 6px; accent-color: var(--accent); cursor: pointer; margin: 0; padding: 0;
+    }
     .quick-bionic-controls { display: inline-flex; align-items: center; gap: 8px; }
     .quick-bionic-stepper {
       display: inline-flex; align-items: center; gap: 3px;
       background: var(--bg-surface); border: 1px solid var(--border-color);
-      border-radius: 16px; padding: 2px 6px;
+      border-radius: 16px; padding: 2px 4px;
     }
     .quick-bionic-step-btn {
       background: none; border: none; color: var(--text-primary);
@@ -152,19 +165,23 @@
       line-height: 1; border-radius: 4px;
     }
     .quick-bionic-step-btn:hover { background: var(--bg-hover); color: var(--accent); }
-    .quick-bionic-step-val { font-size: 11px; font-weight: 700; color: var(--text-secondary); min-width: 28px; text-align: center; font-variant-numeric: tabular-nums; }
+    .quick-bionic-step-val { font-size: 11px; font-weight: 700; color: var(--text-primary); min-width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
     .bionic-fixation {
       font-weight: var(--bionic-fixation-weight, 850) !important;
       font-size: var(--bionic-fixation-scale, 1.2em);
       font-family: inherit !important;
       display: inline;
       color: var(--text-primary);
+      line-height: 1;
+      vertical-align: baseline;
     }
     em .bionic-fixation, i .bionic-fixation, cite .bionic-fixation, dfn .bionic-fixation, .italic .bionic-fixation, [style*="italic"] .bionic-fixation {
       font-style: italic !important;
       font-weight: var(--bionic-fixation-weight, 850) !important;
       font-size: var(--bionic-fixation-scale, 1.2em);
       font-family: inherit !important;
+      line-height: 1;
+      vertical-align: baseline;
     }
   </style>
 </head>
@@ -602,25 +619,31 @@
 
       <!-- 2.5 Bionic Reading Mode Bar (Prominent in Middle Menu) -->
       <div class="quick-sheet-bionic-bar" id="quickSheetBionicBar">
-        <div class="quick-bionic-info">
-          <span class="quick-bionic-badge">Text Mode</span>
-          <span class="quick-bionic-title">Bionic Reading</span>
-        </div>
-        <div class="quick-bionic-controls">
-          <div class="quick-bionic-stepper" id="quickSheetBionicSizeStepper" title="Adjust Fixation Size">
-            <button class="quick-bionic-step-btn" id="qsBionicSizeDown" type="button" aria-label="Decrease Fixation Size">-</button>
-            <span class="quick-bionic-step-val" id="qsBionicSizeVal">1.2x</span>
-            <button class="quick-bionic-step-btn" id="qsBionicSizeUp" type="button" aria-label="Increase Fixation Size">+</button>
+        <div class="quick-bionic-header" id="quickBionicHeader">
+          <div class="quick-bionic-info">
+            <span class="quick-bionic-badge">Text Mode</span>
+            <span class="quick-bionic-title">Bionic Reading</span>
           </div>
           <button class="quick-bionic-btn" id="quickSheetBionicBtn" type="button" aria-pressed="false">
             <span class="quick-bionic-indicator"></span>
             <span class="quick-bionic-status" id="quickSheetBionicStatus">OFF</span>
           </button>
         </div>
+        <div class="quick-bionic-slider-row" id="quickBionicSliderRow">
+          <span class="quick-bionic-slider-label">Size</span>
+          <div class="quick-bionic-stepper" id="quickSheetBionicSizeStepper">
+            <button class="quick-bionic-step-btn" id="qsBionicSizeDown" type="button" aria-label="Decrease Fixation Size">-</button>
+          </div>
+          <input type="range" id="quickSheetBionicSlider" class="range-slider" min="1.0" max="2.0" step="0.05" value="1.2" style="flex: 1; min-width: 0;" />
+          <div class="quick-bionic-stepper">
+            <button class="quick-bionic-step-btn" id="qsBionicSizeUp" type="button" aria-label="Increase Fixation Size">+</button>
+          </div>
+          <span class="quick-bionic-step-val" id="qsBionicSizeVal">1.2x</span>
+        </div>
         <input type="checkbox" id="quickSheetBionicToggle" style="display: none;" />
       </div>
 
-      <!-- 3. Narration Speed Chips Row (Only visible when Narration is active) -->
+      <!-- 3. Narration Speed Row (Only visible when Narration is active) -->
       <div class="quick-sheet-speed-row" id="quickSheetSpeedRow" style="display: none;">
         <div class="quick-sheet-speed-header">
           <div class="quick-sheet-speed-title">
@@ -632,7 +655,10 @@
           </div>
           <span class="quick-sheet-speed-val" id="quickSheetSpeedVal">1.0x</span>
         </div>
-        <div class="quick-sheet-speed-chips" id="quickSheetSpeedChips">
+        <div class="quick-sheet-speed-slider-wrap" style="display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box; margin-top: 4px;">
+          <input type="range" id="quickSheetSpeedSlider" class="range-slider" min="0.5" max="2.5" step="0.05" value="1.0" style="flex: 1; min-width: 0;" />
+        </div>
+        <div class="quick-sheet-speed-chips" id="quickSheetSpeedChips" style="display: none;">
           <button class="speed-chip quick-sheet-speed-chip" data-speed="0.8">0.8x</button>
           <button class="speed-chip quick-sheet-speed-chip selected" data-speed="1.0">1.0x</button>
           <button class="speed-chip quick-sheet-speed-chip" data-speed="1.2">1.2x</button>
@@ -913,8 +939,8 @@
           <div class="grid-choices">
             <button class="choice-btn bionic-size-choice-btn" data-bionic-size="1.0">Subtle (1.0x)</button>
             <button class="choice-btn bionic-size-choice-btn selected" data-bionic-size="1.2">Medium (1.2x)</button>
-            <button class="choice-btn bionic-size-choice-btn" data-bionic-size="1.4">Bold (1.4x)</button>
-            <button class="choice-btn bionic-size-choice-btn" data-bionic-size="1.6">Max (1.6x)</button>
+            <button class="choice-btn bionic-size-choice-btn" data-bionic-size="1.5">Bold (1.5x)</button>
+            <button class="choice-btn bionic-size-choice-btn" data-bionic-size="1.8">Max (1.8x)</button>
           </div>
         </div>
       </div>
@@ -1167,11 +1193,11 @@
   <input type="file" id="novelCoverInput" accept="image/*" style="display: none;" />
 
   <!-- Application Logic Modules -->
-  <script src="/js/storage.js?v=34.0"></script>
-  <script src="/js/sync.js?v=34.0"></script>
-  <script src="/js/autoscroll.js?v=34.0"></script>
-  <script src="/js/tts.js?v=34.0"></script>
-  <script src="/js/reader.js?v=34.0"></script>
-  <script src="/js/app.js?v=34.0"></script>
+  <script src="/js/storage.js?v=35.0"></script>
+  <script src="/js/sync.js?v=35.0"></script>
+  <script src="/js/autoscroll.js?v=35.0"></script>
+  <script src="/js/tts.js?v=35.0"></script>
+  <script src="/js/reader.js?v=35.0"></script>
+  <script src="/js/app.js?v=35.0"></script>
 </body>
 </html>

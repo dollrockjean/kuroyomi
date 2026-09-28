@@ -355,6 +355,7 @@ const TTSEngine = {
     };
     bindSpeedSlider('ttsRateSlider');
     bindSpeedSlider('audiobookModalSpeedSlider');
+    bindSpeedSlider('quickSheetSpeedSlider');
 
     // Wire pitch sliders (decoupled input for instant UI feedback + change for commit)
     const bindPitchSlider = (id) => {
@@ -642,7 +643,7 @@ const TTSEngine = {
       }
     }
 
-    const rateText = `${this.rate.toFixed(2).replace(/\.?0+$/, '')}x`;
+    const rateText = `${(this.rate % 1 === 0 ? this.rate.toFixed(1) : this.rate)}x`;
 
     const slider = document.getElementById('ttsRateSlider');
     if (slider && Math.abs(parseFloat(slider.value) - this.rate) > 0.01) slider.value = this.rate;
@@ -653,6 +654,9 @@ const TTSEngine = {
     if (modalSlider && Math.abs(parseFloat(modalSlider.value) - this.rate) > 0.01) modalSlider.value = this.rate;
     const modalRateVal = document.getElementById('audiobookModalSpeedVal');
     if (modalRateVal) modalRateVal.textContent = rateText;
+
+    const qsSlider = document.getElementById('quickSheetSpeedSlider');
+    if (qsSlider && Math.abs(parseFloat(qsSlider.value) - this.rate) > 0.01) qsSlider.value = this.rate;
 
     // Update speed chips UI across audiobook modal and middle quick sheet
     document.querySelectorAll('.speed-chip, .quick-sheet-speed-chip').forEach(chip => {

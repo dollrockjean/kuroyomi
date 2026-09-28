@@ -239,17 +239,23 @@ class TestUIImprovements(unittest.TestCase):
         self.assertIn("this.audioElement.playbackRate = this.rate", tts_js)
 
     def test_bionic_fixation_stepper_and_controls(self):
-        """Verify bionic fixation size stepper on quick sheet and options in preferences drawer."""
+        """Verify bionic fixation slider and 1.5x options on quick sheet and in preferences drawer."""
         index_path = os.path.join(server.PUBLIC_DIR, "index.html")
         with open(index_path, "r", encoding="utf-8") as f:
             html = f.read()
 
+        self.assertIn('id="quickSheetBionicBar"', html)
+        self.assertIn('id="quickBionicHeader"', html)
+        self.assertIn('id="quickBionicSliderRow"', html)
+        self.assertIn('id="quickSheetBionicSlider"', html)
+        self.assertIn('id="qsBionicSizeVal"', html)
         self.assertIn('id="quickSheetBionicSizeStepper"', html)
         self.assertIn('id="qsBionicSizeDown"', html)
-        self.assertIn('id="qsBionicSizeVal"', html)
         self.assertIn('id="qsBionicSizeUp"', html)
         self.assertIn('id="bionicFixationSizeGroup"', html)
         self.assertIn('bionic-size-choice-btn', html)
+        self.assertIn('data-bionic-size="1.5"', html)
+        self.assertIn('id="quickSheetSpeedSlider"', html)
 
         css_path = os.path.join(server.PUBLIC_DIR, "css", "brutalist.css")
         with open(css_path, "r", encoding="utf-8") as f:
@@ -257,8 +263,8 @@ class TestUIImprovements(unittest.TestCase):
 
         self.assertIn("--bionic-fixation-scale", css)
         self.assertIn("--bionic-fixation-weight", css)
-        self.assertIn(".quick-bionic-stepper", css)
-        self.assertIn(".quick-bionic-step-btn", css)
+        self.assertIn(".quick-bionic-slider-row", css)
+        self.assertIn(".quick-bionic-step-val", css)
 
         reader_js_path = os.path.join(server.PUBLIC_DIR, "js", "reader.js")
         with open(reader_js_path, "r", encoding="utf-8") as f:
@@ -267,14 +273,21 @@ class TestUIImprovements(unittest.TestCase):
         self.assertIn("applyBionicSettings", reader_js)
         self.assertIn("setBionicFixationSize", reader_js)
         self.assertIn("stepBionicFixationSize", reader_js)
+        self.assertIn("quickSheetBionicSlider", reader_js)
 
         app_js_path = os.path.join(server.PUBLIC_DIR, "js", "app.js")
         with open(app_js_path, "r", encoding="utf-8") as f:
             app_js = f.read()
 
-        self.assertIn("qsBionicSizeDown", app_js)
-        self.assertIn("qsBionicSizeUp", app_js)
+        self.assertIn("quickSheetBionicSlider", app_js)
+        self.assertIn("quickSheetSpeedSlider", app_js)
         self.assertIn("bionic-size-choice-btn", app_js)
+
+        # Check slider properties for 1.5x reachability and no overlap styles
+        self.assertIn('id="quickSheetBionicSlider" class="range-slider" min="1.0" max="2.0" step="0.05"', html)
+        self.assertIn('min-width: 0', css)
+        self.assertIn('line-height: 1', css)
+        self.assertIn('vertical-align: baseline', css)
 
     def test_progress_save_resilience_and_backward_navigation(self):
         """Verify progress saves handle missing volume_id, guest fallback, and bidirectional updates."""
@@ -345,22 +358,22 @@ class TestUIImprovements(unittest.TestCase):
         self.assertIn("record.extraMeta", sync_js)
 
     def test_service_worker_and_asset_version_bump(self):
-        """Verify service worker cache name and asset version query strings match v34."""
+        """Verify service worker cache name and asset version query strings match v35."""
         sw_path = os.path.join(server.PUBLIC_DIR, "sw.js")
         with open(sw_path, "r", encoding="utf-8") as f:
             sw_js = f.read()
 
-        self.assertIn("byob-v34", sw_js)
-        self.assertIn("v=34.0", sw_js)
+        self.assertIn("byob-v35", sw_js)
+        self.assertIn("v=35.0", sw_js)
 
         index_path = os.path.join(server.PUBLIC_DIR, "index.html")
         with open(index_path, "r", encoding="utf-8") as f:
             index_html = f.read()
 
-        self.assertIn("brutalist.css?v=34.0", index_html)
-        self.assertIn("app.js?v=34.0", index_html)
-        self.assertIn("reader.js?v=34.0", index_html)
-        self.assertIn("tts.js?v=34.0", index_html)
+        self.assertIn("brutalist.css?v=35.0", index_html)
+        self.assertIn("app.js?v=35.0", index_html)
+        self.assertIn("reader.js?v=35.0", index_html)
+        self.assertIn("tts.js?v=35.0", index_html)
 
 if __name__ == '__main__':
     unittest.main()
