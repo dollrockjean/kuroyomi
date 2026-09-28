@@ -23,6 +23,7 @@ window.ReaderSettings = {
   tts_voice: 'en-US-BrianNeural',
   tts_rate: 1.0,
   tts_pitch: 0,
+  bionic_reading: false,
   library_view_mode: 'tile',
   library_sort_by: 'last_read'
 };
@@ -350,34 +351,63 @@ const App = {
           const img = new Image();
           img.onload = async () => {
             try {
-              const maxW = 600;
+              // Scale to max 360x540 maintaining aspect ratio for ultra-lightweight storage (~25KB-35KB)
+              const maxW = 360;
+              const maxH = 540;
               let w = img.width;
               let h = img.height;
-              if (w > maxW) {
-                h = Math.round((h * maxW) / w);
-                w = maxW;
-              }
+              const ratio = Math.min(maxW / w, maxH / h, 1);
+              w = Math.round(w * ratio);
+              h = Math.round(h * ratio);
+
               const canvas = document.createElement('canvas');
               canvas.width = w;
               canvas.height = h;
               const ctx = canvas.getContext('2d');
               ctx.drawImage(img, 0, 0, w, h);
-              const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+              const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
+
+              const currentUid = (window.SyncService && SyncService.currentUserId) || (window.Storage && Storage.getUserId()) || 'guest';
+              const targetId = this.targetCoverNovelId;
 
               const res = await fetch('/api/novels/cover', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                  novel_id: this.targetCoverNovelId,
-                  user_id: SyncService.currentUserId,
+                  novel_id: targetId,
+                  user_id: currentUid,
                   cover_data: dataUrl
                 })
               });
               const resData = await res.json();
               this.hideLoading();
               if (resData.success) {
+                // Update in-memory novel item immediately
+                const novel = (this.novels || []).find(n => n.id === targetId);
+                if (novel) {
+                  novel.cover_data = dataUrl;
+                }
+                if (typeof IDB !== 'undefined') {
+                  try { await IDB.saveLibraryMirror(this.novels); } catch (_) {}
+                }
+
+                // Update rendered DOM cover thumbnails immediately
+                const domCovers = document.querySelectorAll(
+                  `.novel-card[data-id="${targetId}"] img, .novel-card-list[data-id="${targetId}"] img`
+                );
+                domCovers.forEach(imgEl => { imgEl.src = dataUrl; });
+
+                const resumeCover = document.getElementById('resumeCover');
+                if (resumeCover && this.lastReadNovelId === targetId) {
+                  resumeCover.src = dataUrl;
+                }
+
+                const modalCover = document.getElementById('novelSettingsModalCover');
+                if (modalCover) {
+                  modalCover.src = dataUrl;
+                }
+
                 this.showToast('Cover updated');
-                await this.loadLibrary();
               } else {
                 alert('Could not update cover: ' + (resData.error || 'Unknown error'));
               }
@@ -904,9 +934,26 @@ const App = {
         this.openMasterPanel('tabPrefs');
       });
     }
+
+    const qsBionicToggle = document.getElementById('quickSheetBionicToggle');
+    if (qsBionicToggle) {
+      qsBionicToggle.addEventListener('change', (e) => {
+        if (window.Reader && window.Reader.toggleBionicReading) {
+          window.Reader.toggleBionicReading(e.target.checked);
+        }
+      });
+    }
   },
 
   bindSettingsEvents() {
+    const panelBionicToggle = document.getElementById('panelBionicToggle');
+    if (panelBionicToggle) {
+      panelBionicToggle.addEventListener('change', (e) => {
+        if (window.Reader && window.Reader.toggleBionicReading) {
+          window.Reader.toggleBionicReading(e.target.checked);
+        }
+      });
+    }
     document.querySelectorAll('.theme-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         document.querySelectorAll('.theme-btn').forEach(b => b.classList.remove('selected'));
@@ -1107,6 +1154,16 @@ const App = {
       scrollSlider.value = scrollSpeed;
       const speedVal = document.getElementById('panelScrollSpeedVal');
       if (speedVal) speedVal.textContent = `${scrollSpeed} px/s`;
+    }
+
+    // 7b. Bionic Reading Checkboxes Sync
+    const qsBionicToggle = document.getElementById('quickSheetBionicToggle');
+    if (qsBionicToggle) {
+      qsBionicToggle.checked = !!cur.bionic_reading;
+    }
+    const panelBionicToggle = document.getElementById('panelBionicToggle');
+    if (panelBionicToggle) {
+      panelBionicToggle.checked = !!cur.bionic_reading;
     }
 
     // 8. Library View Mode (Tile / List)

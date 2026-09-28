@@ -595,38 +595,7 @@ const Reader = {
         titleEl.innerHTML = `<strong>${ch.novel_title || ''}</strong> · ${ch.title || ''}`;
       }
 
-      // Sanitize weird whitespace / non-breaking spaces on already-uploaded books
-      let cleanContentHtml = ch.content_html || '';
-      cleanContentHtml = cleanContentHtml
-        .replace(/(&nbsp;|&#160;|&#xa0;|\u00a0|[\u2000-\u200b\u3000])/g, ' ')
-        .replace(/\s+style=(["\'])[^"\']*\1/gi, '')
-        .replace(/([^\s>])\s{2,}([^\s<])/g, '$1 $2');
-
-      // Check if content already starts with the chapter title or heading
-      const tempDiv = document.createElement('div');
-      tempDiv.innerHTML = cleanContentHtml.slice(0, 800);
-      const firstHeading = tempDiv.querySelector('.reader-heading, h1, h2, h3, .reader-paragraph');
-      const firstText = firstHeading ? firstHeading.textContent.trim().toLowerCase() : '';
-      const cleanTitle = (ch.title || '').trim().toLowerCase();
-
-      const titleAlreadyInContent = firstText && (
-        firstText === cleanTitle ||
-        firstText.includes(cleanTitle) ||
-        cleanTitle.includes(firstText) ||
-        firstText.replace(/[^a-z0-9]/g, '') === cleanTitle.replace(/[^a-z0-9]/g, '')
-      );
-
-      const headingHtml = titleAlreadyInContent ? '' : `<h1 class="reader-heading">${ch.title}</h1>`;
-
-      // Render Content
-      const contentEl = document.getElementById('readerContent');
-      contentEl.innerHTML = `
-        <div class="chapter-separator-banner">
-          ${ch.volume_title || ch.novel_title || ''}
-        </div>
-        ${headingHtml}
-        ${cleanContentHtml}
-      `;
+      this.renderChapterHtml(ch);
 
       // Update Nav Buttons
       const prevBtn = document.getElementById('prevChapterBtn');
@@ -649,6 +618,20 @@ const Reader = {
       setupBtn(nextBtn, ch.next_chapter, false);
       setupBtn(footerPrevBtn, ch.prev_chapter, true);
       setupBtn(footerNextBtn, ch.next_chapter, false);
+
+      // Update Bottom Scroll / End Tip
+      const tipEl = document.getElementById('readerChapterEndTip');
+      const tipText = document.getElementById('readerChapterEndTipText');
+      const tipIcon = document.getElementById('tipIconDown');
+      if (tipEl && tipText) {
+        if (ch.next_chapter) {
+          tipText.textContent = 'Scroll down for next chapter';
+          if (tipIcon) tipIcon.style.display = 'inline-flex';
+        } else {
+          tipText.textContent = 'End of novel';
+          if (tipIcon) tipIcon.style.display = 'none';
+        }
+      }
 
       // Update mobile quick sheet title and navigation buttons
       const qsPrevBtn = document.getElementById('quickSheetPrevChBtn');
@@ -1026,6 +1009,118 @@ const Reader = {
       const text = it.innerText.toLowerCase();
       it.style.display = text.includes(q) ? 'flex' : 'none';
     });
+  },
+
+  renderChapterHtml(ch) {
+    if (!ch) return;
+    let cleanContentHtml = ch.content_html || '';
+    cleanContentHtml = cleanContentHtml
+      .replace(/(&nbsp;|&#160;|&#xa0;|\u00a0|[\u2000-\u200b\u3000])/g, ' ')
+      .replace(/\s+style=(["\'])[^"\']*\1/gi, '')
+      .replace(/([^\s>])\s{2,}([^\s<])/g, '$1 $2');
+
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = cleanContentHtml.slice(0, 800);
+    const firstHeading = tempDiv.querySelector('.reader-heading, h1, h2, h3, .reader-paragraph');
+    const firstText = firstHeading ? firstHeading.textContent.trim().toLowerCase() : '';
+    const cleanTitle = (ch.title || '').trim().toLowerCase();
+
+    const titleAlreadyInContent = firstText && (
+      firstText === cleanTitle ||
+      firstText.includes(cleanTitle) ||
+      cleanTitle.includes(firstText) ||
+      firstText.replace(/[^a-z0-9]/g, '') === cleanTitle.replace(/[^a-z0-9]/g, '')
+    );
+
+    const headingHtml = titleAlreadyInContent ? '' : `<h1 class="reader-heading">${ch.title}</h1>`;
+
+    const contentEl = document.getElementById('readerContent');
+    if (!contentEl) return;
+    contentEl.innerHTML = `
+      <div class="chapter-separator-banner">
+        ${ch.volume_title || ch.novel_title || ''}
+      </div>
+      ${headingHtml}
+      ${cleanContentHtml}
+    `;
+
+    if (window.ReaderSettings && window.ReaderSettings.bionic_reading) {
+      this.applyBionicToContent(contentEl);
+    }
+  },
+
+  applyBionicToContent(container) {
+    if (!container) return;
+    const walker = document.createTreeWalker(
+      container,
+      NodeFilter.SHOW_TEXT,
+      {
+        acceptNode(node) {
+          const parent = node.parentElement;
+          if (!parent) return NodeFilter.FILTER_REJECT;
+          const tag = parent.tagName.toLowerCase();
+          if (['script', 'style', 'code', 'pre', 'svg'].includes(tag)) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          if (parent.closest('.chapter-separator-banner, .overscroll-indicator, .reader-chapter-end-tip')) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          if (!node.nodeValue || !node.nodeValue.trim()) {
+            return NodeFilter.FILTER_SKIP;
+          }
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      }
+    );
+
+    const textNodes = [];
+    while (walker.nextNode()) {
+      textNodes.push(walker.currentNode);
+    }
+
+    for (const textNode of textNodes) {
+      const text = textNode.nodeValue;
+      const bionicHtml = text.replace(/([a-zA-Z0-9\u00C0-\u024F\u1E00-\u1EFF]+)/g, (word) => {
+        const len = word.length;
+        if (len === 1) {
+          return `<b class="bionic-fixation">${word}</b>`;
+        }
+        const fixLen = len <= 3 ? 1 : (len <= 6 ? 2 : Math.ceil(len * 0.45));
+        return `<b class="bionic-fixation">${word.slice(0, fixLen)}</b>${word.slice(fixLen)}`;
+      });
+
+      if (bionicHtml !== text) {
+        const span = document.createElement('span');
+        span.className = 'bionic-fragment';
+        span.innerHTML = bionicHtml;
+        textNode.parentNode.replaceChild(span, textNode);
+      }
+    }
+  },
+
+  toggleBionicReading(enabled) {
+    if (typeof enabled === 'boolean') {
+      window.ReaderSettings.bionic_reading = enabled;
+    } else {
+      window.ReaderSettings.bionic_reading = !window.ReaderSettings.bionic_reading;
+    }
+    if (window.Storage) {
+      window.Storage.saveSettings(window.ReaderSettings);
+    }
+
+    const qsToggle = document.getElementById('quickSheetBionicToggle');
+    if (qsToggle) qsToggle.checked = !!window.ReaderSettings.bionic_reading;
+    const panelToggle = document.getElementById('panelBionicToggle');
+    if (panelToggle) panelToggle.checked = !!window.ReaderSettings.bionic_reading;
+
+    if (this.currentChapter && document.getElementById('readerView').style.display !== 'none') {
+      const scrollPos = window.scrollY;
+      this.renderChapterHtml(this.currentChapter);
+      if (window.TTS && window.TTS.refreshParagraphs) {
+        window.TTS.refreshParagraphs();
+      }
+      window.scrollTo({ top: scrollPos, behavior: 'instant' });
+    }
   }
 };
 

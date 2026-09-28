@@ -82,6 +82,10 @@ const Storage = {
     localStorage.setItem(this.SETTINGS_KEY, JSON.stringify(settings));
   },
 
+  saveSettings(settings) {
+    this.setLocalSettings(settings);
+  },
+
   saveLocalProgress(novelId, progress, userId = null) {
     const uid = userId || this.getUserId() || 'guest';
     const payload = JSON.stringify({

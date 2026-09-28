@@ -1,17 +1,17 @@
-// BYoB Service Worker v30
+// BYoB Service Worker v31
 // High-performance offline caching with instant WebKit/Safari PWA launch
-const CACHE_NAME = 'byob-v30';
+const CACHE_NAME = 'byob-v31';
 
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
-  '/css/brutalist.css?v=30.0',
-  '/js/app.js?v=30.0',
-  '/js/reader.js?v=30.0',
-  '/js/tts.js?v=30.0',
-  '/js/storage.js?v=30.0',
-  '/js/sync.js?v=30.0',
-  '/js/autoscroll.js?v=30.0',
+  '/css/brutalist.css?v=31.0',
+  '/js/app.js?v=31.0',
+  '/js/reader.js?v=31.0',
+  '/js/tts.js?v=31.0',
+  '/js/storage.js?v=31.0',
+  '/js/sync.js?v=31.0',
+  '/js/autoscroll.js?v=31.0',
   '/manifest.json',
   '/icons/icon-192.png',
   '/icons/icon-512.png',

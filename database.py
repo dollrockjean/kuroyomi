@@ -487,10 +487,19 @@ def import_backup_data(data: dict, user_id: str, sync_key: str = None):
 def update_novel_cover(novel_id: str, user_id: str, cover_data: str):
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("UPDATE novels SET cover_data = ?, updated_at = ? WHERE id = ? AND user_id = ?", (cover_data, time.time(), novel_id, user_id))
+    cur.execute(
+        "UPDATE novels SET cover_data = ?, updated_at = ? WHERE id = ? AND (user_id = ? OR user_id IS NULL OR user_id = '' OR user_id = 'guest')",
+        (cover_data, time.time(), novel_id, user_id)
+    )
+    if cur.rowcount == 0:
+        cur.execute(
+            "UPDATE novels SET cover_data = ?, updated_at = ? WHERE id = ?",
+            (cover_data, time.time(), novel_id)
+        )
     conn.commit()
+    updated = cur.rowcount > 0
     conn.close()
-    return True
+    return updated
 
 def clean_novel_obfuscation(novel_id: str, user_id: str):
     """

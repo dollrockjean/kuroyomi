@@ -30,7 +30,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,300;0,400;0,700;1,300;1,400&family=Lora:ital,wght@0,400..700;1,400..700&family=Merriweather:ital,wght@0,300;0,400;0,700;1,300;1,400&family=Open+Sans:ital,wght@0,300..800;1,300..800&family=PT+Serif:ital,wght@0,400;0,700;1,400;1,700&family=Roboto:ital,wght@0,300;0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
 
   <!-- Styles -->
-  <link rel="stylesheet" href="/css/brutalist.css?v=30.0">
+  <link rel="stylesheet" href="/css/brutalist.css?v=31.0">
 
   <!-- Critical Quick Sheet Theme & Layout Styles (Anti-Cache Protection) -->
   <style id="quickSheetCriticalStyles">
@@ -257,6 +257,16 @@
           <!-- Chapter HTML rendered with paragraphs -->
         </div>
 
+        <!-- Chapter Bottom Tip -->
+        <div class="reader-chapter-end-tip" id="readerChapterEndTip" aria-live="polite">
+          <span class="tip-icon-down" id="tipIconDown">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </span>
+          <span class="tip-text" id="readerChapterEndTipText">Scroll down for next chapter</span>
+        </div>
+
         <div class="overscroll-indicator bottom-indicator" id="overscrollBottomIndicator">
           <svg class="overscroll-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
           <span class="overscroll-text" id="overscrollBottomText">Pull up for next chapter</span>
@@ -375,21 +385,21 @@
 
     <!-- Bottom Controls Area -->
     <div class="audiobook-full-footer">
-      <!-- Skips & Play/Pause (Custom Vector SVG Skips) -->
-      <div class="audiobook-transport-row">
-        <button class="audiobook-skip-btn" id="modalPrevChapterBtn" title="Previous Chapter">
+      <!-- Transport Control Bar -->
+      <div class="audiobook-transport-bar" id="audiobookTransportBar">
+        <button class="audiobook-bar-btn" id="modalPrevChapterBtn" title="Previous Chapter">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M11 6l-8.5 6 8.5 6V6zm8.5 0L11 12l8.5 6V6z"/></svg>
         </button>
-        <button class="audiobook-skip-btn" id="modalPrevParaBtn" title="Previous Paragraph">
+        <button class="audiobook-bar-btn" id="modalPrevParaBtn" title="Previous Paragraph">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M16 6l-10 6 10 6V6z"/></svg>
         </button>
-        <button class="audiobook-main-play-btn" id="modalPlayPauseBtn" title="Play / Pause">
-          <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+        <button class="audiobook-bar-btn audiobook-bar-play" id="modalPlayPauseBtn" title="Play / Pause">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
         </button>
-        <button class="audiobook-skip-btn" id="modalNextParaBtn" title="Next Paragraph">
+        <button class="audiobook-bar-btn" id="modalNextParaBtn" title="Next Paragraph">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 6l10 6-10 6V6z"/></svg>
         </button>
-        <button class="audiobook-skip-btn" id="modalNextChapterBtn" title="Next Chapter">
+        <button class="audiobook-bar-btn" id="modalNextChapterBtn" title="Next Chapter">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M4.5 18l8.5-6-8.5-6v12zm8.5 0l8.5-6-8.5-6v12z"/></svg>
         </button>
       </div>
@@ -625,7 +635,16 @@
         </div>
       </div>
 
-      <!-- 5. Quick Toggles Row (Margin & Theme Switch) -->
+      <!-- 5. Bionic Reading Quick Toggle -->
+      <div class="quick-sheet-bionic-row">
+        <label class="quick-sheet-bionic-label" for="quickSheetBionicToggle">
+          <span class="quick-bionic-title">Bionic Reading</span>
+          <span class="quick-bionic-sub">Guided word fixations</span>
+        </label>
+        <input type="checkbox" id="quickSheetBionicToggle" class="quick-sheet-checkbox" />
+      </div>
+
+      <!-- 6. Quick Toggles Row (Margin & Theme Switch) -->
       <div class="quick-sheet-footer-row">
         <button class="btn-brutal quick-sheet-footer-btn" id="quickSheetMarginsBtn">
           Margin: <span id="quickSheetMarginVal" style="font-weight: 700; margin-left: 4px;">Edge</span>
@@ -818,6 +837,17 @@
             <button class="choice-btn margin-btn selected" data-margin="edge">Edge to Edge (Default)</button>
             <button class="choice-btn margin-btn" data-margin="compact">Compact</button>
             <button class="choice-btn margin-btn" data-margin="comfortable">Relaxed</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Reading Mode</label>
+          <div class="toggle-control-row">
+            <label class="toggle-label" for="panelBionicToggle">
+              <span class="toggle-label-title">Bionic Reading</span>
+              <span class="toggle-subtext">Bold initial word fixations for faster reading</span>
+            </label>
+            <input type="checkbox" id="panelBionicToggle" class="settings-checkbox" />
           </div>
         </div>
       </div>
@@ -1070,11 +1100,11 @@
   <input type="file" id="novelCoverInput" accept="image/*" style="display: none;" />
 
   <!-- Application Logic Modules -->
-  <script src="/js/storage.js?v=30.0"></script>
-  <script src="/js/sync.js?v=30.0"></script>
-  <script src="/js/autoscroll.js?v=30.0"></script>
-  <script src="/js/tts.js?v=30.0"></script>
-  <script src="/js/reader.js?v=30.0"></script>
-  <script src="/js/app.js?v=30.0"></script>
+  <script src="/js/storage.js?v=31.0"></script>
+  <script src="/js/sync.js?v=31.0"></script>
+  <script src="/js/autoscroll.js?v=31.0"></script>
+  <script src="/js/tts.js?v=31.0"></script>
+  <script src="/js/reader.js?v=31.0"></script>
+  <script src="/js/app.js?v=31.0"></script>
 </body>
 </html>
