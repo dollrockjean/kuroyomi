@@ -552,7 +552,7 @@ const TTSEngine = {
     if (val3) val3.textContent = pStr;
   },
 
-  async getAudioBlobUrl(text, voiceId, rateVal, pitchVal, retries = 2) {
+  async getAudioBlobUrl(text, voiceId, rateVal, pitchVal, retries = 1) {
     const pVal = pitchVal !== undefined ? pitchVal : this.pitch;
     const cacheKey = `${voiceId}_${rateVal}_${pVal}_${text}`;
     if (this.blobCache.has(cacheKey)) {
@@ -569,7 +569,7 @@ const TTSEngine = {
       
       for (let attempt = 0; attempt <= retries; attempt++) {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 20000);
+        const timer = setTimeout(() => controller.abort(), 35000);
         try {
           const res = await fetch(url, { signal: controller.signal });
           clearTimeout(timer);
@@ -587,7 +587,7 @@ const TTSEngine = {
             this.pendingFetches.delete(cacheKey);
             throw err;
           }
-          await new Promise(r => setTimeout(r, 600));
+          await new Promise(r => setTimeout(r, 400));
         }
       }
     })();
@@ -833,7 +833,15 @@ const TTSEngine = {
 
     window.speechSynthesis.cancel();
 
-    const utterance = new SpeechSynthesisUtterance(text);
+    // Clean brackets, evolution arrows, double colons, and stat fractions for smooth device voice pronunciation
+    const cleanDeviceText = text
+      .replace(/<[^>]+>/g, '')
+      .replace(/>>+|—>|->|==>/g, ' — then — ')
+      .replace(/::+/g, ': ')
+      .replace(/[\[【《](.*?)[\]】》]/g, ' $1 ')
+      .replace(/\((\d+)\s*\/\s*(\d+)\)/g, '($1 of $2)');
+
+    const utterance = new SpeechSynthesisUtterance(cleanDeviceText);
     utterance.rate = Math.min(2.0, Math.max(0.5, this.rate));
     utterance.pitch = Math.max(0.5, Math.min(1.5, 1.0 + (this.pitch / 40.0)));
 
@@ -1027,11 +1035,11 @@ const TTSEngine = {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
 
-    // Silently save progress with accurate scroll percentage
+    // Silently save progress with accurate scroll percentage (immediate save on chapter start)
     if (window.Reader) {
       const docHeight = document.documentElement.scrollHeight - window.innerHeight;
       const scrollPct = docHeight > 0 ? Math.round((window.scrollY / docHeight) * 100) : 0;
-      window.Reader.saveCurrentProgress(index, scrollPct);
+      window.Reader.saveCurrentProgress(index, scrollPct, index === 0);
     }
 
     // Check if audio blob is already in memory cache
@@ -1117,9 +1125,10 @@ const TTSEngine = {
       this.prepareNextParagraph(index + 1);
     } catch (err) {
       if (loadingTimer) clearTimeout(loadingTimer);
+      this.isLoading = false;
+      this.updateAudioUI();
       if (this.playbackSessionId !== sessionId || !this.isPlaying || this.isPaused) return;
       console.warn('Cloud TTS synthesis failed, using device voice fallback for this paragraph:', err);
-      this.isLoading = false;
       this.setDeviceVoiceMode(true);
       this.updateAudiobookModalContent();
       this.speakWithDeviceVoice(textToSpeak, index);
@@ -1521,18 +1530,25 @@ const TTSEngine = {
     }
 
     if (spokenEl) {
-      spokenEl.innerHTML = `
-        <div class="audiobook-loading-wrap" id="audiobookLoadingPlaceholder">
-          <div class="audiobook-sound-bars">
-            <div class="audiobook-sound-bar"></div>
-            <div class="audiobook-sound-bar"></div>
-            <div class="audiobook-sound-bar"></div>
-            <div class="audiobook-sound-bar"></div>
-            <div class="audiobook-sound-bar"></div>
+      if (!spokenEl.querySelector('.tts-word')) {
+        this.updateAudiobookModalContent();
+      }
+      let loadingBar = document.getElementById('audiobookLoadingStatusIndicator');
+      if (!loadingBar) {
+        loadingBar = document.createElement('div');
+        loadingBar.id = 'audiobookLoadingStatusIndicator';
+        loadingBar.className = 'audiobook-loading-strip';
+        loadingBar.style.cssText = 'display: inline-flex; align-items: center; gap: 8px; margin-bottom: 12px; padding: 4px 10px; background: rgba(0,0,0,0.15); border-radius: 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.9;';
+        loadingBar.innerHTML = `
+          <div class="audiobook-sound-bars" style="height: 12px; display: inline-flex; align-items: center; gap: 2px;">
+            <div class="audiobook-sound-bar" style="width: 2px; height: 10px; background: var(--accent);"></div>
+            <div class="audiobook-sound-bar" style="width: 2px; height: 14px; background: var(--accent);"></div>
+            <div class="audiobook-sound-bar" style="width: 2px; height: 8px; background: var(--accent);"></div>
           </div>
-          <span class="audiobook-loading-label">Loading Voice Audio...</span>
-        </div>
-      `;
+          <span>Loading Voice...</span>
+        `;
+        spokenEl.insertBefore(loadingBar, spokenEl.firstChild);
+      }
     }
     this.updateCoverDisplays();
   },

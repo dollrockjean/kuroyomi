@@ -50,8 +50,14 @@ def normalize_text_for_narration(text: str) -> str:
         return ""
     # Strip any leaked HTML tags
     clean = re.sub(r"<[^>]+>", "", text)
+    # Convert evolution / transition arrows like >> or -> or ==> into natural spoken pauses
+    clean = re.sub(r">>+|—>|->|==>", " — evolving to — ", clean)
+    # Convert double colons into single colon
+    clean = re.sub(r"::+", ": ", clean)
     # Convert status/system brackets like [Level Up] or 【Warning】 into natural spoken clauses
     clean = re.sub(r"[\[【《](.*?)[\]】》]", r" \1 ", clean)
+    # Convert rank ratios like (15/15) or (5/5) into natural '15 of 15'
+    clean = re.sub(r"\((\d+)\s*/\s*(\d+)\)", r"(\1 of \2)", clean)
     # Normalize long ellipses (.... or ……) into a natural breath pause
     clean = re.sub(r"\.{3,}|…+", ", ... ", clean)
     # Convert em-dashes into spaced em-dashes for natural dialogue beats
@@ -141,7 +147,7 @@ def synthesize_speech(text, voice="en-US-BrianNeural", rate="+0%", pitch="+0Hz")
             _IN_FLIGHT_TTS[cache_key] = threading.Event()
 
     if wait_event is not None:
-        wait_event.wait(timeout=12.0)
+        wait_event.wait(timeout=25.0)
         if os.path.exists(cache_file) and os.path.getsize(cache_file) > 0:
             with open(cache_file, "rb") as f:
                 return f.read()
@@ -149,32 +155,45 @@ def synthesize_speech(text, voice="en-US-BrianNeural", rate="+0%", pitch="+0Hz")
 
     try:
         import edge_tts
-        async def _run(v, r, p):
-            comm = edge_tts.Communicate(clean_text, v, rate=r, pitch=p)
+
+        async def _synth_single(txt, v, r, p):
+            comm = edge_tts.Communicate(txt, v, rate=r, pitch=p)
             buf = io.BytesIO()
             async for chunk in comm.stream():
                 if chunk['type'] == 'audio':
                     buf.write(chunk['data'])
             return buf.getvalue()
 
+        async def _run(v, r, p):
+            # For long prose paragraphs (>400 chars), split at sentence boundaries and synthesize concurrently
+            if len(clean_text) > 400:
+                sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', clean_text) if s.strip()]
+                if len(sentences) >= 2:
+                    tasks = [_synth_single(s, v, r, p) for s in sentences]
+                    results = await asyncio.gather(*tasks)
+                    return b"".join(results)
+            return await _synth_single(clean_text, v, r, p)
+
+        timeout_sec = max(35.0, min(90.0, 15.0 + len(clean_text) * 0.08))
         with TTS_CONCURRENCY_SEMAPHORE:
-            data = asyncio.run(asyncio.wait_for(_run(voice, norm_rate, norm_pitch), timeout=12.0))
+            data = asyncio.run(asyncio.wait_for(_run(voice, norm_rate, norm_pitch), timeout=timeout_sec))
             if data and len(data) > 100:
                 with open(cache_file, "wb") as f:
                     f.write(data)
                 return data
     except Exception as e:
-        print(f"[TTS] Neural TTS synthesis error for voice='{voice}' rate='{norm_rate}' pitch='{norm_pitch}': {e}")
+        print(f"[TTS] Neural TTS synthesis error ({type(e).__name__}) for voice='{voice}' rate='{norm_rate}' pitch='{norm_pitch}': {e}")
         try:
             time.sleep(0.3)
             with TTS_CONCURRENCY_SEMAPHORE:
-                data = asyncio.run(asyncio.wait_for(_run(voice, "+0%", "+0Hz"), timeout=10.0))
+                timeout_sec = max(35.0, min(90.0, 15.0 + len(clean_text) * 0.08))
+                data = asyncio.run(asyncio.wait_for(_run(voice, "+0%", "+0Hz"), timeout=timeout_sec))
                 if data and len(data) > 100:
                     with open(cache_file, "wb") as f:
                         f.write(data)
                     return data
         except Exception as retry_err:
-            print(f"[TTS] Retry failed for voice='{voice}': {retry_err}")
+            print(f"[TTS] Retry failed ({type(retry_err).__name__}) for voice='{voice}': {retry_err}")
     finally:
         with _IN_FLIGHT_LOCK:
             ev = _IN_FLIGHT_TTS.pop(cache_key, None)

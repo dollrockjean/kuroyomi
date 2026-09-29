@@ -263,11 +263,14 @@ const SyncService = {
     }
   },
 
-  syncReadingProgress(novelId, volumeId, chapterId, paragraphIndex, scrollPercent, extraMeta = {}) {
+  syncReadingProgress(novelId, volumeId, chapterId, paragraphIndex, scrollPercent, extraMeta = {}, immediate = false) {
     if (!novelId || !chapterId) return;
 
     const activeUserId = this.currentUserId || (window.Storage && Storage.getUserId()) || 'guest';
     const activeVolumeId = volumeId || 'vol_default';
+
+    this._syncSeq = (this._syncSeq || 0) + 1;
+    const currentSeq = this._syncSeq;
 
     // 1. Immediately cache locally scoped to this user
     Storage.saveLocalProgress(novelId, {
@@ -279,6 +282,7 @@ const SyncService = {
     }, activeUserId);
 
     const progressRecord = {
+      seq: currentSeq,
       user_id: activeUserId,
       novel_id: novelId,
       volume_id: activeVolumeId,
@@ -295,14 +299,17 @@ const SyncService = {
       return;
     }
 
-    // 3. Debounce cloud sync (400ms for rapid responsiveness)
     if (this.syncTimeout) clearTimeout(this.syncTimeout);
     this.updateStatus('syncing', 'SAVING...');
     this.lastPendingProgress = progressRecord;
 
-    this.syncTimeout = setTimeout(() => {
+    if (immediate) {
       this.flushPendingSync();
-    }, 400);
+    } else {
+      this.syncTimeout = setTimeout(() => {
+        this.flushPendingSync();
+      }, 400);
+    }
   },
 
   flushPendingSync() {
@@ -315,6 +322,7 @@ const SyncService = {
     const uid = record.user_id || this.currentUserId || (window.Storage && Storage.getUserId()) || 'guest';
     record.user_id = uid;
     this.lastPendingProgress = null;
+    const reqSeq = record.seq || 0;
 
     try {
       fetch('/api/progress', {
@@ -333,14 +341,18 @@ const SyncService = {
         if (data && data.success) {
           this.updateStatus('synced', 'SAVED');
           if (data.updated_at) {
-            Storage.saveLocalProgress(record.novel_id, {
-              volumeId: record.volume_id || 'vol_default',
-              chapterId: record.chapter_id,
-              paragraphIndex: record.paragraph_index,
-              scrollPercent: record.scroll_percent,
-              ...(record.extraMeta || {}),
-              savedAt: Math.round(data.updated_at * 1000)
-            }, record.user_id);
+            // Guard against race conditions: only update local storage if user hasn't already moved to a different chapter
+            const currentLocal = Storage.getLocalProgress(record.novel_id, record.user_id);
+            if (!currentLocal || currentLocal.chapterId === record.chapter_id || (this._syncSeq && reqSeq >= this._syncSeq)) {
+              Storage.saveLocalProgress(record.novel_id, {
+                volumeId: record.volume_id || 'vol_default',
+                chapterId: record.chapter_id,
+                paragraphIndex: record.paragraph_index,
+                scrollPercent: record.scroll_percent,
+                ...(record.extraMeta || {}),
+                savedAt: Math.round(data.updated_at * 1000)
+              }, record.user_id);
+            }
           }
         }
       }).catch(e => {

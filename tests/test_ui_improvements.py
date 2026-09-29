@@ -358,22 +358,80 @@ class TestUIImprovements(unittest.TestCase):
         self.assertIn("record.extraMeta", sync_js)
 
     def test_service_worker_and_asset_version_bump(self):
-        """Verify service worker cache name and asset version query strings match v35."""
+        """Verify service worker cache name and asset version query strings match v36."""
         sw_path = os.path.join(server.PUBLIC_DIR, "sw.js")
         with open(sw_path, "r", encoding="utf-8") as f:
             sw_js = f.read()
 
-        self.assertIn("byob-v35", sw_js)
-        self.assertIn("v=35.0", sw_js)
+        self.assertIn("byob-v36", sw_js)
+        self.assertIn("v=36.0", sw_js)
 
         index_path = os.path.join(server.PUBLIC_DIR, "index.html")
         with open(index_path, "r", encoding="utf-8") as f:
             index_html = f.read()
 
-        self.assertIn("brutalist.css?v=35.0", index_html)
-        self.assertIn("app.js?v=35.0", index_html)
-        self.assertIn("reader.js?v=35.0", index_html)
-        self.assertIn("tts.js?v=35.0", index_html)
+        self.assertIn("brutalist.css?v=36.0", index_html)
+        self.assertIn("app.js?v=36.0", index_html)
+        self.assertIn("reader.js?v=36.0", index_html)
+        self.assertIn("tts.js?v=36.0", index_html)
+        self.assertIn("sync.js?v=36.0", index_html)
+
+    def test_user_paragraph_normalization_and_synthesis(self):
+        """Verify complex RPG paragraph with evolution arrows, ratios, and double colons is normalized and synthesized cleanly."""
+        user_text = (
+            "[Lich Lord of Abomination] (15/15):: Abilities- Summon Poison Totem(5/5), Summon Undead(5/5), "
+            "Noxious Outburst(5/5), and Dereliction of the Saintly Poison Lord(5/5) >> "
+            "[Abhorred Lich Emperor](45/45) :: Additional Abilities- Undead Legion(5/5), Will of the Undead Emperor(5/5), "
+            "and Delay Death(5/5). Two Skill Trees for evolution are possible once sufficient points and a base requirement "
+            "of two equivalent level sacrificial skills are reached: >> [Arch Lich Ra'Zan] :: A dreadful calamity steeped in death. "
+            "Enhances all death aspect abilities, as well as gaining the capability of summoning Supreme Tier Undead. >> "
+            "[Pernicious Death Lord] :: A being with utmost proficiency in the art of poison and death, gaining wide area of attack abilities that decimate its foes."
+        )
+
+        cleaned = server.normalize_text_for_narration(user_text)
+        self.assertNotIn(">>", cleaned)
+        self.assertNotIn("::", cleaned)
+        self.assertNotIn("[Lich", cleaned)
+        self.assertNotIn("(15/15)", cleaned)
+        self.assertIn("15 of 15", cleaned)
+        self.assertIn("5 of 5", cleaned)
+        self.assertIn("evolving to", cleaned)
+
+        # Synthesize speech
+        audio = server.synthesize_speech(user_text, voice="en-US-BrianNeural")
+        self.assertIsNotNone(audio)
+        self.assertGreater(len(audio), 50000)
+
+    def test_reading_progress_continuity_and_regression_protection(self):
+        """Verify openNovel, checkRemoteSync, and sync.js prevent backward progress regression."""
+        reader_js_path = os.path.join(server.PUBLIC_DIR, "js", "reader.js")
+        with open(reader_js_path, "r", encoding="utf-8") as f:
+            reader_js = f.read()
+
+        # Verify chapter comparison protection in openNovel
+        self.assertIn("localChIdx > cloudChIdx", reader_js)
+        self.assertIn("cloudChIdx > localChIdx", reader_js)
+        self.assertIn("chooseSource = (cloudTime > localTime + 60000) ? 'cloud' : 'local'", reader_js)
+
+        # Verify chapter index regression protection in checkRemoteSync
+        self.assertIn("curChIdx > remoteChIdx", reader_js)
+        self.assertIn("this.saveCurrentProgress(null, null, true)", reader_js)
+
+        # Verify immediate sync on chapter load
+        self.assertIn("this.saveCurrentProgress(0, 0, true)", reader_js)
+
+        # Verify beforeunload listener
+        self.assertIn("beforeunload", reader_js)
+
+        # Verify sync.js immediate flag and race sequence guard
+        sync_js_path = os.path.join(server.PUBLIC_DIR, "js", "sync.js")
+        with open(sync_js_path, "r", encoding="utf-8") as f:
+            sync_js = f.read()
+
+        self.assertIn("immediate = false", sync_js)
+        self.assertIn("this._syncSeq", sync_js)
+        self.assertIn("currentLocal.chapterId === record.chapter_id", sync_js)
 
 if __name__ == '__main__':
     unittest.main()
+

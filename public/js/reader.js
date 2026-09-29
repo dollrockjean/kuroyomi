@@ -35,6 +35,9 @@ const Reader = {
     window.addEventListener('pagehide', () => {
       this.flushPendingProgress();
     });
+    window.addEventListener('beforeunload', () => {
+      this.flushPendingProgress();
+    });
   },
 
   bindDesktopHover() {
@@ -444,17 +447,28 @@ const Reader = {
           const localTime = local.savedAt || 0;
           const cloudTime = (data.progress.updated_at || 0) * 1000;
 
-          // If one is clearly newer (by more than 2s), newer position wins (forward OR backward)
-          if (localTime > 0 && cloudTime > 0 && Math.abs(localTime - cloudTime) > 2000) {
-            chooseSource = (localTime > cloudTime) ? 'local' : 'cloud';
-          } else if (localTime > 0 && cloudTime === 0) {
-            chooseSource = 'local';
-          } else if (cloudTime > 0 && localTime === 0) {
-            chooseSource = 'cloud';
+          if (localChIdx !== -1 && cloudChIdx !== -1) {
+            if (localChIdx > cloudChIdx) {
+              // Local device is on a chapter ahead in the novel: local wins unless cloud is much newer (>60s)
+              chooseSource = (cloudTime > localTime + 60000) ? 'cloud' : 'local';
+            } else if (cloudChIdx > localChIdx) {
+              // Cloud is on a chapter ahead in the novel: cloud wins unless local was an intentional backward jump (>60s)
+              chooseSource = (localTime > cloudTime + 60000) ? 'local' : 'cloud';
+            } else {
+              // Same chapter: newer timestamp wins (with slight local device preference if within 2s)
+              if (Math.abs(localTime - cloudTime) <= 2000) {
+                chooseSource = (localTime >= cloudTime) ? 'local' : 'cloud';
+              } else {
+                chooseSource = (localTime > cloudTime) ? 'local' : 'cloud';
+              }
+            }
           } else {
-            // Timestamps are close or identical (within 2s): always honor local device progress
-            // because the user's active touch/interaction occurred directly on this device
-            chooseSource = (localTime >= cloudTime) ? 'local' : 'cloud';
+            // Fallback timestamp comparison if indices cannot be resolved
+            if (localTime > 0 && cloudTime > 0 && Math.abs(localTime - cloudTime) > 2000) {
+              chooseSource = (localTime > cloudTime) ? 'local' : 'cloud';
+            } else {
+              chooseSource = (localTime >= cloudTime) ? 'local' : 'cloud';
+            }
           }
         } else if (hasLocal) {
           chooseSource = 'local';
@@ -467,7 +481,7 @@ const Reader = {
           targetPid = local.paragraphIndex || 0;
           targetPercent = local.scrollPercent || 0;
 
-          // Ensure cloud is in sync with this device position
+          // Ensure cloud is in sync with this device position immediately
           SyncService.syncReadingProgress(
             novelId,
             local.volumeId || this.currentVolumeId || 'vol_default',
@@ -478,7 +492,8 @@ const Reader = {
               chapterTitle: local.chapterTitle || '',
               globalIndex: local.globalIndex || 1,
               overallPercent: local.overallPercent !== undefined ? local.overallPercent : 0
-            }
+            },
+            true
           );
         } else if (chooseSource === 'cloud') {
           targetChapterId = data.progress.chapter_id;
@@ -718,6 +733,7 @@ const Reader = {
             this.isRestoringScroll = false;
             this.targetParagraphIndex = 0;
             this.targetScrollPercent = 0;
+            this.saveCurrentProgress(targetPid, targetPct, false);
           }, 350);
         };
 
@@ -725,10 +741,8 @@ const Reader = {
           setTimeout(performScroll, 60);
         });
       } else {
-        if (!isTtsAdvance) {
-          window.scrollTo(0, 0);
-          this.saveCurrentProgress(0, 0);
-        }
+        window.scrollTo(0, 0);
+        this.saveCurrentProgress(0, 0, true);
       }
 
       this.renderTOC();
@@ -755,7 +769,7 @@ const Reader = {
     }
   },
 
-  saveCurrentProgress(pid = null, scrollPercent = null) {
+  saveCurrentProgress(pid = null, scrollPercent = null, immediate = false) {
     if (!this.currentNovel || !this.currentChapter) return;
     if (this.isRestoringScroll) return;
 
@@ -791,7 +805,8 @@ const Reader = {
         globalIndex: (this.currentChapter && this.currentChapter.global_index) || (chIdx + 1),
         totalChapters: totalCh,
         overallPercent: Math.round(overallPercent * 10) / 10
-      }
+      },
+      immediate
     );
   },
 
@@ -799,7 +814,7 @@ const Reader = {
     if (this.scrollDebounce) {
       clearTimeout(this.scrollDebounce);
       this.scrollDebounce = null;
-      this.saveCurrentProgress();
+      this.saveCurrentProgress(null, null, true);
     }
     if (window.SyncService && typeof window.SyncService.flushPendingSync === 'function') {
       window.SyncService.flushPendingSync();
@@ -830,10 +845,21 @@ const Reader = {
       const local = Storage.getLocalProgress(this.currentNovel.id, userId);
       const localTime = (local && local.savedAt) || 0;
 
-      // If remote position was updated more recently on another device (by more than 4 seconds)
-      if (remoteTime > (localTime + 4000)) {
-        if (remote.chapter_id !== this.currentChapter.id) {
-          // Cancel pending debounce to prevent local scroll from overwriting remote progress
+      if (remote.chapter_id !== this.currentChapter.id) {
+        const curChIdx = (this.chapterList || []).findIndex(c => c.id === this.currentChapter.id);
+        const remoteChIdx = (this.chapterList || []).findIndex(c => c.id === remote.chapter_id);
+
+        if (curChIdx !== -1 && remoteChIdx !== -1) {
+          // If local device is on a chapter further ahead in the novel, NEVER regress backward!
+          if (curChIdx > remoteChIdx) {
+            // Push current local position forward to cloud so remote catches up
+            this.saveCurrentProgress(null, null, true);
+            return;
+          }
+        }
+
+        // Only switch chapter if remote is genuinely newer (by more than 4 seconds)
+        if (remoteTime > (localTime + 4000)) {
           if (this.scrollDebounce) {
             clearTimeout(this.scrollDebounce);
             this.scrollDebounce = null;
