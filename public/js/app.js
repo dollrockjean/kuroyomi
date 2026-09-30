@@ -1726,7 +1726,7 @@ const App = {
         if (grid && !grid.querySelector('.library-skeleton-loader')) {
           grid.innerHTML = `
             <div class="library-skeleton-loader" style="grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 48px 20px; gap: 14px; color: var(--text-secondary);">
-              <div class="spinner-brutal" style="width: 28px; height: 28px; border: 3px solid var(--border-color); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
+              <div class="spinner-brutal"></div>
               <span style="font-size: 13px; font-weight: 600; letter-spacing: 0.5px;">Loading your library...</span>
             </div>
           `;

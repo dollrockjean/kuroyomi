@@ -358,23 +358,23 @@ class TestUIImprovements(unittest.TestCase):
         self.assertIn("record.extraMeta", sync_js)
 
     def test_service_worker_and_asset_version_bump(self):
-        """Verify service worker cache name and asset version query strings match v36."""
+        """Verify service worker cache name and asset version query strings match v37."""
         sw_path = os.path.join(server.PUBLIC_DIR, "sw.js")
         with open(sw_path, "r", encoding="utf-8") as f:
             sw_js = f.read()
 
-        self.assertIn("byob-v36", sw_js)
-        self.assertIn("v=36.0", sw_js)
+        self.assertIn("byob-v37", sw_js)
+        self.assertIn("v=37.0", sw_js)
 
         index_path = os.path.join(server.PUBLIC_DIR, "index.html")
         with open(index_path, "r", encoding="utf-8") as f:
             index_html = f.read()
 
-        self.assertIn("brutalist.css?v=36.0", index_html)
-        self.assertIn("app.js?v=36.0", index_html)
-        self.assertIn("reader.js?v=36.0", index_html)
-        self.assertIn("tts.js?v=36.0", index_html)
-        self.assertIn("sync.js?v=36.0", index_html)
+        self.assertIn("brutalist.css?v=37.0", index_html)
+        self.assertIn("app.js?v=37.0", index_html)
+        self.assertIn("reader.js?v=37.0", index_html)
+        self.assertIn("tts.js?v=37.0", index_html)
+        self.assertIn("sync.js?v=37.0", index_html)
 
     def test_user_paragraph_normalization_and_synthesis(self):
         """Verify complex RPG paragraph with evolution arrows, ratios, and double colons is normalized and synthesized cleanly."""
@@ -431,6 +431,54 @@ class TestUIImprovements(unittest.TestCase):
         self.assertIn("immediate = false", sync_js)
         self.assertIn("this._syncSeq", sync_js)
         self.assertIn("currentLocal.chapterId === record.chapter_id", sync_js)
+
+    def test_animated_spinner_and_library_loader(self):
+        """Verify @keyframes spin exists and library loader circle is animated."""
+        css_path = os.path.join(server.PUBLIC_DIR, "css", "brutalist.css")
+        with open(css_path, "r", encoding="utf-8") as f:
+            css = f.read()
+
+        self.assertIn("@keyframes spin", css)
+        self.assertIn("transform: rotate(360deg)", css)
+        self.assertIn(".spinner-brutal", css)
+        self.assertIn("animation: spin 0.8s linear infinite", css)
+
+        index_path = os.path.join(server.PUBLIC_DIR, "index.html")
+        with open(index_path, "r", encoding="utf-8") as f:
+            index_html = f.read()
+
+        self.assertIn("@keyframes spin", index_html)
+        self.assertIn(".spinner-brutal", index_html)
+        self.assertIn('id="libraryInitLoader"', index_html)
+        self.assertIn('class="spinner-brutal"', index_html)
+
+        app_js_path = os.path.join(server.PUBLIC_DIR, "js", "app.js")
+        with open(app_js_path, "r", encoding="utf-8") as f:
+            app_js = f.read()
+
+        self.assertIn('library-skeleton-loader', app_js)
+        self.assertIn('class="spinner-brutal"', app_js)
+
+    def test_audiobook_voice_loading_ui_isolated_and_dismisses(self):
+        """Verify audiobook loading voice is rendered alone on screen and cleanly leaves on completion."""
+        tts_js_path = os.path.join(server.PUBLIC_DIR, "js", "tts.js")
+        with open(tts_js_path, "r", encoding="utf-8") as f:
+            tts_js = f.read()
+
+        # Loading screen should replace spokenEl innerHTML with only the loading placeholder
+        self.assertIn("audiobook-loading-wrap", tts_js)
+        self.assertIn("audiobook-sound-bars", tts_js)
+        self.assertIn("Loading Voice...", tts_js)
+
+        # Ensure obsolete inline strip badge that sat adjacent to text is completely removed
+        self.assertNotIn("audiobookLoadingStatusIndicator", tts_js)
+        self.assertNotIn("insertBefore(loadingBar", tts_js)
+
+        # Ensure updateAudiobookModalContent() is called upon load completion to dismiss loading screen
+        self.assertIn("this.updateAudiobookModalContent();\n\n      await this.audioElement.play()", tts_js)
+
+        # Ensure openAudiobookModal respects loading state
+        self.assertIn("if (this.isLoading) {\n        this.showAudiobookLoading();\n      } else {\n        this.updateAudiobookModalContent();", tts_js)
 
 if __name__ == '__main__':
     unittest.main()

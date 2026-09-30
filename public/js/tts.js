@@ -942,6 +942,7 @@ const TTSEngine = {
     this.playbackSessionId = (this.playbackSessionId || 0) + 1;
     this.isPlaying = false;
     this.isPaused = false;
+    this.isLoading = false;
     this.stopKeepAlive();
     this.audioElement.pause();
     this.audioElement.loop = false;
@@ -1051,21 +1052,14 @@ const TTSEngine = {
     this.updateAudioUI();
     this.updateMediaSessionMetadata();
 
-    let loadingTimer = null;
     if (!isCached && navigator.onLine) {
-      // 450ms debounce before showing soundbars to prevent flicker on rapid network hops
-      loadingTimer = setTimeout(() => {
-        if (this.isLoading && this.currentIndex === index && this.playbackSessionId === sessionId) {
-          this.showAudiobookLoading();
-        }
-      }, 450);
+      this.showAudiobookLoading();
     } else {
       this.updateAudiobookModalContent();
     }
 
     // If device is offline
     if (!navigator.onLine) {
-      if (loadingTimer) clearTimeout(loadingTimer);
       this.audioElement.pause();
       try {
         this.secondaryAudioElement.pause();
@@ -1101,8 +1095,6 @@ const TTSEngine = {
         this.audioElement.playbackRate = this.rate;
       }
 
-      if (loadingTimer) clearTimeout(loadingTimer);
-
       // If user skipped or paused while fetching was in flight, discard cleanly
       if (this.playbackSessionId !== sessionId || !this.isPlaying || this.isPaused) return;
 
@@ -1112,6 +1104,9 @@ const TTSEngine = {
       if (this.isUsingDeviceVoice) {
         this.setDeviceVoiceMode(false);
       }
+
+      // Immediately dismiss loading voice screen and render active paragraph words
+      this.updateAudiobookModalContent();
 
       await this.audioElement.play();
       try {
@@ -1124,7 +1119,6 @@ const TTSEngine = {
       this.prefetchAhead(index, 6);
       this.prepareNextParagraph(index + 1);
     } catch (err) {
-      if (loadingTimer) clearTimeout(loadingTimer);
       this.isLoading = false;
       this.updateAudioUI();
       if (this.playbackSessionId !== sessionId || !this.isPlaying || this.isPaused) return;
@@ -1530,25 +1524,18 @@ const TTSEngine = {
     }
 
     if (spokenEl) {
-      if (!spokenEl.querySelector('.tts-word')) {
-        this.updateAudiobookModalContent();
-      }
-      let loadingBar = document.getElementById('audiobookLoadingStatusIndicator');
-      if (!loadingBar) {
-        loadingBar = document.createElement('div');
-        loadingBar.id = 'audiobookLoadingStatusIndicator';
-        loadingBar.className = 'audiobook-loading-strip';
-        loadingBar.style.cssText = 'display: inline-flex; align-items: center; gap: 8px; margin-bottom: 12px; padding: 4px 10px; background: rgba(0,0,0,0.15); border-radius: 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.9;';
-        loadingBar.innerHTML = `
-          <div class="audiobook-sound-bars" style="height: 12px; display: inline-flex; align-items: center; gap: 2px;">
-            <div class="audiobook-sound-bar" style="width: 2px; height: 10px; background: var(--accent);"></div>
-            <div class="audiobook-sound-bar" style="width: 2px; height: 14px; background: var(--accent);"></div>
-            <div class="audiobook-sound-bar" style="width: 2px; height: 8px; background: var(--accent);"></div>
+      spokenEl.innerHTML = `
+        <div class="audiobook-loading-wrap" id="audiobookLoadingPlaceholder">
+          <div class="audiobook-sound-bars">
+            <span class="audiobook-sound-bar"></span>
+            <span class="audiobook-sound-bar"></span>
+            <span class="audiobook-sound-bar"></span>
+            <span class="audiobook-sound-bar"></span>
+            <span class="audiobook-sound-bar"></span>
           </div>
-          <span>Loading Voice...</span>
-        `;
-        spokenEl.insertBefore(loadingBar, spokenEl.firstChild);
-      }
+          <div class="audiobook-loading-label">Loading Voice...</div>
+        </div>
+      `;
     }
     this.updateCoverDisplays();
   },
@@ -1558,8 +1545,9 @@ const TTSEngine = {
     if (modal) {
       modal.style.display = 'flex';
       this.updatePitchUI();
-      const spokenEl = document.getElementById('audiobookSpokenText');
-      if (!spokenEl || !spokenEl.querySelector('.audiobook-loading-wrap')) {
+      if (this.isLoading) {
+        this.showAudiobookLoading();
+      } else {
         this.updateAudiobookModalContent();
       }
       this.updateAudioUI();
