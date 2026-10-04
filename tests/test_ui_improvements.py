@@ -358,23 +358,23 @@ class TestUIImprovements(unittest.TestCase):
         self.assertIn("record.extraMeta", sync_js)
 
     def test_service_worker_and_asset_version_bump(self):
-        """Verify service worker cache name and asset version query strings match v37."""
+        """Verify service worker cache name and asset version query strings match v38."""
         sw_path = os.path.join(server.PUBLIC_DIR, "sw.js")
         with open(sw_path, "r", encoding="utf-8") as f:
             sw_js = f.read()
 
-        self.assertIn("byob-v37", sw_js)
-        self.assertIn("v=37.0", sw_js)
+        self.assertIn("byob-v38", sw_js)
+        self.assertIn("v=38.0", sw_js)
 
         index_path = os.path.join(server.PUBLIC_DIR, "index.html")
         with open(index_path, "r", encoding="utf-8") as f:
             index_html = f.read()
 
-        self.assertIn("brutalist.css?v=37.0", index_html)
-        self.assertIn("app.js?v=37.0", index_html)
-        self.assertIn("reader.js?v=37.0", index_html)
-        self.assertIn("tts.js?v=37.0", index_html)
-        self.assertIn("sync.js?v=37.0", index_html)
+        self.assertIn("brutalist.css?v=38.0", index_html)
+        self.assertIn("app.js?v=38.0", index_html)
+        self.assertIn("reader.js?v=38.0", index_html)
+        self.assertIn("tts.js?v=38.0", index_html)
+        self.assertIn("sync.js?v=38.0", index_html)
 
     def test_user_paragraph_normalization_and_synthesis(self):
         """Verify complex RPG paragraph with evolution arrows, ratios, and double colons is normalized and synthesized cleanly."""
@@ -477,8 +477,52 @@ class TestUIImprovements(unittest.TestCase):
         # Ensure updateAudiobookModalContent() is called upon load completion to dismiss loading screen
         self.assertIn("this.updateAudiobookModalContent();\n\n      await this.audioElement.play()", tts_js)
 
-        # Ensure openAudiobookModal respects loading state
-        self.assertIn("if (this.isLoading) {\n        this.showAudiobookLoading();\n      } else {\n        this.updateAudiobookModalContent();", tts_js)
+    def test_decorated_words_normalization_preserves_words(self):
+        """Verify words with symbols like <<Herald>> or <Herald> are preserved and vocalized, not stripped."""
+        text1 = "The <<Herald>> arrived in the city."
+        cleaned1 = server.normalize_text_for_narration(text1)
+        self.assertIn("Herald", cleaned1)
+        self.assertNotIn("<<", cleaned1)
+        self.assertNotIn(">>", cleaned1)
+
+        text2 = "<<A>> >> <<B>>"
+        cleaned2 = server.normalize_text_for_narration(text2)
+        self.assertIn("A", cleaned2)
+        self.assertIn("B", cleaned2)
+        self.assertIn("evolving to", cleaned2)
+
+        text3 = "He obtained «Divine Blade» and 〈Shadow Shield〉."
+        cleaned3 = server.normalize_text_for_narration(text3)
+        self.assertIn("Divine Blade", cleaned3)
+        self.assertIn("Shadow Shield", cleaned3)
+
+    def test_tts_engine_single_audio_element_and_speed_sync(self):
+        """Verify TTSEngine uses single audio element and centralized syncRateUI."""
+        tts_js_path = os.path.join(server.PUBLIC_DIR, "js", "tts.js")
+        with open(tts_js_path, "r", encoding="utf-8") as f:
+            tts_js = f.read()
+
+        # No secondary audio element or rogue keep alive looping track
+        self.assertNotIn("this.secondaryAudioElement", tts_js)
+        self.assertNotIn("this.keepAliveAudio", tts_js)
+
+        # syncRateUI must exist and update sliders and labels
+        self.assertIn("syncRateUI()", tts_js)
+        self.assertIn("audiobookModalSpeedSlider", tts_js)
+        self.assertIn("quickSheetSpeedSlider", tts_js)
+        self.assertIn("ttsRateSlider", tts_js)
+
+        # jumpToParagraph must handle paused state smoothly
+        self.assertIn("jumpToParagraph(index, autoPlay = null)", tts_js)
+        self.assertIn("this.updateAudiobookModalContent();", tts_js)
+        self.assertIn("window.Reader.saveCurrentProgress(clampedIndex", tts_js)
+
+        # MediaSession handlers wired
+        self.assertIn("setActionHandler('play'", tts_js)
+        self.assertIn("setActionHandler('pause'", tts_js)
+        self.assertIn("setActionHandler('stop'", tts_js)
+        self.assertIn("setActionHandler('nexttrack'", tts_js)
+        self.assertIn("setActionHandler('previoustrack'", tts_js)
 
 if __name__ == '__main__':
     unittest.main()

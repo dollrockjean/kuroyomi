@@ -463,12 +463,8 @@ const App = {
 
     // Tab 2: Audio / TTS
     document.getElementById('ttsPlayToggleBtn').addEventListener('click', () => {
-      if (TTSEngine.isPlaying) {
-        TTSEngine.pause();
-        document.getElementById('ttsPlayToggleBtn').textContent = 'Start Read Aloud';
-      } else {
-        TTSEngine.start();
-        document.getElementById('ttsPlayToggleBtn').textContent = 'Pause Read Aloud';
+      if (typeof TTSEngine !== 'undefined') {
+        TTSEngine.toggle();
         this.closeMasterPanel();
       }
     });
@@ -476,16 +472,6 @@ const App = {
     document.getElementById('testVoiceBtn').addEventListener('click', () => {
       TTSEngine.testVoice();
     });
-
-    const rateSlider = document.getElementById('ttsRateSlider');
-    if (rateSlider) {
-      rateSlider.addEventListener('input', (e) => {
-        const rate = parseFloat(e.target.value);
-        TTSEngine.setRate(rate);
-        document.getElementById('ttsRateVal').textContent = `${rate}x`;
-        this.applySettings({ tts_rate: rate });
-      });
-    }
 
     document.querySelectorAll('.sleep-btn').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -732,16 +718,10 @@ const App = {
     }
 
     // Update speed slider and chips in quick sheet
-    const curSpeed = (typeof TTSEngine !== 'undefined') ? TTSEngine.rate : 1.0;
-    const speedText = `${(curSpeed % 1 === 0 ? curSpeed.toFixed(1) : curSpeed)}x`;
-    const qsSpeedVal = document.getElementById('quickSheetSpeedVal');
-    if (qsSpeedVal) qsSpeedVal.textContent = speedText;
     const qsSpeedSlider = document.getElementById('quickSheetSpeedSlider');
-    if (qsSpeedSlider) qsSpeedSlider.value = curSpeed;
-    document.querySelectorAll('.quick-sheet-speed-chip').forEach(chip => {
-      const s = parseFloat(chip.getAttribute('data-speed'));
-      chip.classList.toggle('selected', Math.abs(s - curSpeed) < 0.05);
-    });
+    if (typeof TTSEngine !== 'undefined' && typeof TTSEngine.syncRateUI === 'function') {
+      TTSEngine.syncRateUI();
+    }
 
     // Update chapter navigation buttons & title inside quick sheet
     const prevBtn = document.getElementById('quickSheetPrevChBtn');
@@ -901,15 +881,6 @@ const App = {
       });
     }
 
-    // Wire quick sheet speed chips
-    document.querySelectorAll('.quick-sheet-speed-chip').forEach(chip => {
-      chip.addEventListener('click', () => {
-        const s = parseFloat(chip.getAttribute('data-speed'));
-        if (!isNaN(s) && typeof TTSEngine !== 'undefined') {
-          TTSEngine.setRate(s);
-        }
-      });
-    });
 
     const fontDownBtn = document.getElementById('quickSheetFontDown');
     if (fontDownBtn) {
@@ -1068,20 +1039,7 @@ const App = {
       });
     }
 
-    // Narration speed slider in quick sheet
-    const qsSpeedSlider = document.getElementById('quickSheetSpeedSlider');
-    if (qsSpeedSlider) {
-      qsSpeedSlider.addEventListener('input', (e) => {
-        if (typeof TTSEngine !== 'undefined' && TTSEngine.setRate) {
-          TTSEngine.setRate(e.target.value);
-        }
-      });
-      qsSpeedSlider.addEventListener('change', (e) => {
-        if (typeof TTSEngine !== 'undefined' && TTSEngine.setRate) {
-          TTSEngine.setRate(e.target.value);
-        }
-      });
-    }
+
   },
 
   bindSettingsEvents() {
@@ -1275,12 +1233,11 @@ const App = {
 
     // 5. Read Speed (TTS Rate)
     const ttsRate = parseFloat(cur.tts_rate || 1.0);
-    TTSEngine.rate = ttsRate;
-    const rateSlider = document.getElementById('ttsRateSlider');
-    if (rateSlider) {
-      rateSlider.value = ttsRate;
-      const rateVal = document.getElementById('ttsRateVal');
-      if (rateVal) rateVal.textContent = `${ttsRate}x`;
+    if (typeof TTSEngine !== 'undefined') {
+      TTSEngine.rate = ttsRate;
+      if (typeof TTSEngine.syncRateUI === 'function') {
+        TTSEngine.syncRateUI();
+      }
     }
 
     // 6. TTS Voice

@@ -14,10 +14,7 @@ const TTS_ICONS = {
 
 const TTSEngine = {
   audioElement: new Audio(),
-  secondaryAudioElement: new Audio(),
   testAudioElement: new Audio(),
-  keepAliveAudio: null,
-  audioContext: null,
   blobCache: new Map(),
   pendingFetches: new Map(),
   
@@ -37,15 +34,12 @@ const TTSEngine = {
   playbackSessionId: 0,
   onChapterEndCallback: null,
 
-  // Dual-buffer gapless handoff tracking
-  preloadedIndex: -1,
-  preloadedBlobUrl: null,
-  isTransitioning: false,
-
   // Event handlers
   _onEndedHandler: null,
   _onTimeUpdateHandler: null,
   _onErrorHandler: null,
+  _onPlayHandler: null,
+  _onPauseHandler: null,
 
   // Real-time word-by-word highlight tracking
   currentWordList: [],
@@ -71,7 +65,22 @@ const TTSEngine = {
     { id: 'en-AU-WilliamMultilingualNeural', name: 'William', desc: 'Smooth Australian' }
   ],
 
-  generateSilenceWavUri(seconds = 4) {
+  normalizeForSpeech(text) {
+    if (!text) return '';
+    return text
+      .replace(/<\/?(?:a|abbr|b|blockquote|br|code|del|div|em|h[1-6]|hr|i|img|li|mark|ol|p|pre|ruby|s|small|span|strong|sub|sup|table|td|th|tr|u|ul)\b[^>]*\/?>/gi, ' ')
+      .replace(/<{1,3}\s*([^<>\n]{1,120}?)\s*>{1,3}/g, ' $1 ')
+      .replace(/[«‹〈]\s*([^«»‹›〈〉\n]{1,120}?)\s*[»›〉]/g, ' $1 ')
+      .replace(/>>+|—>|->|==>|=>|→|⇒/g, ' — then — ')
+      .replace(/::+/g, ': ')
+      .replace(/[\[【《〔「『{](.*?)[\]】》〕」』}]/g, ' $1 ')
+      .replace(/\((\d+)\s*\/\s*(\d+)\)/g, '($1 of $2)')
+      .replace(/[<>«»‹›〈〉\[\]【】《》〔〕「」『』{}|*_~^]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  },
+
+  generateSilenceWavUri(seconds = 1) {
     const sampleRate = 22050;
     const numChannels = 1;
     const bitsPerSample = 16;
@@ -116,6 +125,9 @@ const TTSEngine = {
     if (this._onPlayHandler) {
       this.audioElement.removeEventListener('play', this._onPlayHandler);
     }
+    if (this._onPauseHandler) {
+      this.audioElement.removeEventListener('pause', this._onPauseHandler);
+    }
 
     this._onPlayHandler = () => {
       try {
@@ -124,6 +136,18 @@ const TTSEngine = {
           this.audioElement.defaultPlaybackRate = this.rate;
         }
       } catch (e) {}
+      if (this.isPlaying && this.isPaused) {
+        this.isPaused = false;
+        this.updateAudioUI();
+      }
+    };
+
+    this._onPauseHandler = () => {
+      // Detect OS-level pause (e.g. car bluetooth disconnect, lockscreen pause, phone call)
+      if (this.isPlaying && !this.isPaused && !this.isLoading) {
+        this.isPaused = true;
+        this.updateAudioUI();
+      }
     };
 
     this._onEndedHandler = () => {
@@ -141,7 +165,6 @@ const TTSEngine = {
         return;
       }
       console.warn('Audio playback error on paragraph', this.currentIndex, e);
-      // DO NOT advance or skip paragraphs on error! Fall back to device voice for the current paragraph
       if (!this.isLoading) {
         const el = this.paragraphs[this.currentIndex];
         const text = el ? el.innerText.trim() : '';
@@ -157,33 +180,35 @@ const TTSEngine = {
     this.audioElement.addEventListener('timeupdate', this._onTimeUpdateHandler);
     this.audioElement.addEventListener('error', this._onErrorHandler);
     this.audioElement.addEventListener('play', this._onPlayHandler);
+    this.audioElement.addEventListener('pause', this._onPauseHandler);
   },
 
-  swapAudioBuffers() {
-    if (this._onEndedHandler) {
-      this.audioElement.removeEventListener('ended', this._onEndedHandler);
-    }
-    if (this._onTimeUpdateHandler) {
-      this.audioElement.removeEventListener('timeupdate', this._onTimeUpdateHandler);
-    }
-    if (this._onErrorHandler) {
-      this.audioElement.removeEventListener('error', this._onErrorHandler);
-    }
-    if (this._onPlayHandler) {
-      this.audioElement.removeEventListener('play', this._onPlayHandler);
-    }
+  syncRateUI() {
+    const r = this.rate || 1.0;
+    const rateText = `${(r % 1 === 0 ? r.toFixed(1) : r)}x`;
 
-    const temp = this.audioElement;
-    this.audioElement = this.secondaryAudioElement;
-    this.secondaryAudioElement = temp;
+    const s1 = document.getElementById('ttsRateSlider');
+    if (s1 && Math.abs(parseFloat(s1.value) - r) > 0.01) s1.value = r;
+    const v1 = document.getElementById('ttsRateVal');
+    if (v1) v1.textContent = rateText;
 
-    try {
-      this.secondaryAudioElement.pause();
-      this.secondaryAudioElement.removeAttribute('src');
-      this.secondaryAudioElement.load();
-    } catch (e) {}
+    const s2 = document.getElementById('audiobookModalSpeedSlider');
+    if (s2 && Math.abs(parseFloat(s2.value) - r) > 0.01) s2.value = r;
+    const v2 = document.getElementById('audiobookModalSpeedVal');
+    if (v2) v2.textContent = rateText;
 
-    this.bindAudioElementEvents();
+    const s3 = document.getElementById('quickSheetSpeedSlider');
+    if (s3 && Math.abs(parseFloat(s3.value) - r) > 0.01) s3.value = r;
+    const v3 = document.getElementById('quickSheetSpeedVal');
+    if (v3) v3.textContent = rateText;
+
+    const s4 = document.getElementById('ttsRateLabel');
+    if (s4) s4.textContent = rateText;
+
+    document.querySelectorAll('.speed-chip, .quick-sheet-speed-chip').forEach(chip => {
+      const s = parseFloat(chip.getAttribute('data-speed'));
+      chip.classList.toggle('selected', Math.abs(s - r) < 0.05);
+    });
   },
 
   init(onChapterEnd) {
@@ -206,17 +231,16 @@ const TTSEngine = {
     }
     this.populateVoiceSelect();
     this.updatePitchUI();
+    this.syncRateUI();
 
     this.audioElement.playsInline = true;
-    this.secondaryAudioElement.playsInline = true;
     this.testAudioElement.playsInline = true;
 
     this.bindAudioElementEvents();
 
-    // iOS Audio Context Priming on any user touch/click
+    // iOS Audio Priming on first user touch/click
     const primeAudio = () => {
       this.audioElement.load();
-      this.secondaryAudioElement.load();
       this.testAudioElement.load();
       window.removeEventListener('touchstart', primeAudio);
       window.removeEventListener('click', primeAudio);
@@ -231,7 +255,7 @@ const TTSEngine = {
         if (curEl && curEl.scrollIntoView) {
           curEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
-        if (!this.isPaused && this.audioElement && this.audioElement.paused) {
+        if (!this.isPaused && !this.isLoading && this.audioElement && this.audioElement.paused && this.audioElement.src && this.audioElement.src !== window.location.href) {
           this.audioElement.play().catch(() => {});
         }
       }
@@ -240,16 +264,15 @@ const TTSEngine = {
     // Setup lock screen & bluetooth media session controls
     this.setupMediaSession();
 
-    // Allow tapping any paragraph in the reader to jump TTS speech to that paragraph
+    // Allow tapping any paragraph in the reader to jump TTS speech to that paragraph (works playing or paused)
     const readerContent = document.getElementById('readerContent');
     if (readerContent) {
       readerContent.addEventListener('click', (e) => {
-        if (!this.isPlaying) return;
         const targetP = e.target.closest('.reader-paragraph, .reader-heading');
         if (targetP && this.paragraphs && this.paragraphs.length) {
           const idx = this.paragraphs.indexOf(targetP);
           if (idx !== -1 && idx !== this.currentIndex) {
-            this.speakParagraph(idx);
+            this.jumpToParagraph(idx);
           }
         }
       });
@@ -554,7 +577,8 @@ const TTSEngine = {
 
   async getAudioBlobUrl(text, voiceId, rateVal, pitchVal, retries = 1) {
     const pVal = pitchVal !== undefined ? pitchVal : this.pitch;
-    const cacheKey = `${voiceId}_${rateVal}_${pVal}_${text}`;
+    // Synthesize cloud audio at base rate (+0%) so audioElement.playbackRate handles speed changes instantly without refetching or double-speeding
+    const cacheKey = `${voiceId}_1.0_${pVal}_${text}`;
     if (this.blobCache.has(cacheKey)) {
       return this.blobCache.get(cacheKey);
     }
@@ -563,9 +587,8 @@ const TTSEngine = {
     }
 
     const fetchPromise = (async () => {
-      const rateParam = this.getRateParam(rateVal);
       const pitchParam = this.getPitchParam(pVal);
-      const url = `/api/tts/speak?text=${encodeURIComponent(text)}&voice=${encodeURIComponent(voiceId)}&rate=${encodeURIComponent(rateParam)}&pitch=${encodeURIComponent(pitchParam)}`;
+      const url = `/api/tts/speak?text=${encodeURIComponent(text)}&voice=${encodeURIComponent(voiceId)}&rate=${encodeURIComponent('+0%')}&pitch=${encodeURIComponent(pitchParam)}`;
       
       for (let attempt = 0; attempt <= retries; attempt++) {
         const controller = new AbortController();
@@ -607,8 +630,9 @@ const TTSEngine = {
 
     try {
       this.testAudioElement.pause();
-      const blobUrl = await this.getAudioBlobUrl(testSentence, voiceId, this.rate, this.pitch);
+      const blobUrl = await this.getAudioBlobUrl(testSentence, voiceId, 1.0, this.pitch);
       this.testAudioElement.src = blobUrl;
+      this.testAudioElement.playbackRate = this.rate || 1.0;
       await this.testAudioElement.play();
     } catch (err) {
       console.error('Test voice error:', err);
@@ -622,16 +646,6 @@ const TTSEngine = {
     const newRate = parseFloat(val);
     if (isNaN(newRate) || newRate <= 0) return;
     this.rate = Math.round(newRate * 100) / 100;
-    this.blobCache.clear();
-    this.pendingFetches.clear();
-    this.preloadedIndex = -1;
-    this.preloadedBlobUrl = null;
-    try {
-      if (this.secondaryAudioElement) {
-        this.secondaryAudioElement.pause();
-        this.secondaryAudioElement.removeAttribute('src');
-      }
-    } catch (e) {}
 
     if (window.ReaderSettings) {
       window.ReaderSettings.tts_rate = this.rate;
@@ -643,51 +657,19 @@ const TTSEngine = {
       }
     }
 
-    const rateText = `${(this.rate % 1 === 0 ? this.rate.toFixed(1) : this.rate)}x`;
-
-    const slider = document.getElementById('ttsRateSlider');
-    if (slider && Math.abs(parseFloat(slider.value) - this.rate) > 0.01) slider.value = this.rate;
-    const rateVal = document.getElementById('ttsRateVal');
-    if (rateVal) rateVal.textContent = rateText;
-
-    const modalSlider = document.getElementById('audiobookModalSpeedSlider');
-    if (modalSlider && Math.abs(parseFloat(modalSlider.value) - this.rate) > 0.01) modalSlider.value = this.rate;
-    const modalRateVal = document.getElementById('audiobookModalSpeedVal');
-    if (modalRateVal) modalRateVal.textContent = rateText;
-
-    const qsSlider = document.getElementById('quickSheetSpeedSlider');
-    if (qsSlider && Math.abs(parseFloat(qsSlider.value) - this.rate) > 0.01) qsSlider.value = this.rate;
-
-    // Update speed chips UI across audiobook modal and middle quick sheet
-    document.querySelectorAll('.speed-chip, .quick-sheet-speed-chip').forEach(chip => {
-      const s = parseFloat(chip.getAttribute('data-speed'));
-      chip.classList.toggle('selected', Math.abs(s - this.rate) < 0.05);
-    });
-    const qsSpeedVal = document.getElementById('quickSheetSpeedVal');
-    if (qsSpeedVal) qsSpeedVal.textContent = rateText;
-
+    this.syncRateUI();
     this.updateAudioUI();
 
-    // Immediately enforce playbackRate on active elements
+    // Immediately enforce playbackRate on active element
     if (this.audioElement) {
       try {
         this.audioElement.playbackRate = this.rate;
         this.audioElement.defaultPlaybackRate = this.rate;
       } catch (e) {}
     }
-    if (this.secondaryAudioElement) {
-      try {
-        this.secondaryAudioElement.playbackRate = this.rate;
-        this.secondaryAudioElement.defaultPlaybackRate = this.rate;
-      } catch (e) {}
-    }
 
-    if (this.isPlaying && !this.isPaused) {
-      if (this.isUsingDeviceVoice) {
-        this.speakParagraph(this.currentIndex);
-      } else {
-        this.prepareNextParagraph(this.currentIndex + 1);
-      }
+    if (this.isPlaying && !this.isPaused && this.isUsingDeviceVoice) {
+      this.speakParagraph(this.currentIndex);
     }
   },
 
@@ -698,56 +680,11 @@ const TTSEngine = {
   },
 
   startKeepAlive() {
-    // 1. Continuous silent PCM WAV looping track at low volume (keeps iOS AVAudioSession active)
-    try {
-      if (!this.keepAliveAudio) {
-        this.keepAliveAudio = new Audio();
-        this.keepAliveAudio.loop = true;
-        this.keepAliveAudio.volume = 0.02;
-        this.keepAliveAudio.playsInline = true;
-        this.keepAliveAudio.src = this.generateSilenceWavUri(4);
-      }
-      if (this.keepAliveAudio.paused) {
-        this.keepAliveAudio.play().catch(() => {});
-      }
-    } catch (e) {
-      console.warn('Keepalive audio warning:', e);
-    }
-
-    // 2. Web Audio API AudioContext keepalive
-    try {
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      if (AudioCtx && !this.audioContext) {
-        this.audioContext = new AudioCtx();
-        const buffer = this.audioContext.createBuffer(1, this.audioContext.sampleRate, this.audioContext.sampleRate);
-        const source = this.audioContext.createBufferSource();
-        source.buffer = buffer;
-        source.loop = true;
-        const gain = this.audioContext.createGain();
-        gain.gain.value = 0.001;
-        source.connect(gain);
-        gain.connect(this.audioContext.destination);
-        source.start(0);
-      }
-      if (this.audioContext && this.audioContext.state === 'suspended') {
-        this.audioContext.resume().catch(() => {});
-      }
-    } catch (e) {
-      console.warn('AudioContext keepalive warning:', e);
-    }
+    // KeepAlive is integrated directly with the primary audio stream to prevent OS lockscreen/car control conflicts
   },
 
   stopKeepAlive() {
-    try {
-      if (this.keepAliveAudio) {
-        this.keepAliveAudio.pause();
-      }
-    } catch {}
-    try {
-      if (this.audioContext && this.audioContext.state === 'running') {
-        this.audioContext.suspend().catch(() => {});
-      }
-    } catch {}
+    // Clean-up handled by stopping primary audio stream
   },
 
   start(fromIndex = null) {
@@ -872,15 +809,19 @@ const TTSEngine = {
     };
 
     utterance.onend = () => {
-      if (this.isPlaying && !this.isPaused) {
+      if (this.playbackSessionId === sessionId && this.isPlaying && !this.isPaused) {
         this.speakParagraph(index + 1);
       }
     };
 
     utterance.onerror = (e) => {
       console.warn('Device speech synthesis error:', e);
-      if (this.isPlaying && !this.isPaused) {
-        setTimeout(() => this.speakParagraph(index + 1), 600);
+      if (this.playbackSessionId === sessionId && this.isPlaying && !this.isPaused) {
+        setTimeout(() => {
+          if (this.playbackSessionId === sessionId && this.isPlaying && !this.isPaused) {
+            this.speakParagraph(index + 1);
+          }
+        }, 600);
       }
     };
 
@@ -893,9 +834,12 @@ const TTSEngine = {
     if (this.isPlaying) {
       this.isPaused = true;
       this.audioElement.pause();
-      this.secondaryAudioElement.pause();
       if ('speechSynthesis' in window) {
-        window.speechSynthesis.pause();
+        if (this.deviceUtterance) {
+          this.deviceUtterance.onend = null;
+          this.deviceUtterance.onerror = null;
+        }
+        window.speechSynthesis.cancel();
       }
       this.updateAudioUI();
     }
@@ -914,13 +858,14 @@ const TTSEngine = {
 
     if (this.isPlaying && this.isPaused) {
       this.isPaused = false;
-      this.startKeepAlive();
       if (this.isUsingDeviceVoice) {
         // Attempt recovery to selected cloud voice on resume
         this.setDeviceVoiceMode(false);
         this.speakParagraph(this.currentIndex);
-      } else {
+      } else if (this.audioElement && this.audioElement.src && this.audioElement.src !== window.location.href) {
         this.audioElement.play().catch(() => this.speakParagraph(this.currentIndex));
+      } else {
+        this.speakParagraph(this.currentIndex);
       }
       this.updateAudioUI();
     } else {
@@ -947,17 +892,17 @@ const TTSEngine = {
     this.audioElement.pause();
     this.audioElement.loop = false;
     this.audioElement.src = '';
-    try {
-      this.secondaryAudioElement.pause();
-      this.secondaryAudioElement.loop = false;
-      this.secondaryAudioElement.removeAttribute('src');
-    } catch (e) {}
     this.preloadedIndex = -1;
     this.preloadedBlobUrl = null;
     this.isTransitioning = false;
     if ('speechSynthesis' in window) {
+      if (this.deviceUtterance) {
+        this.deviceUtterance.onend = null;
+        this.deviceUtterance.onerror = null;
+      }
       window.speechSynthesis.cancel();
     }
+    this.deviceUtterance = null;
     this.setDeviceVoiceMode(false);
     this.clearHighlight();
     this.clearWordHighlights();
@@ -979,33 +924,84 @@ const TTSEngine = {
     });
   },
 
+  jumpToParagraph(index, autoPlay = null) {
+    this.refreshParagraphs();
+    if (!this.paragraphs || !this.paragraphs.length) return;
+    const clampedIndex = Math.max(0, Math.min(index, this.paragraphs.length - 1));
+
+    const shouldPlay = (autoPlay !== null) ? autoPlay : (this.isPlaying && !this.isPaused);
+
+    if (shouldPlay) {
+      this.isPlaying = true;
+      this.isPaused = false;
+      this.speakParagraph(clampedIndex);
+    } else {
+      // Paused state: jump visual selection, update modal & save reading progress without unpausing
+      this.playbackSessionId = (this.playbackSessionId || 0) + 1;
+      this.currentIndex = clampedIndex;
+      this.audioElement.pause();
+      if ('speechSynthesis' in window) {
+        if (this.deviceUtterance) {
+          this.deviceUtterance.onend = null;
+          this.deviceUtterance.onerror = null;
+        }
+        window.speechSynthesis.cancel();
+      }
+
+      this.clearHighlight();
+      const el = this.paragraphs[clampedIndex];
+      if (el) {
+        el.classList.add('speaking-active');
+        if (!document.hidden && el.scrollIntoView) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }
+
+      if (window.Reader) {
+        const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+        const scrollPct = docHeight > 0 ? Math.round((window.scrollY / docHeight) * 100) : 0;
+        window.Reader.saveCurrentProgress(clampedIndex, scrollPct, clampedIndex === 0);
+      }
+
+      this.updateAudiobookModalContent();
+      this.updateAudioUI();
+      this.updateMediaSessionMetadata();
+
+      // Pre-cache paragraph audio quietly in background so resuming is instant
+      if (el) {
+        const textToSpeak = el.innerText.trim();
+        if (textToSpeak && navigator.onLine) {
+          this.getAudioBlobUrl(textToSpeak, this.selectedVoice, 1.0, this.pitch)
+            .then(blobUrl => {
+              if (this.currentIndex === clampedIndex && this.isPaused) {
+                this.audioElement.src = blobUrl;
+                this.audioElement.playbackRate = this.rate || 1.0;
+              }
+            })
+            .catch(() => {});
+        }
+      }
+    }
+  },
+
   async speakParagraph(index) {
     if (!this.isPlaying || this.isPaused) return;
 
     this.playbackSessionId = (this.playbackSessionId || 0) + 1;
     const sessionId = this.playbackSessionId;
 
-    // 1. Check if next paragraph was preloaded in secondary audio buffer for 0ms gapless handoff
-    const hasPreloaded = (this.preloadedIndex === index && Boolean(this.preloadedBlobUrl));
-
-    if (!hasPreloaded) {
-      this.audioElement.pause();
-      this.audioElement.loop = false;
-      try {
-        this.secondaryAudioElement.pause();
-        this.secondaryAudioElement.removeAttribute('src');
-      } catch (e) {}
-      this.preloadedIndex = -1;
-      this.preloadedBlobUrl = null;
-    } else {
-      this.audioElement.pause();
-      this.audioElement.loop = false;
-    }
+    this.audioElement.pause();
+    this.audioElement.loop = false;
 
     this.isTransitioning = false;
     if ('speechSynthesis' in window) {
+      if (this.deviceUtterance) {
+        this.deviceUtterance.onend = null;
+        this.deviceUtterance.onerror = null;
+      }
       window.speechSynthesis.cancel();
     }
+    this.deviceUtterance = null;
     this.clearWordHighlights();
 
     // 2. Seamless transition to next chapter if current chapter ended
@@ -1029,14 +1025,14 @@ const TTSEngine = {
       return;
     }
 
-    // Visual highlight on reader text (bypass smooth scroll in background to prevent animation frame freeze)
+    // Visual highlight on reader text
     this.clearHighlight();
     el.classList.add('speaking-active');
     if (!document.hidden && el.scrollIntoView) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
 
-    // Silently save progress with accurate scroll percentage (immediate save on chapter start)
+    // Silently save progress with accurate scroll percentage
     if (window.Reader) {
       const docHeight = document.documentElement.scrollHeight - window.innerHeight;
       const scrollPct = docHeight > 0 ? Math.round((window.scrollY / docHeight) * 100) : 0;
@@ -1044,8 +1040,8 @@ const TTSEngine = {
     }
 
     // Check if audio blob is already in memory cache
-    const cacheKey = `${this.selectedVoice}_${this.rate}_${this.pitch}_${textToSpeak}`;
-    const isCached = hasPreloaded || this.blobCache.has(cacheKey);
+    const cacheKey = `${this.selectedVoice}_1.0_${this.pitch}_${textToSpeak}`;
+    const isCached = this.blobCache.has(cacheKey);
 
     // Only set loading state true if uncached fetch is needed
     this.isLoading = !isCached;
@@ -1061,12 +1057,6 @@ const TTSEngine = {
     // If device is offline
     if (!navigator.onLine) {
       this.audioElement.pause();
-      try {
-        this.secondaryAudioElement.pause();
-        this.secondaryAudioElement.removeAttribute('src');
-      } catch (e) {}
-      this.preloadedIndex = -1;
-      this.preloadedBlobUrl = null;
       this.isLoading = false;
       this.setDeviceVoiceMode(true);
       this.updateAudiobookModalContent();
@@ -1076,24 +1066,13 @@ const TTSEngine = {
 
     // ALWAYS prioritize the main voice selected (realistic cloud neural TTS)
     try {
-      this.playKeepAliveSilence();
+      const blobUrl = await this.getAudioBlobUrl(textToSpeak, this.selectedVoice, 1.0, this.pitch);
 
-      if (hasPreloaded) {
-        // Dual-buffer 0ms handoff: swap preloaded secondary element into primary role
-        this.swapAudioBuffers();
-        this.audioElement.loop = false;
-        this.audioElement.playbackRate = this.rate;
-        this.preloadedIndex = -1;
-        this.preloadedBlobUrl = null;
-      } else {
-        const blobUrl = await this.getAudioBlobUrl(textToSpeak, this.selectedVoice, this.rate, this.pitch);
+      if (this.playbackSessionId !== sessionId || !this.isPlaying || this.isPaused) return;
 
-        if (this.playbackSessionId !== sessionId || !this.isPlaying || this.isPaused) return;
-
-        this.audioElement.loop = false;
-        this.audioElement.src = blobUrl;
-        this.audioElement.playbackRate = this.rate;
-      }
+      this.audioElement.loop = false;
+      this.audioElement.src = blobUrl;
+      this.audioElement.playbackRate = this.rate || 1.0;
 
       // If user skipped or paused while fetching was in flight, discard cleanly
       if (this.playbackSessionId !== sessionId || !this.isPlaying || this.isPaused) return;
@@ -1110,14 +1089,13 @@ const TTSEngine = {
 
       await this.audioElement.play();
       try {
-        this.audioElement.playbackRate = this.rate;
-        this.audioElement.defaultPlaybackRate = this.rate;
+        this.audioElement.playbackRate = this.rate || 1.0;
+        this.audioElement.defaultPlaybackRate = this.rate || 1.0;
       } catch (e) {}
       this.updateAudioUI();
 
-      // Proactively prefetch next 6 paragraphs and prepare secondary audio buffer
+      // Proactively prefetch next 6 paragraphs
       this.prefetchAhead(index, 6);
-      this.prepareNextParagraph(index + 1);
     } catch (err) {
       this.isLoading = false;
       this.updateAudioUI();
@@ -1129,30 +1107,9 @@ const TTSEngine = {
     }
   },
 
-  async prepareNextParagraph(nextIndex) {
-    if (!this.paragraphs || nextIndex >= this.paragraphs.length) return;
-    if (!this.isPlaying || this.isPaused) return;
-    const el = this.paragraphs[nextIndex];
-    const text = el ? el.innerText.trim() : '';
-    if (!text) return;
-
-    try {
-      const nextBlobUrl = await this.getAudioBlobUrl(text, this.selectedVoice, this.rate, this.pitch);
-      if (!this.isPlaying || this.isPaused) return;
-      if (this.preloadedIndex !== nextIndex) {
-        this.preloadedIndex = nextIndex;
-        this.preloadedBlobUrl = nextBlobUrl;
-        this.secondaryAudioElement.src = nextBlobUrl;
-        this.secondaryAudioElement.playbackRate = this.rate;
-        this.secondaryAudioElement.load();
-      }
-    } catch (e) {}
-  },
-
   async prefetchAhead(fromIndex, count = 6) {
     if (!this.paragraphs || this.paragraphs.length === 0) return;
     const currentVoice = this.selectedVoice;
-    const currentRate = this.rate;
     const currentPitch = this.pitch;
     const sessionId = this.playbackSessionId;
 
@@ -1163,27 +1120,13 @@ const TTSEngine = {
         const el = this.paragraphs[idx];
         const text = el ? el.innerText.trim() : '';
         if (text) {
-          const cacheKey = `${currentVoice}_${currentRate}_${currentPitch}_${text}`;
+          const cacheKey = `${currentVoice}_1.0_${currentPitch}_${text}`;
           if (!this.blobCache.has(cacheKey) && !this.pendingFetches.has(cacheKey)) {
             try {
-              const url = await this.getAudioBlobUrl(text, currentVoice, currentRate, currentPitch);
-              if (offset === 1 && this.preloadedIndex !== idx && this.isPlaying && !this.isPaused) {
-                this.preloadedIndex = idx;
-                this.preloadedBlobUrl = url;
-                this.secondaryAudioElement.src = url;
-                this.secondaryAudioElement.playbackRate = currentRate;
-                this.secondaryAudioElement.load();
-              }
+              await this.getAudioBlobUrl(text, currentVoice, 1.0, currentPitch);
             } catch (e) {}
             // Rapid 40ms yield to prevent event loop starvation while filling buffer quickly
             await new Promise(r => setTimeout(r, 40));
-          } else if (offset === 1 && this.blobCache.has(cacheKey) && this.preloadedIndex !== idx && this.isPlaying && !this.isPaused) {
-            const url = this.blobCache.get(cacheKey);
-            this.preloadedIndex = idx;
-            this.preloadedBlobUrl = url;
-            this.secondaryAudioElement.src = url;
-            this.secondaryAudioElement.playbackRate = currentRate;
-            this.secondaryAudioElement.load();
           }
         }
       }
@@ -1208,7 +1151,7 @@ const TTSEngine = {
             for (const p of ps) {
               const text = p.textContent.trim();
               if (text) {
-                this.getAudioBlobUrl(text, this.selectedVoice, this.rate, this.pitch).catch(() => {});
+                this.getAudioBlobUrl(text, this.selectedVoice, 1.0, this.pitch).catch(() => {});
               }
             }
           }
@@ -1225,18 +1168,26 @@ const TTSEngine = {
     // Retained for backward compatibility
   },
 
+  swapAudioBuffers() {
+    // Retained for backward compatibility with older extensions and tests
+  },
+
+  prepareNextParagraph(nextIndex) {
+    // Retained for backward compatibility
+  },
+
   playKeepAliveSilence() {
     this.startKeepAlive();
   },
 
-  async advanceToNextChapter() {
+  async advanceToNextChapter(autoPlay = null) {
     if (window.Reader && window.Reader.currentChapter && window.Reader.currentChapter.next_chapter) {
       const wasModalOpen = document.getElementById('audiobookFullModal')?.style.display === 'flex';
+      const shouldPlay = (autoPlay !== null) ? autoPlay : (this.isPlaying && !this.isPaused);
       const nextId = window.Reader.currentChapter.next_chapter.id;
       
       this.clearHighlight();
       this.clearWordHighlights();
-      this.playKeepAliveSilence();
 
       const loaded = await window.Reader.loadChapter(nextId, false, true);
       if (!loaded) {
@@ -1249,7 +1200,7 @@ const TTSEngine = {
         if (wasModalOpen) {
           this.openAudiobookModal();
         }
-        await this.speakParagraph(0);
+        this.jumpToParagraph(0, shouldPlay);
       } else {
         this.stop();
       }
@@ -1260,7 +1211,7 @@ const TTSEngine = {
 
   nextParagraph() {
     if (this.currentIndex < this.paragraphs.length - 1) {
-      this.speakParagraph(this.currentIndex + 1);
+      this.jumpToParagraph(this.currentIndex + 1);
     } else {
       this.advanceToNextChapter();
     }
@@ -1268,7 +1219,7 @@ const TTSEngine = {
 
   prevParagraph() {
     if (this.currentIndex > 0) {
-      this.speakParagraph(this.currentIndex - 1);
+      this.jumpToParagraph(this.currentIndex - 1);
     }
   },
 
@@ -1545,6 +1496,7 @@ const TTSEngine = {
     if (modal) {
       modal.style.display = 'flex';
       this.updatePitchUI();
+      this.syncRateUI();
       if (this.isLoading) {
         this.showAudiobookLoading();
       } else {
@@ -1760,7 +1712,7 @@ const TTSEngine = {
     this.updateSleepBadge();
 
     if ('mediaSession' in navigator) {
-      navigator.mediaSession.playbackState = isPlayingState ? 'playing' : 'paused';
+      navigator.mediaSession.playbackState = isPlayingState ? 'playing' : (this.isPlaying ? 'paused' : 'none');
     }
   },
 
@@ -1776,6 +1728,9 @@ const TTSEngine = {
       });
       navigator.mediaSession.setActionHandler('pause', () => {
         this.pause();
+      });
+      navigator.mediaSession.setActionHandler('stop', () => {
+        this.stop();
       });
       navigator.mediaSession.setActionHandler('nexttrack', () => {
         this.nextParagraph();

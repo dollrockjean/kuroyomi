@@ -44,26 +44,39 @@ BUILTIN_NEURAL_VOICES = [
     {"id": "en-AU-WilliamMultilingualNeural", "name": "William", "description": "Smooth Australian", "gender": "Male"}
 ]
 
+HTML_TAG_RE = re.compile(
+    r"</?(?:a|abbr|b|big|blockquote|br|center|cite|code|del|div|em|figcaption|figure|font|h[1-6]|hr|i|img|ins|li|mark|ol|p|pre|q|rp|rt|ruby|s|section|small|span|strong|sub|sup|table|tbody|td|th|thead|tr|tt|u|ul|wbr)"
+    r"(?:\s+[A-Za-z_:][\w:.-]*\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^\s<>\"']+))*\s*/?>"
+)
+
 def normalize_text_for_narration(text: str) -> str:
     """Preprocesses web novel prose to ensure natural human cadence and eliminate robotic monotone."""
     if not text:
         return ""
-    # Strip any leaked HTML tags
-    clean = re.sub(r"<[^>]+>", "", text)
+    # Strip only genuine leaked HTML tags (e.g. <br>, </p>, <span class="x">) using a whitelist of real tag names.
+    # A loose pattern like <[^>]+> would delete decorated words such as <<Herald>> or <Herald> entirely.
+    clean = HTML_TAG_RE.sub(" ", text)
+    # Unwrap decorated names/titles: <<Herald>>, <Herald>, «Herald», ‹Herald›, 〈Herald〉
+    clean = re.sub(r"<{1,3}\s*([^<>\n]{1,120}?)\s*>{1,3}", r" \1 ", clean)
+    clean = re.sub(r"[«‹〈]\s*([^«»‹›〈〉\n]{1,120}?)\s*[»›〉]", r" \1 ", clean)
     # Convert evolution / transition arrows like >> or -> or ==> into natural spoken pauses
-    clean = re.sub(r">>+|—>|->|==>", " — evolving to — ", clean)
+    clean = re.sub(r">>+|—>|->|==>|=>|→|⇒", " — evolving to — ", clean)
     # Convert double colons into single colon
     clean = re.sub(r"::+", ": ", clean)
     # Convert status/system brackets like [Level Up] or 【Warning】 into natural spoken clauses
-    clean = re.sub(r"[\[【《](.*?)[\]】》]", r" \1 ", clean)
+    clean = re.sub(r"[\[【《〔「『{](.*?)[\]】》〕」』}]", r" \1 ", clean)
     # Convert rank ratios like (15/15) or (5/5) into natural '15 of 15'
     clean = re.sub(r"\((\d+)\s*/\s*(\d+)\)", r"(\1 of \2)", clean)
     # Normalize long ellipses (.... or ……) into a natural breath pause
     clean = re.sub(r"\.{3,}|…+", ", ... ", clean)
     # Convert em-dashes into spaced em-dashes for natural dialogue beats
     clean = re.sub(r"[\u2013\u2014]+|--+", " — ", clean)
+    # Remove leftover decorative symbols hugging words (*Herald*, |Herald|, ~Herald~, _Herald_, stray < >)
+    clean = re.sub(r"[<>«»‹›〈〉\[\]【】《》〔〕「」『』{}|*_~^]+", " ", clean)
     # Collapse multiple whitespace
     clean = re.sub(r"\s+", " ", clean).strip()
+    # Remove stray spaces left before punctuation by tag/symbol removal ("now ." -> "now.")
+    clean = re.sub(r"\s+([,!?;:]|\.(?!\.))", r"\1", clean)
     return clean
 
 def normalize_rate(rate_str):
