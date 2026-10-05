@@ -67,17 +67,36 @@ const TTSEngine = {
 
   normalizeForSpeech(text) {
     if (!text) return '';
-    return text
-      .replace(/<\/?(?:a|abbr|b|blockquote|br|code|del|div|em|h[1-6]|hr|i|img|li|mark|ol|p|pre|ruby|s|small|span|strong|sub|sup|table|td|th|tr|u|ul)\b[^>]*\/?>/gi, ' ')
-      .replace(/<{1,3}\s*([^<>\n]{1,120}?)\s*>{1,3}/g, ' $1 ')
-      .replace(/[«‹〈]\s*([^«»‹›〈〉\n]{1,120}?)\s*[»›〉]/g, ' $1 ')
-      .replace(/>>+|—>|->|==>|=>|→|⇒/g, ' — then — ')
-      .replace(/::+/g, ': ')
-      .replace(/[\[【《〔「『{](.*?)[\]】》〕」』}]/g, ' $1 ')
-      .replace(/\((\d+)\s*\/\s*(\d+)\)/g, '($1 of $2)')
-      .replace(/[<>«»‹›〈〉\[\]【】《》〔〕「」『』{}|*_~^]+/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
+    // Unescape common HTML entities so &lt;&lt;Example&gt;&gt; becomes <<Example>>
+    let clean = text
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&amp;/g, '&')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'");
+
+    // Strip genuine leaked HTML tags using whitelist
+    clean = clean.replace(/<\/?(?:a|abbr|b|blockquote|br|code|del|div|em|h[1-6]|hr|i|img|li|mark|ol|p|pre|ruby|s|small|span|strong|sub|sup|table|td|th|tr|u|ul)\b[^>]*\/?>/gi, ' ');
+
+    // Unwrap decorated names/titles: <<Herald>>, <Herald>, «Herald», ‹Herald›, 〈Herald〉
+    clean = clean.replace(/<{1,3}\s*([^<>\n]{1,120}?)\s*>{1,3}/g, ' $1 ');
+    clean = clean.replace(/[«‹〈]\s*([^«»‹›〈〉\n]{1,120}?)\s*[»›〉]/g, ' $1 ');
+
+    // Arrows, colons, brackets, ratios, em-dashes
+    clean = clean.replace(/>>+|—>|->|==>|=>|→|⇒/g, ' — then — ');
+    clean = clean.replace(/::+/g, ': ');
+    clean = clean.replace(/[\[【《〔「『{](.*?)[\]】》〕」』}]/g, ' $1 ');
+    clean = clean.replace(/\((\d+)\s*\/\s*(\d+)\)/g, '($1 of $2)');
+    clean = clean.replace(/\.{3,}|…+/g, ', ... ');
+    clean = clean.replace(/[\u2013\u2014]+|--+/g, ' — ');
+
+    // Remove any leftover decorative symbols & stray angle brackets so speech synthesis never drops bracketed words
+    clean = clean.replace(/[<>«»‹›〈〉\[\]【】《》〔〕「」『』{}|*_~^]+/g, ' ');
+
+    // Collapse whitespace and fix spacing before punctuation
+    clean = clean.replace(/\s+/g, ' ').trim();
+    clean = clean.replace(/\s+([,!?;:]|\.(?!\.))/g, '$1');
+    return clean;
   },
 
   generateSilenceWavUri(seconds = 1) {
@@ -184,21 +203,23 @@ const TTSEngine = {
   },
 
   syncRateUI() {
-    const r = this.rate || 1.0;
-    const rateText = `${(r % 1 === 0 ? r.toFixed(1) : r)}x`;
+    let r = this.rate;
+    if (!r || isNaN(r) || r <= 0) r = 1.0;
+    this.rate = Math.round(r * 100) / 100;
+    const rateText = `${(this.rate % 1 === 0 ? this.rate.toFixed(1) : this.rate)}x`;
 
     const s1 = document.getElementById('ttsRateSlider');
-    if (s1 && Math.abs(parseFloat(s1.value) - r) > 0.01) s1.value = r;
+    if (s1) s1.value = this.rate;
     const v1 = document.getElementById('ttsRateVal');
     if (v1) v1.textContent = rateText;
 
     const s2 = document.getElementById('audiobookModalSpeedSlider');
-    if (s2 && Math.abs(parseFloat(s2.value) - r) > 0.01) s2.value = r;
+    if (s2) s2.value = this.rate;
     const v2 = document.getElementById('audiobookModalSpeedVal');
     if (v2) v2.textContent = rateText;
 
     const s3 = document.getElementById('quickSheetSpeedSlider');
-    if (s3 && Math.abs(parseFloat(s3.value) - r) > 0.01) s3.value = r;
+    if (s3) s3.value = this.rate;
     const v3 = document.getElementById('quickSheetSpeedVal');
     if (v3) v3.textContent = rateText;
 
@@ -207,18 +228,33 @@ const TTSEngine = {
 
     document.querySelectorAll('.speed-chip, .quick-sheet-speed-chip').forEach(chip => {
       const s = parseFloat(chip.getAttribute('data-speed'));
-      chip.classList.toggle('selected', Math.abs(s - r) < 0.05);
+      chip.classList.toggle('selected', Math.abs(s - this.rate) < 0.05);
     });
   },
 
   init(onChapterEnd) {
     this.onChapterEndCallback = onChapterEnd;
+    let savedRate = null;
+    try {
+      const directRate = localStorage.getItem('byob_tts_rate') || localStorage.getItem('kuroyomi_tts_rate');
+      if (directRate) savedRate = parseFloat(directRate);
+    } catch (e) {}
+
     const localSettings = (typeof Storage !== 'undefined' && Storage.getLocalSettings) ? Storage.getLocalSettings() : null;
-    if (localSettings && localSettings.tts_rate) {
+    if (savedRate && !isNaN(savedRate) && savedRate > 0) {
+      this.rate = Math.round(savedRate * 100) / 100;
+    } else if (localSettings && localSettings.tts_rate) {
       this.rate = parseFloat(localSettings.tts_rate);
     } else if (window.ReaderSettings && window.ReaderSettings.tts_rate) {
       this.rate = parseFloat(window.ReaderSettings.tts_rate);
     }
+    if (!this.rate || isNaN(this.rate) || this.rate <= 0) {
+      this.rate = 1.0;
+    }
+    if (window.ReaderSettings) {
+      window.ReaderSettings.tts_rate = this.rate;
+    }
+
     if (localSettings && localSettings.tts_pitch !== undefined) {
       this.pitch = parseInt(localSettings.tts_pitch, 10) || 0;
     } else if (window.ReaderSettings && window.ReaderSettings.tts_pitch !== undefined) {
@@ -577,8 +613,11 @@ const TTSEngine = {
 
   async getAudioBlobUrl(text, voiceId, rateVal, pitchVal, retries = 1) {
     const pVal = pitchVal !== undefined ? pitchVal : this.pitch;
+    const cleanSpeechText = this.normalizeForSpeech(text);
+    if (!cleanSpeechText) return '';
+
     // Synthesize cloud audio at base rate (+0%) so audioElement.playbackRate handles speed changes instantly without refetching or double-speeding
-    const cacheKey = `${voiceId}_1.0_${pVal}_${text}`;
+    const cacheKey = `${voiceId}_1.0_${pVal}_${cleanSpeechText}`;
     if (this.blobCache.has(cacheKey)) {
       return this.blobCache.get(cacheKey);
     }
@@ -588,7 +627,7 @@ const TTSEngine = {
 
     const fetchPromise = (async () => {
       const pitchParam = this.getPitchParam(pVal);
-      const url = `/api/tts/speak?text=${encodeURIComponent(text)}&voice=${encodeURIComponent(voiceId)}&rate=${encodeURIComponent('+0%')}&pitch=${encodeURIComponent(pitchParam)}`;
+      const url = `/api/tts/speak?text=${encodeURIComponent(cleanSpeechText)}&voice=${encodeURIComponent(voiceId)}&rate=${encodeURIComponent('+0%')}&pitch=${encodeURIComponent(pitchParam)}`;
       
       for (let attempt = 0; attempt <= retries; attempt++) {
         const controller = new AbortController();
@@ -646,6 +685,11 @@ const TTSEngine = {
     const newRate = parseFloat(val);
     if (isNaN(newRate) || newRate <= 0) return;
     this.rate = Math.round(newRate * 100) / 100;
+
+    try {
+      localStorage.setItem('byob_tts_rate', String(this.rate));
+      localStorage.setItem('kuroyomi_tts_rate', String(this.rate));
+    } catch (e) {}
 
     if (window.ReaderSettings) {
       window.ReaderSettings.tts_rate = this.rate;
@@ -771,12 +815,8 @@ const TTSEngine = {
     window.speechSynthesis.cancel();
 
     // Clean brackets, evolution arrows, double colons, and stat fractions for smooth device voice pronunciation
-    const cleanDeviceText = text
-      .replace(/<[^>]+>/g, '')
-      .replace(/>>+|—>|->|==>/g, ' — then — ')
-      .replace(/::+/g, ': ')
-      .replace(/[\[【《](.*?)[\]】》]/g, ' $1 ')
-      .replace(/\((\d+)\s*\/\s*(\d+)\)/g, '($1 of $2)');
+    // Uses normalizeForSpeech to preserve words like <<Example>> or <Herald> without deleting them
+    const cleanDeviceText = this.normalizeForSpeech(text);
 
     const utterance = new SpeechSynthesisUtterance(cleanDeviceText);
     utterance.rate = Math.min(2.0, Math.max(0.5, this.rate));
@@ -1040,7 +1080,8 @@ const TTSEngine = {
     }
 
     // Check if audio blob is already in memory cache
-    const cacheKey = `${this.selectedVoice}_1.0_${this.pitch}_${textToSpeak}`;
+    const cleanSpeech = this.normalizeForSpeech(textToSpeak);
+    const cacheKey = `${this.selectedVoice}_1.0_${this.pitch}_${cleanSpeech}`;
     const isCached = this.blobCache.has(cacheKey);
 
     // Only set loading state true if uncached fetch is needed
@@ -1120,7 +1161,8 @@ const TTSEngine = {
         const el = this.paragraphs[idx];
         const text = el ? el.innerText.trim() : '';
         if (text) {
-          const cacheKey = `${currentVoice}_1.0_${currentPitch}_${text}`;
+          const cleanText = this.normalizeForSpeech(text);
+          const cacheKey = `${currentVoice}_1.0_${currentPitch}_${cleanText}`;
           if (!this.blobCache.has(cacheKey) && !this.pendingFetches.has(cacheKey)) {
             try {
               await this.getAudioBlobUrl(text, currentVoice, 1.0, currentPitch);

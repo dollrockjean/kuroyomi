@@ -358,23 +358,23 @@ class TestUIImprovements(unittest.TestCase):
         self.assertIn("record.extraMeta", sync_js)
 
     def test_service_worker_and_asset_version_bump(self):
-        """Verify service worker cache name and asset version query strings match v38."""
+        """Verify service worker cache name and asset version query strings match current version."""
         sw_path = os.path.join(server.PUBLIC_DIR, "sw.js")
         with open(sw_path, "r", encoding="utf-8") as f:
             sw_js = f.read()
 
-        self.assertIn("byob-v38", sw_js)
-        self.assertIn("v=38.0", sw_js)
+        self.assertIn("byob-v39", sw_js)
+        self.assertIn("v=39.0", sw_js)
 
         index_path = os.path.join(server.PUBLIC_DIR, "index.html")
         with open(index_path, "r", encoding="utf-8") as f:
             index_html = f.read()
 
-        self.assertIn("brutalist.css?v=38.0", index_html)
-        self.assertIn("app.js?v=38.0", index_html)
-        self.assertIn("reader.js?v=38.0", index_html)
-        self.assertIn("tts.js?v=38.0", index_html)
-        self.assertIn("sync.js?v=38.0", index_html)
+        self.assertIn("brutalist.css?v=39.0", index_html)
+        self.assertIn("app.js?v=39.0", index_html)
+        self.assertIn("reader.js?v=39.0", index_html)
+        self.assertIn("tts.js?v=39.0", index_html)
+        self.assertIn("sync.js?v=39.0", index_html)
 
     def test_user_paragraph_normalization_and_synthesis(self):
         """Verify complex RPG paragraph with evolution arrows, ratios, and double colons is normalized and synthesized cleanly."""
@@ -495,6 +495,31 @@ class TestUIImprovements(unittest.TestCase):
         cleaned3 = server.normalize_text_for_narration(text3)
         self.assertIn("Divine Blade", cleaned3)
         self.assertIn("Shadow Shield", cleaned3)
+
+        # HTML-escaped angle brackets from EPUB/DOM rendering
+        text4 = "The word is &lt;&lt;Example&gt;&gt; and &lt;Herald&gt; right here."
+        cleaned4 = server.normalize_text_for_narration(text4)
+        self.assertIn("Example", cleaned4)
+        self.assertIn("Herald", cleaned4)
+        self.assertNotIn("&lt;", cleaned4)
+        self.assertNotIn("&gt;", cleaned4)
+        self.assertNotIn("<", cleaned4)
+        self.assertNotIn(">", cleaned4)
+
+    def test_tts_rate_local_storage_persistence_and_normalization(self):
+        """Verify TTSEngine and App persist and retrieve tts_rate via dedicated localStorage key."""
+        tts_js_path = os.path.join(server.PUBLIC_DIR, "js", "tts.js")
+        with open(tts_js_path, "r", encoding="utf-8") as f:
+            tts_js = f.read()
+
+        app_js_path = os.path.join(server.PUBLIC_DIR, "js", "app.js")
+        with open(app_js_path, "r", encoding="utf-8") as f:
+            app_js = f.read()
+
+        self.assertIn("byob_tts_rate", tts_js)
+        self.assertIn("byob_tts_rate", app_js)
+        self.assertIn("normalizeForSpeech", tts_js)
+        self.assertIn("cleanDeviceText = this.normalizeForSpeech(text)", tts_js)
 
     def test_tts_engine_single_audio_element_and_speed_sync(self):
         """Verify TTSEngine uses single audio element and centralized syncRateUI."""

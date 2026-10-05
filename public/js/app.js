@@ -1232,7 +1232,21 @@ const App = {
     }
 
     // 5. Read Speed (TTS Rate)
-    const ttsRate = parseFloat(cur.tts_rate || 1.0);
+    let ttsRate = parseFloat(cur.tts_rate || 1.0);
+    try {
+      const directRate = localStorage.getItem('byob_tts_rate') || localStorage.getItem('kuroyomi_tts_rate');
+      if (directRate && (!s || s.tts_rate === undefined)) {
+        ttsRate = parseFloat(directRate);
+      }
+    } catch (e) {}
+    if (!ttsRate || isNaN(ttsRate) || ttsRate <= 0) ttsRate = 1.0;
+    cur.tts_rate = ttsRate;
+
+    try {
+      localStorage.setItem('byob_tts_rate', String(ttsRate));
+      localStorage.setItem('kuroyomi_tts_rate', String(ttsRate));
+    } catch (e) {}
+
     if (typeof TTSEngine !== 'undefined') {
       TTSEngine.rate = ttsRate;
       if (typeof TTSEngine.syncRateUI === 'function') {
