@@ -300,7 +300,7 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
 
         # Path traversal protection: ensure resolved path is inside PUBLIC_DIR
         disk_path = os.path.normpath(os.path.join(PUBLIC_DIR, path.lstrip("/")))
-        if not disk_path.startswith(PUBLIC_DIR):
+        if disk_path != PUBLIC_DIR and not disk_path.startswith(PUBLIC_DIR + os.sep):
             self.send_json({"error": "Forbidden"}, status=403)
             return
 
@@ -589,6 +589,10 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 conn.close()
                 self.send_json({"error": "text query param required"}, status=400)
                 return
+            if len(text) > 6000:
+                conn.close()
+                self.send_json({"error": "text too long"}, status=413)
+                return
 
             audio_data = synthesize_speech(text, voice, rate, pitch)
             conn.close()
@@ -600,13 +604,19 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             range_header = self.headers.get("Range")
 
             if range_header and range_header.startswith("bytes="):
-                parts = range_header[6:].split("-")
-                start = int(parts[0]) if parts[0] else 0
-                end = int(parts[1]) if len(parts) > 1 and parts[1] else total_len - 1
-                if start >= total_len:
-                    start = total_len - 1
-                if end >= total_len:
-                    end = total_len - 1
+                parts = range_header[6:].split(",")[0].split("-")
+                try:
+                    if parts[0] == "" and len(parts) > 1 and parts[1]:
+                        # Suffix range: last N bytes
+                        start = max(0, total_len - int(parts[1]))
+                        end = total_len - 1
+                    else:
+                        start = int(parts[0]) if parts[0] else 0
+                        end = int(parts[1]) if len(parts) > 1 and parts[1] else total_len - 1
+                except ValueError:
+                    start, end = 0, total_len - 1
+                start = min(start, total_len - 1)
+                end = min(max(end, start), total_len - 1)
 
                 chunk = audio_data[start:end + 1]
                 self.send_response(206)
@@ -659,7 +669,10 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
 
-        content_length = int(self.headers.get("Content-Length", 0))
+        try:
+            content_length = max(0, int(self.headers.get("Content-Length", 0)))
+        except ValueError:
+            content_length = 0
         MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50MB limit safeguard
         if content_length > MAX_UPLOAD_SIZE:
             self.send_json({"error": "Payload exceeds 50MB upload limit. Upload files individually."}, status=413)
@@ -827,13 +840,14 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         if path.startswith("/api/novels/delete"):
             novel_id = body.get("novel_id")
             user_id = body.get("user_id")
-            if novel_id:
-                if user_id:
-                    cur.execute("DELETE FROM novels WHERE id = ? AND user_id = ?", (novel_id, user_id))
-                    cur.execute("UPDATE users SET demo_seeded = 1 WHERE id = ?", (user_id,))
-                else:
-                    cur.execute("DELETE FROM novels WHERE id = ?", (novel_id,))
+            if novel_id and user_id:
+                cur.execute("DELETE FROM novels WHERE id = ? AND user_id = ?", (novel_id, user_id))
+                cur.execute("UPDATE users SET demo_seeded = 1 WHERE id = ?", (user_id,))
                 conn.commit()
+            elif novel_id:
+                conn.close()
+                self.send_json({"error": "user_id required"}, status=400)
+                return
             conn.close()
             self.send_json({"success": True})
             return

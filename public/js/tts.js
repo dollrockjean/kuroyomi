@@ -163,6 +163,8 @@ const TTSEngine = {
 
     this._onPauseHandler = () => {
       // Detect OS-level pause (e.g. car bluetooth disconnect, lockscreen pause, phone call)
+      // Browsers fire 'pause' just before 'ended' and after our own internal pause() calls; neither is an OS pause
+      if (this.audioElement.ended || Date.now() < (this._ignorePauseUntil || 0)) return;
       if (this.isPlaying && !this.isPaused && !this.isLoading) {
         this.isPaused = true;
         this.updateAudioUI();
@@ -813,6 +815,7 @@ const TTSEngine = {
     }
 
     window.speechSynthesis.cancel();
+    const sessionId = this.playbackSessionId;
 
     // Clean brackets, evolution arrows, double colons, and stat fractions for smooth device voice pronunciation
     // Uses normalizeForSpeech to preserve words like <<Example>> or <Herald> without deleting them
@@ -1030,6 +1033,7 @@ const TTSEngine = {
     this.playbackSessionId = (this.playbackSessionId || 0) + 1;
     const sessionId = this.playbackSessionId;
 
+    this._ignorePauseUntil = Date.now() + 500;
     this.audioElement.pause();
     this.audioElement.loop = false;
 

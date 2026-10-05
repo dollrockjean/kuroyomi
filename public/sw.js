@@ -1,17 +1,17 @@
-// BYoB Service Worker v39
+// BYoB Service Worker v40
 // High-performance offline caching with instant WebKit/Safari PWA launch
-const CACHE_NAME = 'byob-v39';
+const CACHE_NAME = 'byob-v40';
 
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
-  '/css/brutalist.css?v=39.0',
-  '/js/app.js?v=39.0',
-  '/js/reader.js?v=39.0',
-  '/js/tts.js?v=39.0',
-  '/js/storage.js?v=39.0',
-  '/js/sync.js?v=39.0',
-  '/js/autoscroll.js?v=39.0',
+  '/css/brutalist.css?v=40.0',
+  '/js/app.js?v=40.0',
+  '/js/reader.js?v=40.0',
+  '/js/tts.js?v=40.0',
+  '/js/storage.js?v=40.0',
+  '/js/sync.js?v=40.0',
+  '/js/autoscroll.js?v=40.0',
   '/manifest.json',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
@@ -144,7 +144,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 4. General API requests: fast response or offline fallback
+  // 4. General API requests: generous timeout so a cold-starting free host is not mistaken for offline
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(
       (async () => {
@@ -157,7 +157,7 @@ self.addEventListener('fetch', (event) => {
 
         try {
           const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 2000);
+          const timer = setTimeout(() => controller.abort(), 20000);
           const res = await fetch(request, { signal: controller.signal });
           clearTimeout(timer);
           return res;
