@@ -1,6 +1,7 @@
 // Storage & Device Token Manager (iOS & Web)
 const Storage = {
   DEVICE_TOKEN_KEY: 'byob_device_token',
+  CLIENT_ID_KEY: 'byob_client_id',
   LEGACY_DEVICE_TOKEN_KEY: 'kuroyomi_device_token',
   SYNC_KEY_KEY: 'byob_sync_key',
   LEGACY_SYNC_KEY_KEY: 'kuroyomi_sync_key',
@@ -24,6 +25,23 @@ const Storage = {
       localStorage.setItem(this.DEVICE_TOKEN_KEY, token);
     }
     return token;
+  },
+
+  // Stable per-install id sent with reading progress so the server can tell which saves came from this device.
+  // Separate from the device token, which is a login credential and must not travel with every save.
+  getClientId() {
+    try {
+      let id = localStorage.getItem(this.CLIENT_ID_KEY);
+      if (!id) {
+        id = 'cli_' + Math.random().toString(36).substring(2, 12) + Math.random().toString(36).substring(2, 12);
+        localStorage.setItem(this.CLIENT_ID_KEY, id);
+      }
+      return id;
+    } catch (e) {
+      // Storage unavailable: a per-page id still orders this page's own saves
+      if (!this._memClientId) this._memClientId = 'cli_' + Math.random().toString(36).substring(2, 12);
+      return this._memClientId;
+    }
   },
 
   getDeviceName() {
@@ -81,7 +99,38 @@ const Storage = {
   },
 
   setLocalSettings(settings) {
-    localStorage.setItem(this.SETTINGS_KEY, JSON.stringify(settings));
+    this._safeSetItem(this.SETTINGS_KEY, JSON.stringify(settings));
+  },
+
+  // localStorage is small (about 5MB) and cached covers fill it. A full or blocked store must never throw into the
+  // caller: a thrown error here used to abort the reading-progress save before it reached the cloud.
+  _safeSetItem(key, value) {
+    try {
+      localStorage.setItem(key, value);
+      return true;
+    } catch (e) {
+      if (!this._freeLocalSpace()) return false;
+      try {
+        localStorage.setItem(key, value);
+        return true;
+      } catch (e2) {
+        return false;
+      }
+    }
+  },
+
+  // Cached covers (re-downloadable from the server) are the only bulky data kept in localStorage; drop them to make room
+  _freeLocalSpace() {
+    let freed = false;
+    try {
+      const doomed = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && (k.startsWith(this.COVER_PREFIX) || k.startsWith(this.LEGACY_COVER_PREFIX))) doomed.push(k);
+      }
+      doomed.forEach(k => { localStorage.removeItem(k); freed = true; });
+    } catch (e) {}
+    return freed;
   },
 
   saveSettings(settings) {
@@ -116,11 +165,13 @@ const Storage = {
       ...progress,
       savedAt: (progress && typeof progress.savedAt === 'number' && progress.savedAt > 0) ? progress.savedAt : Date.now()
     });
-    localStorage.setItem(`${this.PROGRESS_PREFIX}${uid}_${novelId}`, payload);
-    localStorage.setItem(this.PROGRESS_PREFIX + novelId, payload);
+    // Scoped key first: it is the one reopening a book reads. The rest are compatibility copies.
+    const saved = this._safeSetItem(`${this.PROGRESS_PREFIX}${uid}_${novelId}`, payload);
+    this._safeSetItem(this.PROGRESS_PREFIX + novelId, payload);
     // Also save legacy key for backward compatibility
-    localStorage.setItem(`${this.LEGACY_PROGRESS_PREFIX}${uid}_${novelId}`, payload);
-    localStorage.setItem(this.LEGACY_PROGRESS_PREFIX + novelId, payload);
+    this._safeSetItem(`${this.LEGACY_PROGRESS_PREFIX}${uid}_${novelId}`, payload);
+    this._safeSetItem(this.LEGACY_PROGRESS_PREFIX + novelId, payload);
+    return saved;
   },
 
   getLocalProgress(novelId, userId = null) {
@@ -187,6 +238,14 @@ const Storage = {
       return val ? JSON.parse(val) : [];
     } catch {
       return [];
+    }
+  },
+
+  setOfflineProgressQueue(queue) {
+    try {
+      localStorage.setItem(this.OFFLINE_QUEUE_KEY, JSON.stringify(queue));
+    } catch (e) {
+      console.warn('Could not store offline progress queue:', e);
     }
   },
 

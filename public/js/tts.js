@@ -33,6 +33,9 @@ const TTSEngine = {
   currentIndex: 0,
   playbackSessionId: 0,
   onChapterEndCallback: null,
+  _advancing: false,
+  _preloadedChapterId: null,
+  _silenceUri: null,
 
   // Event handlers
   _onEndedHandler: null,
@@ -129,6 +132,26 @@ const TTSEngine = {
 
     const blob = new Blob([buffer], { type: 'audio/wav' });
     return URL.createObjectURL(blob);
+  },
+
+  // Keeps the audio element playing (silently) while the next audio is fetched. Mobile OSes freeze a page whose audio
+  // goes quiet, which is what killed read aloud at chapter boundaries where the wait is a network round trip.
+  holdAudioSession() {
+    try {
+      const a = this.audioElement;
+      if (!this._silenceUri) this._silenceUri = this.generateSilenceWavUri(1);
+      this._ignorePauseUntil = Date.now() + 500;
+      a.loop = true;
+      a.src = this._silenceUri;
+      const p = a.play();
+      if (p && p.catch) p.catch(() => {});
+    } catch (e) {}
+  },
+
+  releaseAudioSession() {
+    this._ignorePauseUntil = Date.now() + 500;
+    this.audioElement.pause();
+    this.audioElement.loop = false;
   },
 
   bindAudioElementEvents() {
@@ -731,6 +754,14 @@ const TTSEngine = {
     }
   },
 
+  // Reading progress is stored as the paragraph's data-pid (what the reader scrolls back to), not its position in
+  // this.paragraphs: the chapter title heading is injected at index 0 without a data-pid, shifting every index by one.
+  getParagraphPid(index) {
+    const el = this.paragraphs && this.paragraphs[index];
+    const pid = el ? parseInt(el.getAttribute('data-pid'), 10) : NaN;
+    return isNaN(pid) ? 0 : pid;
+  },
+
   refreshParagraphs() {
     const container = document.getElementById('readerContent');
     if (!container) return;
@@ -913,11 +944,17 @@ const TTSEngine = {
 
     if (this.isPlaying && this.isPaused) {
       this.isPaused = false;
+      if (this._advancing) {
+        // The next chapter is still loading; advanceToNextChapter starts it as soon as it lands
+        this.holdAudioSession();
+        this.updateAudioUI();
+        return;
+      }
       if (this.isUsingDeviceVoice) {
         // Attempt recovery to selected cloud voice on resume
         this.setDeviceVoiceMode(false);
         this.speakParagraph(this.currentIndex);
-      } else if (this.audioElement && this.audioElement.src && this.audioElement.src !== window.location.href) {
+      } else if (this.audioElement && !this.audioElement.loop && this.audioElement.src && this.audioElement.src !== window.location.href) {
         this.audioElement.play().catch(() => this.speakParagraph(this.currentIndex));
       } else {
         this.speakParagraph(this.currentIndex);
@@ -1015,7 +1052,7 @@ const TTSEngine = {
       if (window.Reader) {
         const docHeight = document.documentElement.scrollHeight - window.innerHeight;
         const scrollPct = docHeight > 0 ? Math.round((window.scrollY / docHeight) * 100) : 0;
-        window.Reader.saveCurrentProgress(clampedIndex, scrollPct, clampedIndex === 0);
+        window.Reader.saveCurrentProgress(this.getParagraphPid(clampedIndex), scrollPct, clampedIndex === 0);
       }
 
       this.updateAudiobookModalContent();
@@ -1067,6 +1104,7 @@ const TTSEngine = {
         this.stop();
         return;
       }
+      this.holdAudioSession();
       await this.advanceToNextChapter();
       return;
     }
@@ -1092,7 +1130,7 @@ const TTSEngine = {
     if (window.Reader) {
       const docHeight = document.documentElement.scrollHeight - window.innerHeight;
       const scrollPct = docHeight > 0 ? Math.round((window.scrollY / docHeight) * 100) : 0;
-      window.Reader.saveCurrentProgress(index, scrollPct, index === 0);
+      window.Reader.saveCurrentProgress(this.getParagraphPid(index), scrollPct, index === 0);
     }
 
     // Check if audio blob is already in memory cache
@@ -1106,6 +1144,7 @@ const TTSEngine = {
     this.updateMediaSessionMetadata();
 
     if (!isCached && navigator.onLine) {
+      this.holdAudioSession();
       this.showAudiobookLoading();
     } else {
       this.updateAudiobookModalContent();
@@ -1113,7 +1152,7 @@ const TTSEngine = {
 
     // If device is offline
     if (!navigator.onLine) {
-      this.audioElement.pause();
+      this.releaseAudioSession();
       this.isLoading = false;
       this.setDeviceVoiceMode(true);
       this.updateAudiobookModalContent();
@@ -1153,11 +1192,17 @@ const TTSEngine = {
 
       // Proactively prefetch next 6 paragraphs
       this.prefetchAhead(index, 6);
+
+      // Near the end of the chapter, get the next one (text and first audio) ready before it is needed
+      if (index >= this.paragraphs.length - 8) {
+        this.preloadNextChapter();
+      }
     } catch (err) {
       this.isLoading = false;
       this.updateAudioUI();
       if (this.playbackSessionId !== sessionId || !this.isPlaying || this.isPaused) return;
       console.warn('Cloud TTS synthesis failed, using device voice fallback for this paragraph:', err);
+      this.releaseAudioSession();
       this.setDeviceVoiceMode(true);
       this.updateAudiobookModalContent();
       this.speakWithDeviceVoice(textToSpeak, index);
@@ -1191,30 +1236,31 @@ const TTSEngine = {
     }
 
     if (fromIndex >= this.paragraphs.length - 2) {
-      this.prefetchNextChapterHead();
+      this.preloadNextChapter();
     }
   },
 
-  async prefetchNextChapterHead() {
-    if (window.Reader && window.Reader.currentChapter && window.Reader.currentChapter.next_chapter) {
-      const nextId = window.Reader.currentChapter.next_chapter.id;
-      try {
-        const res = await fetch(`/api/chapters/${encodeURIComponent(nextId)}`);
-        if (res.ok) {
-          const nextCh = await res.json();
-          if (nextCh && nextCh.content_html) {
-            const div = document.createElement('div');
-            div.innerHTML = nextCh.content_html;
-            const ps = Array.from(div.querySelectorAll('.reader-paragraph, .reader-heading')).slice(0, 3);
-            for (const p of ps) {
-              const text = p.textContent.trim();
-              if (text) {
-                this.getAudioBlobUrl(text, this.selectedVoice, 1.0, this.pitch).catch(() => {});
-              }
-            }
-          }
-        }
-      } catch {}
+  // Loads the next chapter's text into the reader cache and synthesizes its first lines, once per chapter
+  async preloadNextChapter() {
+    const reader = window.Reader;
+    const current = reader && reader.currentChapter;
+    if (!current || !current.next_chapter || !navigator.onLine) return;
+    const nextId = current.next_chapter.id;
+    if (this._preloadedChapterId === nextId) return;
+    this._preloadedChapterId = nextId;
+
+    const voice = this.selectedVoice;
+    const pitch = this.pitch;
+    try {
+      const nextCh = await reader.preloadChapter(nextId);
+      if (!nextCh) throw new Error('next chapter unavailable');
+      for (const text of reader.getSpeakableTexts(nextCh, 3)) {
+        if (!this.isPlaying) break;
+        await this.getAudioBlobUrl(text, voice, 1.0, pitch);
+      }
+    } catch (e) {
+      // Allow a later paragraph to try again
+      this._preloadedChapterId = null;
     }
   },
 
@@ -1239,15 +1285,31 @@ const TTSEngine = {
   },
 
   async advanceToNextChapter(autoPlay = null) {
-    if (window.Reader && window.Reader.currentChapter && window.Reader.currentChapter.next_chapter) {
+    const reader = window.Reader;
+    if (!reader || !reader.currentChapter || !reader.currentChapter.next_chapter) {
+      this.stop();
+      return;
+    }
+    // The audio 'ended' and 'pause' events can both reach the chapter end; only one advance may run or a chapter gets skipped
+    if (this._advancing) return;
+    this._advancing = true;
+
+    try {
       const wasModalOpen = document.getElementById('audiobookFullModal')?.style.display === 'flex';
-      const shouldPlay = (autoPlay !== null) ? autoPlay : (this.isPlaying && !this.isPaused);
-      const nextId = window.Reader.currentChapter.next_chapter.id;
-      
+      const nextId = reader.currentChapter.next_chapter.id;
+      const sessionId = this.playbackSessionId;
+
       this.clearHighlight();
       this.clearWordHighlights();
 
-      const loaded = await window.Reader.loadChapter(nextId, false, true);
+      // A dropped signal for a second or two must not end the session, so retry before giving up
+      let loaded = null;
+      for (let attempt = 0; attempt < 4 && !loaded; attempt++) {
+        if (attempt > 0) await new Promise(r => setTimeout(r, 1500 * attempt));
+        if (this.playbackSessionId !== sessionId) return;
+        loaded = await reader.loadChapter(nextId, false, true);
+      }
+      if (this.playbackSessionId !== sessionId) return;
       if (!loaded) {
         this.stop();
         return;
@@ -1258,12 +1320,14 @@ const TTSEngine = {
         if (wasModalOpen) {
           this.openAudiobookModal();
         }
+        // Decide at the moment of the jump, so pausing while the chapter loaded is respected
+        const shouldPlay = (autoPlay !== null) ? autoPlay : (this.isPlaying && !this.isPaused);
         this.jumpToParagraph(0, shouldPlay);
       } else {
         this.stop();
       }
-    } else {
-      this.stop();
+    } finally {
+      this._advancing = false;
     }
   },
 
@@ -1323,7 +1387,7 @@ const TTSEngine = {
       novel_title: novel ? novel.title : 'Novel',
       chapter_id: chapter ? chapter.id : null,
       chapter_title: chapter ? chapter.title : 'Chapter',
-      paragraph_index: this.currentIndex || 0,
+      paragraph_index: this.getParagraphPid(this.currentIndex || 0),
       scroll_percent: window.Reader ? Math.round((window.scrollY / Math.max(1, document.documentElement.scrollHeight - window.innerHeight)) * 100) : 0,
       timestamp: Date.now()
     };
@@ -1416,7 +1480,7 @@ const TTSEngine = {
         finish: {
           chapter_id: chapter ? chapter.id : null,
           chapter_title: chapter ? chapter.title : 'Chapter',
-          paragraph_index: this.currentIndex,
+          paragraph_index: this.getParagraphPid(this.currentIndex),
           scroll_percent: window.Reader ? Math.round((window.scrollY / Math.max(1, document.documentElement.scrollHeight - window.innerHeight)) * 100) : 0
         },
         timestamp: Date.now()
@@ -1643,7 +1707,7 @@ const TTSEngine = {
   syncWordHighlight() {
     if (!this.currentWordList || this.currentWordList.length === 0) return;
     if (!this.audioElement || !this.audioElement.duration || isNaN(this.audioElement.duration)) return;
-    if (this.audioElement.paused) return;
+    if (this.audioElement.paused || this.audioElement.loop) return;
 
     const progress = Math.min(1.0, Math.max(0, this.audioElement.currentTime / this.audioElement.duration));
     const targetChar = Math.floor(progress * (this.currentSpokenLength || 1));

@@ -153,6 +153,13 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+    # Lets the server drop a stale save that arrives after a newer one from the same device
+    for col, col_type in [("client_id", "TEXT"), ("client_ts", "REAL")]:
+        try:
+            cursor.execute(f"ALTER TABLE reading_progress ADD COLUMN {col} {col_type}")
+        except sqlite3.OperationalError:
+            pass
+
     conn.commit()
     conn.close()
 

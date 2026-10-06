@@ -463,7 +463,7 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 cur.execute("SELECT * FROM reading_progress WHERE novel_id = ? AND user_id = ?", (novel_id, user_id))
                 prog_row = cur.fetchone()
                 if prog_row:
-                    progress = dict(prog_row)
+                    progress = {k: v for k, v in dict(prog_row).items() if k not in ("client_id", "client_ts")}
 
             conn.close()
             self.send_json({
@@ -776,19 +776,43 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             database.ensure_user_exists(user_id)
             now = time.time()
             prog_id = f"prog_{uuid.uuid4().hex[:12]}"
+
+            # Saves can reach the server out of order (slow cell signal, offline queue replays). The client stamps each
+            # save; a save older than one already stored from the same client is dropped instead of overwriting it.
+            client_id = body.get("client_id")
+            client_id = str(client_id)[:64] if client_id else None
+            try:
+                client_ts = float(body["client_ts"]) if body.get("client_ts") is not None else None
+            except (TypeError, ValueError):
+                client_ts = None
+            if client_ts is None:
+                client_id = None
+
             cur.execute("""
-                INSERT INTO reading_progress (id, user_id, novel_id, volume_id, chapter_id, paragraph_index, scroll_percent, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO reading_progress (id, user_id, novel_id, volume_id, chapter_id, paragraph_index, scroll_percent, updated_at, client_id, client_ts)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(user_id, novel_id) DO UPDATE SET
                     volume_id = excluded.volume_id,
                     chapter_id = excluded.chapter_id,
                     paragraph_index = excluded.paragraph_index,
                     scroll_percent = excluded.scroll_percent,
-                    updated_at = excluded.updated_at
-            """, (prog_id, user_id, novel_id, volume_id, chapter_id, paragraph_index, scroll_percent, now))
+                    updated_at = excluded.updated_at,
+                    client_id = excluded.client_id,
+                    client_ts = excluded.client_ts
+                WHERE excluded.client_id IS NULL
+                   OR reading_progress.client_id IS NULL
+                   OR reading_progress.client_id != excluded.client_id
+                   OR reading_progress.client_ts IS NULL
+                   OR excluded.client_ts >= reading_progress.client_ts
+            """, (prog_id, user_id, novel_id, volume_id, chapter_id, paragraph_index, scroll_percent, now, client_id, client_ts))
+            applied = cur.rowcount != 0
+            if not applied:
+                cur.execute("SELECT updated_at FROM reading_progress WHERE user_id = ? AND novel_id = ?", (user_id, novel_id))
+                row = cur.fetchone()
+                now = row[0] if row else now
             conn.commit()
             conn.close()
-            self.send_json({"success": True, "updated_at": now})
+            self.send_json({"success": True, "updated_at": now, "applied": applied})
             return
 
         # 4. Save Settings

@@ -135,10 +135,25 @@ const AutoScroll = {
       // Trigger next chapter
       if (this.onChapterEndCallback) {
         this.isPaused = true;
-        setTimeout(() => {
-          this.onChapterEndCallback();
+        setTimeout(async () => {
+          let next = null;
+          try {
+            next = await this.onChapterEndCallback();
+          } catch (e) {
+            console.warn('Auto-scroll could not load the next chapter:', e);
+          }
+          if (!this.isActive) return;
+          // Last chapter reached (or load failed): nothing further to scroll into
+          if (!next) {
+            this.stop();
+            return;
+          }
+          if (this.menuPaused) return;
+          // The paused frame ended the animation chain, so it has to be started again once the chapter is in
           this.isPaused = false;
           this.lastFrameTime = performance.now();
+          if (this.animationId) cancelAnimationFrame(this.animationId);
+          this.loop();
         }, 800);
       }
     }

@@ -10,6 +10,8 @@ const Reader = {
   isControlsVisible: true,
   scrollDebounce: null,
   lastScrollY: 0,
+  // Chapters read-aloud has preloaded, so crossing a chapter boundary needs no network round trip
+  chapterCache: new Map(),
 
   init() {
     if ('scrollRestoration' in history) {
@@ -106,14 +108,19 @@ const Reader = {
         }
       }
 
-      // Silently debounce saving progress to cloud without toasts
-      if (this.isRestoringScroll) return;
-      if (this.scrollDebounce) clearTimeout(this.scrollDebounce);
-      this.scrollDebounce = setTimeout(() => {
-        if (!this.isRestoringScroll) {
+      // Silently debounce saving progress to cloud without toasts. A scroll that lands while a position is being
+      // restored must still be saved, so the timer waits out the restore instead of discarding the scroll.
+      const armSave = (delay) => {
+        if (this.scrollDebounce) clearTimeout(this.scrollDebounce);
+        this.scrollDebounce = setTimeout(() => {
+          if (this.isRestoringScroll) {
+            armSave(250);
+            return;
+          }
           this.saveCurrentProgress();
-        }
-      }, 500);
+        }, delay);
+      };
+      armSave(500);
     }, { passive: true });
   },
 
@@ -551,8 +558,17 @@ const Reader = {
       const userId = SyncService.currentUserId || Storage.getUserId() || 'universal_device_mirror';
       let ch = null;
 
+      // 0. Read-aloud advancing to the next chapter: use the preloaded copy so the audio gap stays tiny
+      if (isTtsAdvance) {
+        ch = this.chapterCache.get(chapterId) || null;
+        if (!ch && typeof IDB !== 'undefined') {
+          const cached = await IDB.getCachedChapter(chapterId);
+          if (cached && cached.content_html) ch = cached;
+        }
+      }
+
       // 1. Attempt network fetch if online with 15s timeout
-      if (navigator.onLine) {
+      if (!ch && navigator.onLine) {
         try {
           const controller = new AbortController();
           const timer = setTimeout(() => controller.abort(), 15000);
@@ -749,6 +765,8 @@ const Reader = {
       return this.currentChapter;
     } catch (e) {
       App.hideLoading();
+      // A failed read-aloud advance keeps the chapter on screen so TTS can retry instead of wiping the page
+      if (isTtsAdvance) return null;
       const contentEl = document.getElementById('readerContent');
       if (contentEl) {
         contentEl.innerHTML = `
@@ -773,7 +791,13 @@ const Reader = {
     if (!this.currentNovel || !this.currentChapter) return;
     if (this.isRestoringScroll) return;
 
-    if (pid === null) pid = this.getVisibleParagraphIndex();
+    if (pid === null) {
+      // While read aloud is speaking, the paragraph it is on is the true position (the viewport only approximates it)
+      const tts = window.TTSEngine;
+      pid = (tts && tts.isPlaying && !tts.isPaused && typeof tts.getParagraphPid === 'function')
+        ? tts.getParagraphPid(tts.currentIndex)
+        : this.getVisibleParagraphIndex();
+    }
     if (scrollPercent === null) {
       const docHeight = document.documentElement.scrollHeight - window.innerHeight;
       scrollPercent = docHeight > 0 ? Math.min(100, Math.max(0, (window.scrollY / docHeight) * 100)) : 0;
@@ -1024,8 +1048,68 @@ const Reader = {
     });
   },
 
+  // Fetches a chapter ahead of time (memory + IndexedDB) so read-aloud can cross into it without waiting on the network
+  async preloadChapter(chapterId) {
+    if (!chapterId) return null;
+    const hit = this.chapterCache.get(chapterId);
+    if (hit) return hit;
+    let ch = null;
+    if (typeof IDB !== 'undefined') {
+      const cached = await IDB.getCachedChapter(chapterId);
+      if (cached && cached.content_html) ch = cached;
+    }
+    if (!ch && navigator.onLine) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 20000);
+      try {
+        const res = await fetch(`/api/chapters/${encodeURIComponent(chapterId)}`, { signal: controller.signal });
+        if (res.ok) {
+          const fetched = await res.json();
+          if (fetched && !fetched.error) {
+            ch = fetched;
+            if (typeof IDB !== 'undefined') IDB.saveCachedChapter(ch);
+          }
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    if (ch) {
+      this.chapterCache.set(chapterId, ch);
+      // Keep only the few chapters nearest the reader
+      while (this.chapterCache.size > 4) {
+        this.chapterCache.delete(this.chapterCache.keys().next().value);
+      }
+    }
+    return ch;
+  },
+
+  // The text read-aloud will speak for the first paragraphs of a chapter, exactly as renderChapterHtml lays them out
+  getSpeakableTexts(ch, limit = 3) {
+    const div = document.createElement('div');
+    div.innerHTML = this.buildChapterHtml(ch);
+    const texts = [];
+    for (const el of div.querySelectorAll('.reader-paragraph, .reader-heading')) {
+      el.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
+      const text = el.textContent.trim();
+      if (text) texts.push(text);
+      if (texts.length >= limit) break;
+    }
+    return texts;
+  },
+
   renderChapterHtml(ch) {
     if (!ch) return;
+    const contentEl = document.getElementById('readerContent');
+    if (!contentEl) return;
+    contentEl.innerHTML = this.buildChapterHtml(ch);
+
+    if (window.ReaderSettings && window.ReaderSettings.bionic_reading) {
+      this.applyBionicToContent(contentEl);
+    }
+  },
+
+  buildChapterHtml(ch) {
     let cleanContentHtml = ch.content_html || '';
     cleanContentHtml = cleanContentHtml
       .replace(/(&nbsp;|&#160;|&#xa0;|\u00a0|[\u2000-\u200b\u3000])/g, ' ')
@@ -1047,19 +1131,13 @@ const Reader = {
 
     const headingHtml = titleAlreadyInContent ? '' : `<h1 class="reader-heading">${ch.title}</h1>`;
 
-    const contentEl = document.getElementById('readerContent');
-    if (!contentEl) return;
-    contentEl.innerHTML = `
+    return `
       <div class="chapter-separator-banner">
         ${ch.volume_title || ch.novel_title || ''}
       </div>
       ${headingHtml}
       ${cleanContentHtml}
     `;
-
-    if (window.ReaderSettings && window.ReaderSettings.bionic_reading) {
-      this.applyBionicToContent(contentEl);
-    }
   },
 
   applyBionicToContent(container) {

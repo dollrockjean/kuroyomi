@@ -271,6 +271,8 @@ const SyncService = {
 
     this._syncSeq = (this._syncSeq || 0) + 1;
     const currentSeq = this._syncSeq;
+    // Strictly increasing stamp: lets the server discard a save that arrives after a newer one
+    this._lastClientTs = Math.max(Date.now(), (this._lastClientTs || 0) + 1);
 
     // 1. Immediately cache locally scoped to this user
     Storage.saveLocalProgress(novelId, {
@@ -283,6 +285,8 @@ const SyncService = {
 
     const progressRecord = {
       seq: currentSeq,
+      client_id: Storage.getClientId(),
+      client_ts: this._lastClientTs,
       user_id: activeUserId,
       novel_id: novelId,
       volume_id: activeVolumeId,
@@ -334,16 +338,20 @@ const SyncService = {
           volume_id: record.volume_id || 'vol_default',
           chapter_id: record.chapter_id,
           paragraph_index: record.paragraph_index,
-          scroll_percent: record.scroll_percent
+          scroll_percent: record.scroll_percent,
+          client_id: record.client_id,
+          client_ts: record.client_ts
         }),
         keepalive: true
       }).then(res => res.json()).then(data => {
         if (data && data.success) {
           this.updateStatus('synced', 'SAVED');
+          // Anything parked while the connection was bad can go now (the server drops it if it is stale)
+          if (Storage.getOfflineProgressQueue().length > 0) this.flushOfflineQueue();
           if (data.updated_at) {
-            // Guard against race conditions: only update local storage if user hasn't already moved to a different chapter
+            // A response for an older save must not roll back local progress the reader has since moved past
             const currentLocal = Storage.getLocalProgress(record.novel_id, record.user_id);
-            if (!currentLocal || currentLocal.chapterId === record.chapter_id || (this._syncSeq && reqSeq >= this._syncSeq)) {
+            if (!currentLocal || (this._syncSeq && reqSeq >= this._syncSeq)) {
               Storage.saveLocalProgress(record.novel_id, {
                 volumeId: record.volume_id || 'vol_default',
                 chapterId: record.chapter_id,
@@ -369,8 +377,11 @@ const SyncService = {
     const queue = Storage.getOfflineProgressQueue();
     if (!queue || queue.length === 0) return;
 
+    if (this._flushingQueue) return;
+    this._flushingQueue = true;
     const activeUid = this.currentUserId || (window.Storage && Storage.getUserId()) || 'guest';
     let syncedCount = 0;
+    const failed = [];
     for (const record of queue) {
       try {
         const uid = record.user_id || activeUid;
@@ -383,13 +394,20 @@ const SyncService = {
             volume_id: record.volume_id || 'vol_default',
             chapter_id: record.chapter_id,
             paragraph_index: record.paragraph_index,
-            scroll_percent: record.scroll_percent
+            scroll_percent: record.scroll_percent,
+            client_id: record.client_id,
+            client_ts: record.client_ts
           })
         });
         const data = await res.json();
-        if (data && data.success) {
+        if (!(data && data.success)) {
+          failed.push(record);
+          continue;
+        }
+        {
           syncedCount++;
-          if (data.updated_at) {
+          // A replayed save only refreshes local state if the server took it and nothing newer was saved since
+          if (data.updated_at && data.applied !== false && (record.client_ts || 0) >= (this._lastClientTs || 0)) {
             Storage.saveLocalProgress(record.novel_id, {
               volumeId: record.volume_id || 'vol_default',
               chapterId: record.chapter_id,
@@ -402,11 +420,27 @@ const SyncService = {
         }
       } catch (e) {
         console.warn('Error syncing queued offline progress:', e);
+        failed.push(record);
       }
+    }
+    this._flushingQueue = false;
+
+    // Only drop what actually reached the server; the rest waits for the next attempt. Saves queued while this
+    // flush was running are kept too, newest per novel winning.
+    const handled = new Set(queue.map(r => `${r.novel_id}:${r.queued_at}`));
+    const arrivedMeanwhile = Storage.getOfflineProgressQueue().filter(r => !handled.has(`${r.novel_id}:${r.queued_at}`));
+    const keep = new Map();
+    for (const r of [...failed, ...arrivedMeanwhile]) {
+      const prev = keep.get(r.novel_id);
+      if (!prev || (r.client_ts || 0) >= (prev.client_ts || 0)) keep.set(r.novel_id, r);
+    }
+    if (keep.size > 0) {
+      Storage.setOfflineProgressQueue([...keep.values()]);
+    } else {
+      Storage.clearOfflineProgressQueue();
     }
 
     if (syncedCount > 0) {
-      Storage.clearOfflineProgressQueue();
       this.updateStatus('synced', 'SYNCED');
       if (window.App && typeof window.App.showToast === 'function') {
         window.App.showToast(`Online: Synced ${syncedCount} reading position(s)`);

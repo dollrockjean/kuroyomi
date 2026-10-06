@@ -363,18 +363,18 @@ class TestUIImprovements(unittest.TestCase):
         with open(sw_path, "r", encoding="utf-8") as f:
             sw_js = f.read()
 
-        self.assertIn("byob-v41", sw_js)
-        self.assertIn("v=41.0", sw_js)
+        self.assertIn("byob-v42", sw_js)
+        self.assertIn("v=42.0", sw_js)
 
         index_path = os.path.join(server.PUBLIC_DIR, "index.html")
         with open(index_path, "r", encoding="utf-8") as f:
             index_html = f.read()
 
-        self.assertIn("brutalist.css?v=41.0", index_html)
-        self.assertIn("app.js?v=41.0", index_html)
-        self.assertIn("reader.js?v=41.0", index_html)
-        self.assertIn("tts.js?v=41.0", index_html)
-        self.assertIn("sync.js?v=41.0", index_html)
+        self.assertIn("brutalist.css?v=42.0", index_html)
+        self.assertIn("app.js?v=42.0", index_html)
+        self.assertIn("reader.js?v=42.0", index_html)
+        self.assertIn("tts.js?v=42.0", index_html)
+        self.assertIn("sync.js?v=42.0", index_html)
 
     def test_user_paragraph_normalization_and_synthesis(self):
         """Verify complex RPG paragraph with evolution arrows, ratios, and double colons is normalized and synthesized cleanly."""
@@ -430,7 +430,9 @@ class TestUIImprovements(unittest.TestCase):
 
         self.assertIn("immediate = false", sync_js)
         self.assertIn("this._syncSeq", sync_js)
-        self.assertIn("currentLocal.chapterId === record.chapter_id", sync_js)
+        self.assertIn("reqSeq >= this._syncSeq", sync_js)
+        # A response for an older save must not roll local progress back, even within the same chapter
+        self.assertNotIn("currentLocal.chapterId === record.chapter_id", sync_js)
 
     def test_animated_spinner_and_library_loader(self):
         """Verify @keyframes spin exists and library loader circle is animated."""
@@ -540,7 +542,7 @@ class TestUIImprovements(unittest.TestCase):
         # jumpToParagraph must handle paused state smoothly
         self.assertIn("jumpToParagraph(index, autoPlay = null)", tts_js)
         self.assertIn("this.updateAudiobookModalContent();", tts_js)
-        self.assertIn("window.Reader.saveCurrentProgress(clampedIndex", tts_js)
+        self.assertIn("window.Reader.saveCurrentProgress(this.getParagraphPid(clampedIndex)", tts_js)
 
         # MediaSession handlers wired
         self.assertIn("setActionHandler('play'", tts_js)
