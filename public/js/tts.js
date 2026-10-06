@@ -149,6 +149,7 @@ const TTSEngine = {
     }
 
     this._onPlayHandler = () => {
+      clearTimeout(this._pauseTimer);
       try {
         if (this.rate) {
           this.audioElement.playbackRate = this.rate;
@@ -162,16 +163,27 @@ const TTSEngine = {
     };
 
     this._onPauseHandler = () => {
-      // Detect OS-level pause (e.g. car bluetooth disconnect, lockscreen pause, phone call)
-      // Browsers fire 'pause' just before 'ended' and after our own internal pause() calls; neither is an OS pause
-      if (this.audioElement.ended || Date.now() < (this._ignorePauseUntil || 0)) return;
-      if (this.isPlaying && !this.isPaused && !this.isLoading) {
-        this.isPaused = true;
-        this.updateAudioUI();
-      }
+      // Browsers fire 'pause' just before 'ended' (and MP3 durations are often inexact), so never trust it right away.
+      // Wait briefly: if the track simply finished, advance; otherwise treat it as an OS-level pause (bluetooth, call).
+      if (Date.now() < (this._ignorePauseUntil || 0)) return;
+      clearTimeout(this._pauseTimer);
+      const sessionAtPause = this.playbackSessionId;
+      this._pauseTimer = setTimeout(() => {
+        const a = this.audioElement;
+        if (this.playbackSessionId !== sessionAtPause || !this.isPlaying || this.isPaused || this.isLoading) return;
+        if (!a.paused) return;
+        const nearEnd = a.ended || (isFinite(a.duration) && a.duration > 0 && a.duration - a.currentTime < 0.6);
+        if (nearEnd) {
+          this.speakParagraph(this.currentIndex + 1);
+        } else {
+          this.isPaused = true;
+          this.updateAudioUI();
+        }
+      }, 250);
     };
 
     this._onEndedHandler = () => {
+      clearTimeout(this._pauseTimer);
       if (!this.isPlaying || this.isPaused || this.audioElement.loop) return;
       if (this.isLoading) return;
       this.speakParagraph(this.currentIndex + 1);
