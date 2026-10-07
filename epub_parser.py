@@ -13,18 +13,7 @@ def clean_tag(tag):
         return tag.split('}', 1)[1]
     return tag
 
-def sanitize_html(raw_html):
-    if not raw_html:
-        return ""
-    # Strip script, style, iframe, object, embed, form tags and contents
-    cleaned = re.sub(r'<(script|style|iframe|object|embed|form|input)[^>]*>.*?</\1>', '', raw_html, flags=re.I | re.S)
-    cleaned = re.sub(r'<(script|style|iframe|object|embed|form|input|meta|link)[^>]*?/?>', '', cleaned, flags=re.I)
-    # Strip inline JavaScript event handlers
-    cleaned = re.sub(r'\s+on[a-zA-Z]+\s*=\s*(["\']).*?\1', '', cleaned, flags=re.I)
-    cleaned = re.sub(r'\s+on[a-zA-Z]+\s*=\s*[^ >]+', '', cleaned, flags=re.I)
-    # Strip javascript: URIs
-    cleaned = re.sub(r'href\s*=\s*["\']\s*javascript:[^"\']*["\']', 'href="#"', cleaned, flags=re.I)
-    return cleaned
+from html_sanitizer import sanitize_html  # noqa: E402  (allowlist sanitizer; replaces the old regex blacklist)
 
 COMMON_ABBREVIATIONS = {
     "e.g", "i.e", "etc", "vs", "a.m", "p.m", "p.s", "mr", "mrs", "ms", "dr", "prof", "jr", "sr", "st"

@@ -4,6 +4,25 @@ import json
 import time
 import uuid
 import re
+import threading
+from html_sanitizer import sanitize_html
+
+# A request that fails between its first write and its commit used to leave that connection (and SQLite's single write
+# lock) open, so every later write failed with "database is locked". The server turns tracking on for each request
+# thread and closes whatever is still open when the request ends.
+_thread_state = threading.local()
+
+def track_connections():
+    _thread_state.conns = []
+
+def release_connections():
+    conns = getattr(_thread_state, "conns", None)
+    _thread_state.conns = None
+    for c in conns or []:
+        try:
+            c.close()  # closing rolls back anything uncommitted
+        except Exception:
+            pass
 
 def _resolve_db_path():
     env_path = os.environ.get("READER_DB_PATH")
@@ -15,6 +34,9 @@ def _resolve_db_path():
 
 def get_db():
     conn = sqlite3.connect(_resolve_db_path(), timeout=30.0)
+    tracked = getattr(_thread_state, "conns", None)
+    if tracked is not None:
+        tracked.append(conn)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     try:
@@ -204,7 +226,7 @@ def get_or_create_user(sync_key: str, display_name: str = None, requested_user_i
         return det_user_id
 
     # 4. Insert new user row
-    final_sync_key = sync_key or f"READER-{uuid.uuid4().hex[:8].upper()}"
+    final_sync_key = sync_key or f"READER-{uuid.uuid4().hex[:12].upper()}"
     cur.execute(
         "INSERT OR IGNORE INTO users (id, sync_key, display_name, created_at, last_active) VALUES (?, ?, ?, ?, ?)",
         (det_user_id, final_sync_key, display_name or f"Reader_{final_sync_key[:6]}", now, now)
@@ -232,7 +254,7 @@ def ensure_user_exists(user_id: str, sync_key: str = None):
             if cur.fetchone():
                 key = None
         if not key:
-            key = f"READER-{uuid.uuid4().hex[:8].upper()}"
+            key = f"READER-{uuid.uuid4().hex[:12].upper()}"
         cur.execute("""
             INSERT OR IGNORE INTO users (id, sync_key, display_name, demo_seeded, created_at, last_active)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -276,6 +298,41 @@ def get_user_by_device(device_token: str):
         conn.commit()
     conn.close()
     return dict(row) if row else None
+
+def user_exists(user_id: str) -> bool:
+    if not user_id:
+        return False
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM users WHERE id = ?", (user_id,))
+        return cur.fetchone() is not None
+    finally:
+        conn.close()
+
+def device_belongs_to_user(device_token: str, user_id: str) -> bool:
+    if not device_token or not user_id:
+        return False
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM devices WHERE device_token = ? AND user_id = ?", (device_token, user_id))
+        return cur.fetchone() is not None
+    finally:
+        conn.close()
+
+def sync_key_matches(user_id: str, sync_key: str) -> bool:
+    import hmac
+    if not user_id or not sync_key:
+        return False
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT sync_key FROM users WHERE id = ?", (user_id,))
+        row = cur.fetchone()
+    finally:
+        conn.close()
+    return bool(row and row["sync_key"] and hmac.compare_digest(row["sync_key"], sync_key.strip().upper()))
 
 def get_user_devices(user_id: str):
     conn = get_db()
@@ -448,7 +505,7 @@ def import_backup_data(data: dict, user_id: str, sync_key: str = None):
         cur.execute("""
             INSERT OR REPLACE INTO chapters (id, novel_id, volume_id, chapter_index, global_index, title, content_html, word_count)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (target_cid, final_nid, final_vid, c.get("chapter_index", 1), c.get("global_index", 1), c.get("title", ""), c.get("content_html", ""), c.get("word_count", 0)))
+        """, (target_cid, final_nid, final_vid, c.get("chapter_index", 1), c.get("global_index", 1), c.get("title", ""), sanitize_html(c.get("content_html", "")), c.get("word_count", 0)))
 
     for p in progress_list:
         orig_nid = p.get("novel_id")
@@ -491,37 +548,43 @@ def import_backup_data(data: dict, user_id: str, sync_key: str = None):
         "chapters_restored": len(chapters)
     }
 
+COVER_DATA_RE = re.compile(r"^data:image/(?:png|jpe?g|gif|webp|avif|bmp|svg\+xml);base64,[A-Za-z0-9+/=]+$")
+MAX_COVER_BYTES = 6 * 1024 * 1024
+
+def is_valid_cover_data(cover_data) -> bool:
+    return isinstance(cover_data, str) and len(cover_data) <= MAX_COVER_BYTES and bool(COVER_DATA_RE.match(cover_data))
+
 def update_novel_cover(novel_id: str, user_id: str, cover_data: str):
+    if not is_valid_cover_data(cover_data):
+        return False
     conn = get_db()
-    cur = conn.cursor()
-    now = time.time()
-    cur.execute(
-        "UPDATE novels SET cover_data = ?, updated_at = ? WHERE id = ? AND (user_id = ? OR user_id IS NULL OR user_id = '' OR user_id = 'guest')",
-        (cover_data, now, novel_id, user_id)
-    )
-    if cur.rowcount == 0:
+    try:
+        cur = conn.cursor()
+        now = time.time()
+        # Only the owner (or an unowned legacy novel) may change a cover
         cur.execute(
-            "UPDATE novels SET cover_data = ?, updated_at = ? WHERE id = ?",
-            (cover_data, now, novel_id)
+            "UPDATE novels SET cover_data = ?, updated_at = ? WHERE id = ? AND (user_id = ? OR user_id IS NULL OR user_id = '' OR user_id = 'guest')",
+            (cover_data, now, novel_id, user_id)
         )
-    if cur.rowcount == 0:
-        cur.execute("SELECT id FROM novels WHERE id = ?", (novel_id,))
-        if not cur.fetchone():
-            effective_uid = user_id or "guest"
-            cur.execute(
-                "INSERT OR IGNORE INTO users (id, sync_key, display_name, created_at, last_active) VALUES (?, ?, ?, ?, ?)",
-                (effective_uid, f"BYOB-{effective_uid[:8].upper()}", effective_uid, now, now)
-            )
-            cur.execute(
-                "INSERT INTO novels (id, title, author, description, cover_data, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (novel_id, "Novel", "Unknown Author", "", cover_data, effective_uid, now, now)
-            )
-    conn.commit()
-    cur.execute("SELECT cover_data FROM novels WHERE id = ?", (novel_id,))
-    row = cur.fetchone()
-    updated = bool(row and row[0] == cover_data)
-    conn.close()
-    return updated
+        if cur.rowcount == 0:
+            cur.execute("SELECT id FROM novels WHERE id = ?", (novel_id,))
+            if not cur.fetchone():
+                # The server lost this novel (ephemeral hosting reset); recreate the shell so the cover is not lost
+                effective_uid = user_id or "guest"
+                cur.execute(
+                    "INSERT OR IGNORE INTO users (id, sync_key, display_name, created_at, last_active) VALUES (?, ?, ?, ?, ?)",
+                    (effective_uid, f"BYOB-{effective_uid[:8].upper()}", effective_uid, now, now)
+                )
+                cur.execute(
+                    "INSERT INTO novels (id, title, author, description, cover_data, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (novel_id, "Novel", "Unknown Author", "", cover_data, effective_uid, now, now)
+                )
+        conn.commit()
+        cur.execute("SELECT cover_data FROM novels WHERE id = ? AND (user_id = ? OR user_id IS NULL OR user_id = '' OR user_id = 'guest')", (novel_id, user_id or "guest"))
+        row = cur.fetchone()
+        return bool(row and row[0] == cover_data)
+    finally:
+        conn.close()
 
 def clean_novel_obfuscation(novel_id: str, user_id: str):
     """

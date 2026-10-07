@@ -60,17 +60,20 @@ class TestUIImprovements(unittest.TestCase):
         conn.close()
         self.assertEqual(row[0], test_data_url)
 
-        # 2. Update with guest fallback
-        alt_data_url = "data:image/jpeg;base64,alt_sample_payload_data"
+        # 2. A different user (including "guest") must NOT be able to replace a cover owned by someone else
+        alt_data_url = "data:image/jpeg;base64,altSamplePayloadData"
         updated_guest = database.update_novel_cover(novel_id, "guest", alt_data_url)
-        self.assertTrue(updated_guest)
+        self.assertFalse(updated_guest)
 
         conn = database.get_db()
         cur = conn.cursor()
         cur.execute("SELECT cover_data FROM novels WHERE id = ?", (novel_id,))
         row = cur.fetchone()
         conn.close()
-        self.assertEqual(row[0], alt_data_url)
+        self.assertEqual(row[0], test_data_url)
+
+        # 3. Anything that is not a base64 image data URL is refused outright
+        self.assertFalse(database.update_novel_cover(novel_id, user_id, 'x" onerror="alert(1)'))
 
     def test_reader_bottom_tip_markup_and_css(self):
         """Verify the bottom scroll tip markup and styling."""
@@ -195,7 +198,7 @@ class TestUIImprovements(unittest.TestCase):
     def test_cover_upload_resilience_and_storage_methods(self):
         """Verify cover persistence with novel insert fallback and storage methods."""
         novel_id = f"nov_nonexistent_{int(time.time()*1000)}"
-        test_cover = "data:image/jpeg;base64,sample_fallback_cover_data"
+        test_cover = "data:image/jpeg;base64,sampleFallbackCoverData"
         updated = database.update_novel_cover(novel_id, "test_resilient_user", test_cover)
         self.assertTrue(updated)
 
@@ -363,18 +366,18 @@ class TestUIImprovements(unittest.TestCase):
         with open(sw_path, "r", encoding="utf-8") as f:
             sw_js = f.read()
 
-        self.assertIn("byob-v42", sw_js)
-        self.assertIn("v=42.0", sw_js)
+        self.assertIn("byob-v43", sw_js)
+        self.assertIn("v=43.0", sw_js)
 
         index_path = os.path.join(server.PUBLIC_DIR, "index.html")
         with open(index_path, "r", encoding="utf-8") as f:
             index_html = f.read()
 
-        self.assertIn("brutalist.css?v=42.0", index_html)
-        self.assertIn("app.js?v=42.0", index_html)
-        self.assertIn("reader.js?v=42.0", index_html)
-        self.assertIn("tts.js?v=42.0", index_html)
-        self.assertIn("sync.js?v=42.0", index_html)
+        self.assertIn("brutalist.css?v=43.0", index_html)
+        self.assertIn("app.js?v=43.0", index_html)
+        self.assertIn("reader.js?v=43.0", index_html)
+        self.assertIn("tts.js?v=43.0", index_html)
+        self.assertIn("sync.js?v=43.0", index_html)
 
     def test_user_paragraph_normalization_and_synthesis(self):
         """Verify complex RPG paragraph with evolution arrows, ratios, and double colons is normalized and synthesized cleanly."""
@@ -477,7 +480,7 @@ class TestUIImprovements(unittest.TestCase):
         self.assertNotIn("insertBefore(loadingBar", tts_js)
 
         # Ensure updateAudiobookModalContent() is called upon load completion to dismiss loading screen
-        self.assertIn("this.updateAudiobookModalContent();\n\n      await this.audioElement.play()", tts_js)
+        self.assertRegex(tts_js, r"this\.updateAudiobookModalContent\(\);\s+started = this\.audioElement\.play\(\);")
 
     def test_decorated_words_normalization_preserves_words(self):
         """Verify words with symbols like <<Herald>> or <Herald> are preserved and vocalized, not stripped."""

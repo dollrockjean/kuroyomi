@@ -2000,7 +2000,7 @@ const App = {
 
       const title = record.novel_title || 'your novel';
       if (desc) {
-        desc.innerHTML = `Your sleep timer finished while reading <strong>${title}</strong>. Where would you like to resume?`;
+        desc.innerHTML = `Your sleep timer finished while reading <strong>${escapeHtml(title)}</strong>. Where would you like to resume?`;
       }
 
       if (finishSub) {
@@ -2207,7 +2207,7 @@ const App = {
         card.setAttribute('data-id', n.id);
         card.innerHTML = `
           <div class="novel-list-cover-wrap" style="cursor: pointer;" title="Click to change cover image">
-            <img src="${coverSrc}" class="novel-list-cover" alt="${escapeHtml(n.title)}" loading="lazy" />
+            <img src="${escapeHtml(coverSrc)}" class="novel-list-cover" alt="${escapeHtml(n.title)}" loading="lazy" />
           </div>
           <div class="novel-list-body">
             <h3 class="novel-list-title">${escapeHtml(n.title)}</h3>
@@ -2225,8 +2225,8 @@ const App = {
             </div>
           </div>
           <div class="novel-list-actions" style="display: flex; align-items: center; gap: 8px;">
-            <button class="btn-brutal btn-brutal-accent btn-sm read-novel-btn" data-id="${n.id}">Read</button>
-            <button class="btn-brutal btn-sm novel-settings-cog-btn" data-id="${n.id}" title="Book Settings (+ Volume, Change Cover, Fix Dotted Words, Delete)" style="padding: 6px 9px; display: flex; align-items: center; justify-content: center;">
+            <button class="btn-brutal btn-brutal-accent btn-sm read-novel-btn" data-id="${escapeHtml(n.id)}">Read</button>
+            <button class="btn-brutal btn-sm novel-settings-cog-btn" data-id="${escapeHtml(n.id)}" title="Book Settings (+ Volume, Change Cover, Fix Dotted Words, Delete)" style="padding: 6px 9px; display: flex; align-items: center; justify-content: center;">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="12" r="3"></circle>
                 <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
@@ -2249,7 +2249,7 @@ const App = {
         card.setAttribute('data-id', n.id);
         card.innerHTML = `
           <div class="novel-card-cover-wrap" style="position: relative; cursor: pointer;" title="Click to change cover image">
-            <img src="${coverSrc}" class="novel-card-cover" alt="${escapeHtml(n.title)}" loading="lazy" />
+            <img src="${escapeHtml(coverSrc)}" class="novel-card-cover" alt="${escapeHtml(n.title)}" loading="lazy" />
             <div class="cover-overlay-badge">
               Change Cover
             </div>
@@ -2272,8 +2272,8 @@ const App = {
             </div>
             <div class="novel-card-actions">
               <div class="novel-card-primary-action" style="flex: 1; display: flex; gap: 8px;">
-                <button class="btn-brutal btn-brutal-accent read-novel-btn" data-id="${n.id}" style="flex: 1;">Read</button>
-                <button class="btn-brutal btn-sm novel-settings-cog-btn" data-id="${n.id}" title="Book Settings (+ Volume, Change Cover, Fix Dotted Words, Delete)" style="padding: 7px 11px; display: flex; align-items: center; justify-content: center;">
+                <button class="btn-brutal btn-brutal-accent read-novel-btn" data-id="${escapeHtml(n.id)}" style="flex: 1;">Read</button>
+                <button class="btn-brutal btn-sm novel-settings-cog-btn" data-id="${escapeHtml(n.id)}" title="Book Settings (+ Volume, Change Cover, Fix Dotted Words, Delete)" style="padding: 7px 11px; display: flex; align-items: center; justify-content: center;">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="12" cy="12" r="3"></circle>
                     <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
@@ -2451,7 +2451,7 @@ const App = {
     const targetNotice = document.getElementById('uploadTargetNotice');
     if (targetNovelId && targetNovelTitle) {
       targetNotice.style.display = 'block';
-      targetNotice.innerHTML = `Adding volumes to existing novel: <strong>${targetNovelTitle}</strong>`;
+      targetNotice.innerHTML = `Adding volumes to existing novel: <strong>${escapeHtml(targetNovelTitle)}</strong>`;
       document.getElementById('customTitleGroup').style.display = 'none';
     } else {
       targetNotice.style.display = 'none';

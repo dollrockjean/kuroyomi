@@ -22,10 +22,13 @@ for p in [os.path.expanduser("~/Library/Python/3.9/lib/python/site-packages"),
     if os.path.exists(p) and p not in sys.path:
         sys.path.insert(0, p)
 
+import ipaddress
+import traceback
 import database
 import epub_parser
 import pdf_parser
 import sample_books
+from html_sanitizer import sanitize_html
 
 PORT = int(os.environ.get("PORT", 8000))
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -131,6 +134,67 @@ VALID_VOICES = {
     "en-AU-WilliamMultilingualNeural"
 }
 
+# Endpoints that read out or change an account wholesale. They need proof the caller is that account: a registered
+# device token (X-Device-Token header, added by the app) or the account's sync key. Accounts that do not exist yet are
+# let through, because the request is what creates them (first upload, or a restore after a free-tier reset).
+MAX_JSON_BODY = 1 * 1024 * 1024
+LARGE_BODY_LIMITS = {"/api/restore": 50 * 1024 * 1024, "/api/novels/cover": 8 * 1024 * 1024}
+MAX_UPLOAD_FILES = 50
+
+class RateLimiter:
+    """Small in-memory sliding window, enough to stop one client hammering account creation or paid TTS."""
+    def __init__(self):
+        self._hits = {}
+        self._lock = threading.Lock()
+
+    def allow(self, bucket, client, limit, window=60.0):
+        now = time.time()
+        key = (bucket, client)
+        with self._lock:
+            hits = [t for t in self._hits.get(key, ()) if now - t < window]
+            if len(hits) >= limit:
+                self._hits[key] = hits
+                return False, max(1, int(window - (now - hits[0])))
+            hits.append(now)
+            self._hits[key] = hits
+            if len(self._hits) > 5000:  # drop idle clients
+                for k in [k for k, v in self._hits.items() if not v or now - v[-1] > window]:
+                    self._hits.pop(k, None)
+            return True, 0
+
+RATE_LIMITER = RateLimiter()
+RATE_LIMITS = {"register": 30, "upload": 20, "restore": 10, "tts": 300}
+
+_TTS_CACHE_MAX_BYTES = 400 * 1024 * 1024
+_TTS_CACHE_TARGET_BYTES = 300 * 1024 * 1024
+_tts_cache_writes = 0
+
+def prune_tts_cache():
+    """Anyone can ask for any text, so the on-disk audio cache must not be able to fill the disk."""
+    try:
+        entries = []
+        total = 0
+        for name in os.listdir(TTS_CACHE_DIR):
+            path = os.path.join(TTS_CACHE_DIR, name)
+            st = os.stat(path)
+            entries.append((st.st_mtime, st.st_size, path))
+            total += st.st_size
+        if total <= _TTS_CACHE_MAX_BYTES:
+            return
+        for _, size, path in sorted(entries):
+            os.remove(path)
+            total -= size
+            if total <= _TTS_CACHE_TARGET_BYTES:
+                break
+    except OSError:
+        pass
+
+def _note_tts_cache_write():
+    global _tts_cache_writes
+    _tts_cache_writes += 1
+    if _tts_cache_writes % 100 == 0:
+        prune_tts_cache()
+
 TTS_CONCURRENCY_SEMAPHORE = threading.Semaphore(6)
 _IN_FLIGHT_TTS = {}
 _IN_FLIGHT_LOCK = threading.Lock()
@@ -196,6 +260,7 @@ def synthesize_speech(text, voice="en-US-BrianNeural", rate="+0%", pitch="+0Hz")
             if data and len(data) > 100:
                 with open(cache_file, "wb") as f:
                     f.write(data)
+                _note_tts_cache_write()
                 return data
     except Exception as e:
         print(f"[TTS] Neural TTS synthesis error ({type(e).__name__}) for voice='{voice}' rate='{norm_rate}' pitch='{norm_pitch}': {e}")
@@ -207,6 +272,7 @@ def synthesize_speech(text, voice="en-US-BrianNeural", rate="+0%", pitch="+0Hz")
                 if data and len(data) > 100:
                     with open(cache_file, "wb") as f:
                         f.write(data)
+                    _note_tts_cache_write()
                     return data
         except Exception as retry_err:
             print(f"[TTS] Retry failed ({type(retry_err).__name__}) for voice='{voice}': {retry_err}")
@@ -227,9 +293,6 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("X-Frame-Options", "SAMEORIGIN")
-        self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Device-Token")
@@ -247,6 +310,12 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             super().send_error(code, message, explain)
 
     def end_headers(self):
+        # Sent on every response (pages, scripts, JSON, audio), not just JSON
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "SAMEORIGIN")
+        self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
+        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
+        self.send_header("Content-Security-Policy", "object-src 'none'; base-uri 'self'; frame-ancestors 'self'; form-action 'self'")
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         if path in ("/sw.js", "/service-worker.js"):
@@ -258,6 +327,51 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         elif any(path.startswith(p) for p in ("/js/", "/css/", "/icons/")):
             self.send_header("Cache-Control", "public, max-age=86400")
         super().end_headers()
+
+    def client_ip(self):
+        """The caller's address, looking through a hosting proxy (Render, Fly) when the direct peer is a private one."""
+        peer = self.client_address[0] if getattr(self, "client_address", None) else "unknown"
+        try:
+            behind_proxy = ipaddress.ip_address(peer).is_private
+        except ValueError:
+            behind_proxy = False
+        forwarded = self.headers.get("X-Forwarded-For", "") if getattr(self, "headers", None) else ""
+        if behind_proxy and forwarded:
+            return forwarded.split(",")[0].strip()[:64] or peer
+        return peer
+
+    def rate_limited(self, bucket):
+        ok, retry_after = RATE_LIMITER.allow(bucket, self.client_ip(), RATE_LIMITS[bucket])
+        if ok:
+            return False
+        body = json.dumps({"error": "Too many requests. Please wait a moment and try again."}).encode("utf-8")
+        self.send_response(429)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Retry-After", str(retry_after))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
+    def is_authorized(self, user_id, sync_key=None):
+        """True if the caller may act on `user_id`: it has no account yet, or the caller proves it owns it."""
+        if not user_id or not isinstance(user_id, str):
+            return False
+        if not database.user_exists(user_id):
+            return True
+        headers = getattr(self, "headers", None)
+        token = (headers.get("X-Device-Token") if headers else "") or ""
+        if token and database.device_belongs_to_user(token.strip(), user_id):
+            return True
+        return bool(sync_key and isinstance(sync_key, str) and database.sync_key_matches(user_id, sync_key))
+
+    def deny(self):
+        self.send_json({"error": "This device is not linked to that account. Reload the app to re-link it, then try again."}, status=401)
+
+    def server_error(self, where):
+        traceback.print_exc()
+        self.send_json({"error": f"Something went wrong on the server ({where}). Please try again."}, status=500)
 
     def do_OPTIONS(self):
         self.send_response(204)
@@ -287,10 +401,18 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
 
         # API routing & health checks
         if path.startswith("/api/") or path in ("/health", "/ping"):
+            database.track_connections()
             try:
+                if path in ("/api/backup", "/api/devices") and not self.is_authorized(query.get("user_id", [""])[0]):
+                    self.deny()
+                    return
+                if path == "/api/tts/speak" and self.rate_limited("tts"):
+                    return
                 self.handle_api_get(path, query)
-            except Exception as e:
-                self.send_json({"error": str(e)}, status=500)
+            except Exception:
+                self.server_error("GET")
+            finally:
+                database.release_connections()
             return
 
         # Default to index.html for SPA routes or root
@@ -466,8 +588,10 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                     progress = {k: v for k, v in dict(prog_row).items() if k not in ("client_id", "client_ts")}
 
             conn.close()
+            novel_public = dict(nov_row)
+            novel_public.pop("user_id", None)  # the owner's id is a credential-grade value; never hand it to other callers
             self.send_json({
-                "novel": dict(nov_row),
+                "novel": novel_public,
                 "volumes": volumes,
                 "chapters": chapters,
                 "progress": progress
@@ -513,6 +637,7 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             ch_dict["next_chapter"] = dict(next_row) if next_row else None
 
             conn.close()
+            ch_dict["content_html"] = sanitize_html(ch_dict.get("content_html") or "")
             self.send_json(ch_dict)
             return
 
@@ -534,21 +659,10 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                     ORDER BY p.updated_at DESC LIMIT 1
                 """, (user_id,))
                 last_row = cur.fetchone()
-                if not last_row and user_id != "guest":
-                    cur.execute("""
-                        SELECT p.*, n.title as novel_title, n.cover_data, n.author as novel_author,
-                               c.title as chapter_title, c.chapter_index, c.global_index as chapter_global_index,
-                               v.title as volume_title, v.volume_number
-                        FROM reading_progress p
-                        JOIN novels n ON p.novel_id = n.id
-                        JOIN chapters c ON p.chapter_id = c.id
-                        LEFT JOIN volumes v ON p.volume_id = v.id
-                        WHERE p.user_id = 'guest'
-                        ORDER BY p.updated_at DESC LIMIT 1
-                    """)
-                    last_row = cur.fetchone()
                 if last_row:
                     last_data = dict(last_row)
+                    last_data.pop("client_id", None)
+                    last_data.pop("client_ts", None)
 
             if last_data:
                 cur.execute("SELECT COUNT(*) as total_chapters FROM chapters WHERE novel_id = ?", (last_data["novel_id"],))
@@ -679,10 +793,27 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         if path == "/api/upload":
+            if self.rate_limited("upload"):
+                return
+            database.track_connections()
             try:
                 self.handle_upload()
-            except Exception as e:
-                self.send_json({"error": f"Upload failed: {str(e)}"}, status=500)
+            except Exception:
+                self.server_error("upload")
+            finally:
+                database.release_connections()
+            return
+
+        if content_length > LARGE_BODY_LIMITS.get(path, MAX_JSON_BODY):
+            # Read off (and discard) a modest oversized body so the client sees our 413 instead of a broken pipe
+            remaining = content_length if content_length <= 10 * 1024 * 1024 else 0
+            while remaining > 0:
+                chunk = self.rfile.read(min(65536, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+            self.close_connection = True
+            self.send_json({"error": "Request body too large"}, status=413)
             return
 
         post_data = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
@@ -690,11 +821,24 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             body = json.loads(post_data) if post_data else {}
         except Exception:
             body = {}
+        if not isinstance(body, dict):
+            body = {}
 
+        database.track_connections()
         try:
+            if path == "/api/auth/register-device" and self.rate_limited("register"):
+                return
+            if path == "/api/restore" and self.rate_limited("restore"):
+                return
+            if path in ("/api/restore", "/api/devices/unlink", "/api/novels/cover", "/api/novels/clean-text") or path.startswith("/api/novels/delete"):
+                if not self.is_authorized(body.get("user_id"), body.get("sync_key")):
+                    self.deny()
+                    return
             self.handle_api_post(path, body)
-        except Exception as e:
-            self.send_json({"error": str(e)}, status=500)
+        except Exception:
+            self.server_error("POST")
+        finally:
+            database.release_connections()
 
     def handle_api_post(self, path, body):
         import secrets
@@ -714,7 +858,7 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             # generate an isolated profile so they get their own fresh library
             if not sync_key or sync_key in ("OFFLINE", "DEFAULT_READER"):
                 import hashlib
-                sync_key = f"READER-{secrets.token_hex(4).upper()}"
+                sync_key = f"READER-{secrets.token_hex(6).upper()}"
                 det_hash = hashlib.sha256(sync_key.encode("utf-8")).hexdigest()[:12]
                 requested_user_id = f"usr_{det_hash}"
 
@@ -754,11 +898,27 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             novel_id = body.get("novel_id")
             volume_id = body.get("volume_id")
             chapter_id = body.get("chapter_id")
-            paragraph_index = int(body.get("paragraph_index", 0))
-            scroll_percent = float(body.get("scroll_percent", 0.0))
+            try:
+                paragraph_index = max(0, min(int(body.get("paragraph_index", 0)), 10_000_000))
+                scroll_percent = float(body.get("scroll_percent", 0.0))
+                if scroll_percent != scroll_percent:  # NaN
+                    raise ValueError("scroll_percent")
+                scroll_percent = max(0.0, min(scroll_percent, 100.0))
+            except (TypeError, ValueError):
+                self.send_json({"error": "paragraph_index and scroll_percent must be numbers"}, status=400)
+                conn.close()
+                return
 
-            if not novel_id or not chapter_id:
+            if not all(isinstance(v, str) for v in (user_id, novel_id, chapter_id) if v is not None) or not novel_id or not chapter_id:
                 self.send_json({"error": "Missing novel_id or chapter_id"}, status=400)
+                conn.close()
+                return
+
+            # A novel this server no longer has (free hosting resets its database) cannot hold progress; saying so
+            # beats failing a foreign key halfway through a write.
+            cur.execute("SELECT 1 FROM chapters WHERE id = ? AND novel_id = ?", (chapter_id, novel_id))
+            if not cur.fetchone():
+                self.send_json({"error": "Chapter not found on this server", "missing": True}, status=404)
                 conn.close()
                 return
 
@@ -827,13 +987,18 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
 
             theme = body.get("theme", "monochrome-dark")
             font_family = body.get("font_family", "times")
-            font_size = int(body.get("font_size", 19))
-            line_height = float(body.get("line_height", 1.85))
+            try:
+                font_size = int(body.get("font_size", 19))
+                line_height = float(body.get("line_height", 1.85))
+                auto_scroll_speed = int(body.get("auto_scroll_speed", 35))
+                tts_rate = float(body.get("tts_rate", 1.0))
+                tts_pitch = float(body.get("tts_pitch", 0.0))
+            except (TypeError, ValueError):
+                self.send_json({"error": "Settings contain a value that is not a number"}, status=400)
+                conn.close()
+                return
             content_width = body.get("content_width", "normal")
-            auto_scroll_speed = int(body.get("auto_scroll_speed", 35))
             tts_voice = body.get("tts_voice", "en-US-JennyNeural")
-            tts_rate = float(body.get("tts_rate", 1.0))
-            tts_pitch = float(body.get("tts_pitch", 0.0))
             library_view_mode = body.get("library_view_mode", "tile")
             library_sort_by = body.get("library_sort_by", "last_read")
             now = time.time()
@@ -888,8 +1053,9 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             try:
                 res = database.import_backup_data(backup_data, user_id, sync_key=sync_key)
                 self.send_json({"success": True, **res})
-            except Exception as e:
-                self.send_json({"error": f"Restore failed: {str(e)}"}, status=500)
+            except Exception:
+                traceback.print_exc()
+                self.send_json({"error": "Restore failed. The backup file may be damaged."}, status=500)
             return
 
         # 7. Update Novel Cover Image
@@ -900,6 +1066,9 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             conn.close()
             if not novel_id or not cover_data:
                 self.send_json({"error": "novel_id and cover_data are required"}, status=400)
+                return
+            if not database.is_valid_cover_data(cover_data):
+                self.send_json({"error": "cover_data must be a base64 image data URL under 6MB"}, status=400)
                 return
             updated = database.update_novel_cover(novel_id, user_id, cover_data)
             self.send_json({"success": True, "updated": updated, "size_bytes": len(cover_data)})
@@ -936,8 +1105,12 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         fs = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ=environ)
 
         user_id = fs.getvalue("user_id")
-        if not user_id:
+        if not user_id or not isinstance(user_id, str):
             self.send_json({"error": "user_id is required"}, status=400)
+            return
+        sync_key_field = fs.getvalue("sync_key")
+        if not self.is_authorized(user_id, sync_key_field if isinstance(sync_key_field, str) else None):
+            self.deny()
             return
 
         database.ensure_user_exists(user_id)
@@ -964,6 +1137,9 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
 
         if not file_items:
             self.send_json({"error": "No EPUB or PDF files provided"}, status=400)
+            return
+        if len(file_items) > MAX_UPLOAD_FILES:
+            self.send_json({"error": f"Too many files in one upload (limit {MAX_UPLOAD_FILES})"}, status=413)
             return
 
         # Determine client requested file order if provided
@@ -1041,9 +1217,9 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                     parsed_res = pdf_parser.parse_single_pdf(data, fname)
                 else:
                     parsed_res = epub_parser.parse_single_epub(data, fname)
-            except Exception as ex:
+            except Exception:
                 conn.close()
-                self.send_json({"error": f"Failed to parse {fname}: {str(ex)}"}, status=400)
+                self.send_json({"error": f"Could not read {fname}. Make sure it is a valid EPUB or PDF."}, status=400)
                 return
             finally:
                 del data
@@ -1060,6 +1236,8 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
 
                 novel_id = f"nov_{uuid.uuid4().hex[:12]}"
                 cover_data = meta.get('cover_data')
+                if not database.is_valid_cover_data(cover_data):
+                    cover_data = None
                 cur.execute("""
                     INSERT INTO novels (id, title, author, description, cover_data, user_id, created_at, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)

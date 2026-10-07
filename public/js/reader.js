@@ -10,6 +10,17 @@ const Reader = {
   isControlsVisible: true,
   scrollDebounce: null,
   lastScrollY: 0,
+  // Titles come from uploaded files, so they must be escaped before going into innerHTML. Entities already present in
+  // a stored title ("Tom &amp; Jerry") are decoded first so they keep displaying the way they always did.
+  esc(text) {
+    if (text === null || text === undefined || text === '') return '';
+    const decoder = document.createElement('textarea');
+    decoder.innerHTML = String(text);
+    return decoder.value
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+  },
+
   // Chapters read-aloud has preloaded, so crossing a chapter boundary needs no network round trip
   chapterCache: new Map(),
 
@@ -606,7 +617,7 @@ const Reader = {
       // Update Top Bar
       const titleEl = document.getElementById('readerChapterTitle');
       if (titleEl) {
-        titleEl.innerHTML = `<strong>${ch.novel_title || ''}</strong> · ${ch.title || ''}`;
+        titleEl.innerHTML = `<strong>${this.esc(ch.novel_title)}</strong> · ${this.esc(ch.title)}`;
       }
 
       this.renderChapterHtml(ch);
@@ -776,9 +787,9 @@ const Reader = {
             </div>
             <h3 style="font-family: var(--font-sans); margin-bottom: 8px; font-size: 16px;">Chapter Not Cached Offline</h3>
             <p style="font-family: var(--font-sans); font-size: 13px; color: var(--text-muted); line-height: 1.5; margin-bottom: 18px;">
-              ${e.message || 'This chapter has not been downloaded to your device storage yet. Connect to the internet to cache it.'}
+              ${this.esc(e.message || 'This chapter has not been downloaded to your device storage yet. Connect to the internet to cache it.')}
             </p>
-            <button class="btn-brutal btn-brutal-accent" onclick="Reader.loadChapter('${chapterId}', true)">Retry Loading</button>
+            <button class="btn-brutal btn-brutal-accent" onclick="Reader.loadChapter(this.dataset.chapterId, true)" data-chapter-id="${this.esc(chapterId)}">Retry Loading</button>
           </div>
         `;
       }
@@ -985,7 +996,7 @@ const Reader = {
           item.classList.add('active');
         }
         item.innerHTML = `
-          <span class="toc-chapter-title">${c.title}</span>
+          <span class="toc-chapter-title">${this.esc(c.title)}</span>
           <span class="toc-item-words">${c.word_count || ''} words</span>
         `;
         item.onclick = () => {
@@ -1129,11 +1140,11 @@ const Reader = {
       firstText.replace(/[^a-z0-9]/g, '') === cleanTitle.replace(/[^a-z0-9]/g, '')
     );
 
-    const headingHtml = titleAlreadyInContent ? '' : `<h1 class="reader-heading">${ch.title}</h1>`;
+    const headingHtml = titleAlreadyInContent ? '' : `<h1 class="reader-heading">${this.esc(ch.title)}</h1>`;
 
     return `
       <div class="chapter-separator-banner">
-        ${ch.volume_title || ch.novel_title || ''}
+        ${this.esc(ch.volume_title || ch.novel_title)}
       </div>
       ${headingHtml}
       ${cleanContentHtml}

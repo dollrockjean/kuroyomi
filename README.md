@@ -99,3 +99,17 @@ cd /Users/rdoll/.gemini/antigravity/scratch/novel-reader
 
 - Open `http://localhost:8000` on your Mac.
 - Open `http://<your-mac-ip>:8000` on your iPhone/iPad connected to the same Wi-Fi.
+
+---
+
+## Security notes
+
+**How access works.** A sync key (`READER-XXXXXXXXXXXX`) identifies your account, and each device registers a token with it. Treat the sync key and pairing links like a password: anyone who has it can join your account. Use a long random key, not a word like `READER-PRIMARY`.
+
+**What the server checks.** Backup export, restore, device list and unlink, delete, cover change, text cleanup and uploads need the account's own device (the app sends its token in the `X-Device-Token` header) or the sync key. An account that does not exist yet can still be created by its first upload or restore, so recovery after a free-tier reset keeps working.
+
+**Uploaded books are untrusted.** Chapter HTML goes through an allowlist sanitizer (`html_sanitizer.py`) when it is stored and again when it is served, and titles are escaped before they reach the page.
+
+**Not yet enforced.** Reading the library list, chapter text, progress and settings still goes by user id alone. Moving those behind the device token is the next step once every device has re-registered.
+
+**Limits.** Account creation, uploads, restores and TTS requests are rate limited per client; JSON bodies are capped at 1MB (restore 50MB); the TTS audio cache is capped at about 400MB.

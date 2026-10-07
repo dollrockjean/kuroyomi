@@ -35,6 +35,7 @@ const TTSEngine = {
   onChapterEndCallback: null,
   _advancing: false,
   _preloadedChapterId: null,
+  _prefetchActive: 0,
   _silenceUri: null,
 
   // Event handlers
@@ -1092,10 +1093,12 @@ const TTSEngine = {
         this.deviceUtterance.onend = null;
         this.deviceUtterance.onerror = null;
       }
-      window.speechSynthesis.cancel();
+      const synth = window.speechSynthesis;
+      if (this.deviceUtterance || this.isUsingDeviceVoice || synth.speaking || synth.pending) {
+        synth.cancel();
+      }
     }
     this.deviceUtterance = null;
-    this.clearWordHighlights();
 
     // 2. Seamless transition to next chapter if current chapter ended
     if (index >= this.paragraphs.length) {
@@ -1119,6 +1122,23 @@ const TTSEngine = {
       return;
     }
 
+    // Cached audio goes first, ahead of every DOM update below. That work costs 100ms+ on a phone and used to sit
+    // between one paragraph ending and the next starting.
+    const cleanSpeech = this.normalizeForSpeech(textToSpeak);
+    const cacheKey = `${this.selectedVoice}_1.0_${this.pitch}_${cleanSpeech}`;
+    const isCached = this.blobCache.has(cacheKey);
+    let started = null;
+    if (isCached && navigator.onLine) {
+      try {
+        this.audioElement.src = this.blobCache.get(cacheKey);
+        this.audioElement.playbackRate = this.rate || 1.0;
+        started = this.audioElement.play();
+        started.catch(() => {});
+      } catch (e) {
+        started = null;
+      }
+    }
+
     // Visual highlight on reader text
     this.clearHighlight();
     el.classList.add('speaking-active');
@@ -1132,11 +1152,6 @@ const TTSEngine = {
       const scrollPct = docHeight > 0 ? Math.round((window.scrollY / docHeight) * 100) : 0;
       window.Reader.saveCurrentProgress(this.getParagraphPid(index), scrollPct, index === 0);
     }
-
-    // Check if audio blob is already in memory cache
-    const cleanSpeech = this.normalizeForSpeech(textToSpeak);
-    const cacheKey = `${this.selectedVoice}_1.0_${this.pitch}_${cleanSpeech}`;
-    const isCached = this.blobCache.has(cacheKey);
 
     // Only set loading state true if uncached fetch is needed
     this.isLoading = !isCached;
@@ -1162,28 +1177,35 @@ const TTSEngine = {
 
     // ALWAYS prioritize the main voice selected (realistic cloud neural TTS)
     try {
-      const blobUrl = await this.getAudioBlobUrl(textToSpeak, this.selectedVoice, 1.0, this.pitch);
+      if (!started) {
+        const blobUrl = await this.getAudioBlobUrl(textToSpeak, this.selectedVoice, 1.0, this.pitch);
 
-      if (this.playbackSessionId !== sessionId || !this.isPlaying || this.isPaused) return;
+        if (this.playbackSessionId !== sessionId || !this.isPlaying || this.isPaused) return;
 
-      this.audioElement.loop = false;
-      this.audioElement.src = blobUrl;
-      this.audioElement.playbackRate = this.rate || 1.0;
+        this.audioElement.loop = false;
+        this.audioElement.src = blobUrl;
+        this.audioElement.playbackRate = this.rate || 1.0;
 
-      // If user skipped or paused while fetching was in flight, discard cleanly
-      if (this.playbackSessionId !== sessionId || !this.isPlaying || this.isPaused) return;
+        // If user skipped or paused while fetching was in flight, discard cleanly
+        if (this.playbackSessionId !== sessionId || !this.isPlaying || this.isPaused) return;
 
-      this.isLoading = false;
+        this.isLoading = false;
 
-      // Cloud synthesis succeeded! Restore main cloud voice immediately
-      if (this.isUsingDeviceVoice) {
+        // Cloud synthesis succeeded! Restore main cloud voice immediately
+        if (this.isUsingDeviceVoice) {
+          this.setDeviceVoiceMode(false);
+        }
+
+        // Immediately dismiss loading voice screen and render active paragraph words
+        this.updateAudiobookModalContent();
+
+        started = this.audioElement.play();
+      } else if (this.isUsingDeviceVoice) {
         this.setDeviceVoiceMode(false);
       }
 
-      // Immediately dismiss loading voice screen and render active paragraph words
-      this.updateAudiobookModalContent();
-
-      await this.audioElement.play();
+      await started;
+      if (this.playbackSessionId !== sessionId) return;
       try {
         this.audioElement.playbackRate = this.rate || 1.0;
         this.audioElement.defaultPlaybackRate = this.rate || 1.0;
@@ -1215,25 +1237,37 @@ const TTSEngine = {
     const currentPitch = this.pitch;
     const sessionId = this.playbackSessionId;
 
+    const needed = [];
     for (let offset = 1; offset <= count; offset++) {
-      if (!this.isPlaying || this.isPaused || this.playbackSessionId !== sessionId) break;
-      const idx = fromIndex + offset;
-      if (idx < this.paragraphs.length) {
-        const el = this.paragraphs[idx];
-        const text = el ? el.innerText.trim() : '';
-        if (text) {
-          const cleanText = this.normalizeForSpeech(text);
-          const cacheKey = `${currentVoice}_1.0_${currentPitch}_${cleanText}`;
-          if (!this.blobCache.has(cacheKey) && !this.pendingFetches.has(cacheKey)) {
-            try {
-              await this.getAudioBlobUrl(text, currentVoice, 1.0, currentPitch);
-            } catch (e) {}
-            // Rapid 40ms yield to prevent event loop starvation while filling buffer quickly
-            await new Promise(r => setTimeout(r, 40));
-          }
+      const el = this.paragraphs[fromIndex + offset];
+      const text = el ? el.innerText.trim() : '';
+      if (!text) continue;
+      const cacheKey = `${currentVoice}_1.0_${currentPitch}_${this.normalizeForSpeech(text)}`;
+      if (!this.blobCache.has(cacheKey) && !this.pendingFetches.has(cacheKey)) needed.push(text);
+    }
+
+    // Synthesis is slower than playback at higher speeds, so one request at a time lets the buffer run dry and
+    // playback stalls between paragraphs. Keep three in flight, nearest paragraph first.
+    let next = 0;
+    const worker = async () => {
+      while (next < needed.length) {
+        if (!this.isPlaying || this.isPaused || this.playbackSessionId !== sessionId) return;
+        // Look-ahead calls overlap (one per paragraph), so the cap is shared across all of them
+        while (this._prefetchActive >= 3) {
+          await new Promise(r => setTimeout(r, 60));
+          if (!this.isPlaying || this.isPaused || this.playbackSessionId !== sessionId) return;
+        }
+        const text = needed[next++];
+        this._prefetchActive++;
+        try {
+          await this.getAudioBlobUrl(text, currentVoice, 1.0, currentPitch);
+        } catch (e) {
+        } finally {
+          this._prefetchActive--;
         }
       }
-    }
+    };
+    await Promise.all([worker(), worker(), worker()]);
 
     if (fromIndex >= this.paragraphs.length - 2) {
       this.preloadNextChapter();

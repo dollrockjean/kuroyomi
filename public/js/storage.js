@@ -18,10 +18,21 @@ const Storage = {
   COVER_PREFIX: 'byob_cover_',
   LEGACY_COVER_PREFIX: 'kuroyomi_cover_',
 
+  // Random id from the browser's cryptographic generator (Math.random is predictable, and this token is a login)
+  randomId(prefix, bytes = 16) {
+    const buf = new Uint8Array(bytes);
+    if (window.crypto && window.crypto.getRandomValues) {
+      window.crypto.getRandomValues(buf);
+    } else {
+      for (let i = 0; i < bytes; i++) buf[i] = Math.floor(Math.random() * 256);
+    }
+    return prefix + Array.from(buf, b => b.toString(16).padStart(2, '0')).join('');
+  },
+
   getDeviceToken() {
     let token = localStorage.getItem(this.DEVICE_TOKEN_KEY) || localStorage.getItem(this.LEGACY_DEVICE_TOKEN_KEY);
     if (!token) {
-      token = 'dev_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+      token = this.randomId('dev_');
       localStorage.setItem(this.DEVICE_TOKEN_KEY, token);
     }
     return token;
@@ -33,7 +44,7 @@ const Storage = {
     try {
       let id = localStorage.getItem(this.CLIENT_ID_KEY);
       if (!id) {
-        id = 'cli_' + Math.random().toString(36).substring(2, 12) + Math.random().toString(36).substring(2, 12);
+        id = this.randomId('cli_', 10);
         localStorage.setItem(this.CLIENT_ID_KEY, id);
       }
       return id;
@@ -563,3 +574,24 @@ const IDB = {
 
 window.Storage = Storage;
 window.IDB = IDB;
+
+// Same-origin API calls carry this device's token, so the server can tell the account's own devices apart from anyone
+// who merely knows its user id. The token is never attached to requests for other origins (e.g. the cloud push).
+(function installDeviceTokenHeader() {
+  if (typeof window === 'undefined' || typeof window.fetch !== 'function' || window.__deviceTokenFetchInstalled) return;
+  window.__deviceTokenFetchInstalled = true;
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = function (input, init) {
+    try {
+      const url = new URL(typeof input === 'string' ? input : (input && input.url) || '', window.location.href);
+      if (url.origin === window.location.origin && url.pathname.startsWith('/api/')) {
+        const headers = new Headers((init && init.headers) || (input && input.headers) || undefined);
+        if (!headers.has('X-Device-Token')) headers.set('X-Device-Token', Storage.getDeviceToken());
+        init = Object.assign({}, init, { headers });
+      }
+    } catch (e) {
+      // Storage blocked or odd input: send the request exactly as the caller asked
+    }
+    return nativeFetch(input, init);
+  };
+})();
