@@ -21,6 +21,18 @@ const Reader = {
       .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
   },
 
+  // Resolves with `fallback` if `promise` has not settled in `ms`. IndexedDB on iOS can hang indefinitely after the app
+  // has been in the background, and one hung await here used to freeze read aloud at the chapter boundary for good.
+  withTimeout(promise, ms, fallback = null) {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(fallback), ms);
+      Promise.resolve(promise).then(
+        (value) => { clearTimeout(timer); resolve(value); },
+        () => { clearTimeout(timer); resolve(fallback); }
+      );
+    });
+  },
+
   // Chapters read-aloud has preloaded, so crossing a chapter boundary needs no network round trip
   chapterCache: new Map(),
 
@@ -573,7 +585,7 @@ const Reader = {
       if (isTtsAdvance) {
         ch = this.chapterCache.get(chapterId) || null;
         if (!ch && typeof IDB !== 'undefined') {
-          const cached = await IDB.getCachedChapter(chapterId);
+          const cached = await this.withTimeout(IDB.getCachedChapter(chapterId), 2000);
           if (cached && cached.content_html) ch = cached;
         }
       }
@@ -584,13 +596,13 @@ const Reader = {
           const controller = new AbortController();
           const timer = setTimeout(() => controller.abort(), 15000);
           const res = await fetch(`/api/chapters/${encodeURIComponent(chapterId)}`, { signal: controller.signal });
-          clearTimeout(timer);
           if (res.ok) {
             ch = await res.json();
             if (ch && !ch.error && typeof IDB !== 'undefined') {
               IDB.saveCachedChapter(ch);
             }
           }
+          clearTimeout(timer);
         } catch (netErr) {
           console.warn('Network chapter fetch failed, attempting offline cache:', netErr);
         }
@@ -599,7 +611,7 @@ const Reader = {
       // 2. Fallback to local IndexedDB mirror & chapter cache
       if (!ch || ch.error) {
         if (typeof IDB !== 'undefined') {
-          ch = await IDB.getChapter(userId, chapterId);
+          ch = await this.withTimeout(IDB.getChapter(userId, chapterId), 4000);
         }
       }
 
@@ -1066,7 +1078,7 @@ const Reader = {
     if (hit) return hit;
     let ch = null;
     if (typeof IDB !== 'undefined') {
-      const cached = await IDB.getCachedChapter(chapterId);
+      const cached = await this.withTimeout(IDB.getCachedChapter(chapterId), 2000);
       if (cached && cached.content_html) ch = cached;
     }
     if (!ch && navigator.onLine) {

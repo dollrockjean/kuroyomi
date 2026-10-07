@@ -71,6 +71,16 @@ const App = {
     }, 4000);
   },
 
+  // A new version arrived. Reloading mid-chapter would silence read aloud, so wait until the listener stops it.
+  reloadForUpdate() {
+    if (window.TTSEngine && TTSEngine.isPlaying) {
+      window.__reloadWhenIdle = true;
+      this.showToast('Update ready. It will install when you stop read aloud.');
+      return;
+    }
+    window.location.reload();
+  },
+
   async init() {
 
     try {
@@ -110,7 +120,7 @@ const App = {
               installing.onstatechange = () => {
                 if (installing.state === 'installed' && navigator.serviceWorker.controller) {
                   console.log('[SW] New version installed, reloading...');
-                  window.location.reload();
+                  App.reloadForUpdate();
                 }
               };
             }
@@ -123,7 +133,7 @@ const App = {
         navigator.serviceWorker.addEventListener('controllerchange', () => {
           if (!refreshing) {
             refreshing = true;
-            window.location.reload();
+            App.reloadForUpdate();
           }
         });
       }

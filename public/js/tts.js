@@ -34,6 +34,10 @@ const TTSEngine = {
   playbackSessionId: 0,
   onChapterEndCallback: null,
   _advancing: false,
+  _advanceGen: 0,
+  _watchdogTimer: null,
+  _lastProgressAt: 0,
+  _resumeAtChapterEnd: false,
   _preloadedChapterId: null,
   _prefetchActive: 0,
   _silenceUri: null,
@@ -135,6 +139,84 @@ const TTSEngine = {
     return URL.createObjectURL(blob);
   },
 
+  // Short on-device trail of what read aloud did (survives a reload), so "it stopped" always has a recorded reason
+  logEvent(message) {
+    try {
+      const entry = `${new Date().toISOString().slice(11, 19)} ${message}`;
+      const log = JSON.parse(localStorage.getItem('kuroyomi_tts_log') || '[]');
+      log.push(entry);
+      localStorage.setItem('kuroyomi_tts_log', JSON.stringify(log.slice(-60)));
+    } catch (e) {}
+  },
+
+  // Playback went quiet for a reason that is not the listener's doing: say so instead of stopping silently
+  stopWithReason(reason) {
+    this.logEvent(`STOPPED: ${reason}`);
+    this.stop();
+    if (window.App && typeof window.App.showToast === 'function') {
+      window.App.showToast(`Read aloud stopped: ${reason}`);
+    }
+  },
+
+  // Playback is wanted but the browser would not start it (or the next chapter will not load): stay put, ready to
+  // continue from the lock screen or the play button, rather than losing the session
+  pauseWithReason(reason, atChapterEnd = false) {
+    this.logEvent(`PAUSED: ${reason}`);
+    this._resumeAtChapterEnd = atChapterEnd;
+    this.isPaused = true;
+    this.isLoading = false;
+    this.releaseAudioSession();
+    if ('speechSynthesis' in window) {
+      try { window.speechSynthesis.cancel(); } catch (e) {}
+    }
+    this.updateAudioUI();
+    if (window.App && typeof window.App.showToast === 'function') {
+      window.App.showToast(`${reason} Tap play to continue.`);
+    }
+  },
+
+  // Self-healing: if playback is supposed to be running but nothing has been audible for too long (a lost event, a
+  // promise that never settled, device speech that never reported back), restart from where it should be
+  startWatchdog() {
+    this._lastProgressAt = Date.now();
+    if (this._watchdogTimer) return;
+    this._watchdogTimer = setInterval(() => this.checkHealth(), 2000);
+  },
+
+  stopWatchdog() {
+    if (this._watchdogTimer) clearInterval(this._watchdogTimer);
+    this._watchdogTimer = null;
+  },
+
+  checkHealth() {
+    if (!this.isPlaying || this.isPaused) {
+      this._lastProgressAt = Date.now();
+      return;
+    }
+    const a = this.audioElement;
+    const deviceSpeaking = this.isUsingDeviceVoice && 'speechSynthesis' in window &&
+      (window.speechSynthesis.speaking || window.speechSynthesis.pending);
+    if ((!a.paused && !a.loop && !a.ended) || deviceSpeaking) {
+      this._lastProgressAt = Date.now();
+      return;
+    }
+    const quietFor = Date.now() - this._lastProgressAt;
+    // Loading a chapter or synthesizing a long paragraph legitimately takes a while; a lost event should not
+    const patience = this._advancing ? 360000 : (this.isLoading ? 50000 : 8000);
+    if (quietFor < patience) return;
+
+    this._lastProgressAt = Date.now();
+    const finished = a.ended || (isFinite(a.duration) && a.duration > 0 && a.currentTime >= a.duration - 0.3);
+    this.logEvent(`watchdog: quiet ${Math.round(quietFor / 1000)}s at paragraph ${this.currentIndex}/${this.paragraphs.length}${this._advancing ? ' (chapter load)' : ''}`);
+    if (this._advancing) {
+      this._advanceGen++;           // abandon the stuck chapter load; its late result will be ignored
+      this._advancing = false;
+      this.speakParagraph(this.paragraphs.length);
+    } else {
+      this.speakParagraph(Math.min(this.currentIndex + (finished ? 1 : 0), this.paragraphs.length));
+    }
+  },
+
   // Keeps the audio element playing (silently) while the next audio is fetched. Mobile OSes freeze a page whose audio
   // goes quiet, which is what killed read aloud at chapter boundaries where the wait is a network round trip.
   holdAudioSession() {
@@ -174,6 +256,7 @@ const TTSEngine = {
 
     this._onPlayHandler = () => {
       clearTimeout(this._pauseTimer);
+      this._lastProgressAt = Date.now();
       try {
         if (this.rate) {
           this.audioElement.playbackRate = this.rate;
@@ -809,6 +892,9 @@ const TTSEngine = {
     this.currentIndex = Math.max(0, Math.min(fromIndex, this.paragraphs.length - 1));
     this.isPlaying = true;
     this.isPaused = false;
+    this._resumeAtChapterEnd = false;
+    this.logEvent(`start at paragraph ${this.currentIndex}`);
+    this.startWatchdog();
     this.showBadge();
 
     // Auto-open full-screen audiobook mode when read aloud is started on phone
@@ -945,6 +1031,13 @@ const TTSEngine = {
 
     if (this.isPlaying && this.isPaused) {
       this.isPaused = false;
+      this._lastProgressAt = Date.now();
+      if (this._resumeAtChapterEnd) {
+        this._resumeAtChapterEnd = false;
+        this.speakParagraph(this.paragraphs.length);
+        this.updateAudioUI();
+        return;
+      }
       if (this._advancing) {
         // The next chapter is still loading; advanceToNextChapter starts it as soon as it lands
         this.holdAudioSession();
@@ -977,6 +1070,14 @@ const TTSEngine = {
   },
 
   stop() {
+    if (window.__reloadWhenIdle) {
+      window.__reloadWhenIdle = false;
+      setTimeout(() => window.location.reload(), 400);
+    }
+    this.stopWatchdog();
+    this._advanceGen++;
+    this._advancing = false;
+    this._resumeAtChapterEnd = false;
     this.playbackSessionId = (this.playbackSessionId || 0) + 1;
     this.isPlaying = false;
     this.isPaused = false;
@@ -1104,15 +1205,22 @@ const TTSEngine = {
     if (index >= this.paragraphs.length) {
       this.clearHighlight();
       if (this.sleepMode === 'chapter_end') {
+        // One-shot: it fired, so it must not also stop every later chapter
+        this.sleepMode = 'off';
+        this.updateSleepBadge();
+        this.updateSleepModalUI();
+        this.logEvent('sleep timer (end of chapter) stopped playback');
         this.stop();
         return;
       }
+      this.logEvent(`chapter end -> loading next (${window.Reader && window.Reader.currentChapter ? window.Reader.currentChapter.title : '?'})`);
       this.holdAudioSession();
       await this.advanceToNextChapter();
       return;
     }
 
     this.currentIndex = index;
+    this._lastProgressAt = Date.now();
     const el = this.paragraphs[index];
     if (!el) return;
 
@@ -1223,6 +1331,13 @@ const TTSEngine = {
       this.isLoading = false;
       this.updateAudioUI();
       if (this.playbackSessionId !== sessionId || !this.isPlaying || this.isPaused) return;
+      if (err && err.name === 'NotAllowedError') {
+        // The browser refused to start audio without a tap (typically after a long wait in the background). Device
+        // speech would be refused too, so wait for the play button instead of silently falling through.
+        this.pauseWithReason('The browser blocked audio from starting on its own.');
+        return;
+      }
+      this.logEvent(`cloud voice failed (${err && err.name ? err.name : 'error'}), using device voice for paragraph ${index}`);
       console.warn('Cloud TTS synthesis failed, using device voice fallback for this paragraph:', err);
       this.releaseAudioSession();
       this.setDeviceVoiceMode(true);
@@ -1321,12 +1436,17 @@ const TTSEngine = {
   async advanceToNextChapter(autoPlay = null) {
     const reader = window.Reader;
     if (!reader || !reader.currentChapter || !reader.currentChapter.next_chapter) {
+      this.logEvent('end of book (no next chapter)');
       this.stop();
+      if (window.App && typeof window.App.showToast === 'function') window.App.showToast('End of the book.');
       return;
     }
     // The audio 'ended' and 'pause' events can both reach the chapter end; only one advance may run or a chapter gets skipped
     if (this._advancing) return;
     this._advancing = true;
+    const gen = ++this._advanceGen;
+    // False once the watchdog (or stop) has abandoned this attempt: whatever it was waiting on no longer matters
+    const current = () => gen === this._advanceGen;
 
     try {
       const wasModalOpen = document.getElementById('audiobookFullModal')?.style.display === 'flex';
@@ -1336,16 +1456,21 @@ const TTSEngine = {
       this.clearHighlight();
       this.clearWordHighlights();
 
-      // A dropped signal for a second or two must not end the session, so retry before giving up
+      // A dead zone or a sleeping server must not end the session: keep the silent loop going and keep trying
       let loaded = null;
-      for (let attempt = 0; attempt < 4 && !loaded; attempt++) {
-        if (attempt > 0) await new Promise(r => setTimeout(r, 1500 * attempt));
-        if (this.playbackSessionId !== sessionId) return;
-        loaded = await reader.loadChapter(nextId, false, true);
+      let lastReason = '';
+      for (let attempt = 0; attempt < 8 && !loaded; attempt++) {
+        if (attempt > 0) await new Promise(r => setTimeout(r, Math.min(1500 * attempt, 8000)));
+        if (!current() || this.playbackSessionId !== sessionId) return;
+        loaded = await reader.withTimeout(reader.loadChapter(nextId, false, true), 30000, null);
+        if (!current() || this.playbackSessionId !== sessionId) return;
+        if (!loaded) {
+          lastReason = navigator.onLine ? 'the chapter did not load' : 'no connection';
+          this.logEvent(`next chapter load failed (attempt ${attempt + 1}): ${lastReason}`);
+        }
       }
-      if (this.playbackSessionId !== sessionId) return;
       if (!loaded) {
-        this.stop();
+        this.pauseWithReason(`Couldn't load the next chapter (${lastReason}).`, true);
         return;
       }
 
@@ -1356,12 +1481,13 @@ const TTSEngine = {
         }
         // Decide at the moment of the jump, so pausing while the chapter loaded is respected
         const shouldPlay = (autoPlay !== null) ? autoPlay : (this.isPlaying && !this.isPaused);
+        this.logEvent(`next chapter ready (${loaded.title}), ${this.paragraphs.length} paragraphs, play=${shouldPlay}`);
         this.jumpToParagraph(0, shouldPlay);
       } else {
-        this.stop();
+        this.stopWithReason('the next chapter has no text.');
       }
     } finally {
-      this._advancing = false;
+      if (gen === this._advanceGen) this._advancing = false;
     }
   },
 
