@@ -76,7 +76,7 @@ class NovelReaderIntegrationTests(unittest.TestCase):
             self.assertEqual(session_data.get("device_name"), device_name)
 
         # 3. Query paired devices list
-        with urllib.request.urlopen(f"{BASE_URL}/api/devices?user_id={user_id}") as resp:
+        with urllib.request.urlopen(urllib.request.Request(f"{BASE_URL}/api/devices?user_id={user_id}", headers={"X-Device-Token": device_token})) as resp:
             dev_data = json.loads(resp.read().decode('utf-8'))
             devices = dev_data.get("devices", [])
             self.assertGreaterEqual(len(devices), 1)

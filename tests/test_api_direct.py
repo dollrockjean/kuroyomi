@@ -48,6 +48,12 @@ def create_mock_handler(path, method="GET", body=None, headers=None):
     
     return handler
 
+def auth_headers(user_id):
+    """Link a test device to the account and return the header the app sends (the server rejects other callers)."""
+    token = f"test_device_{user_id}"
+    database.register_device(user_id, token, "Test Device", "unittest", True)
+    return {"X-Device-Token": token}
+
 class ApiDirectTests(unittest.TestCase):
     def setUp(self):
         self.test_db = os.path.join(os.path.dirname(__file__), "api_test.db")
@@ -86,7 +92,7 @@ class ApiDirectTests(unittest.TestCase):
         self.assertEqual(res2["user_id"], user_id)
         self.assertEqual(res2["device_name"], "iPhone 16")
 
-        h3 = create_mock_handler(f"/api/devices?user_id={user_id}", "GET")
+        h3 = create_mock_handler(f"/api/devices?user_id={user_id}", "GET", headers={"X-Device-Token": "token_apple_iphone"})
         h3.do_GET()
         res3 = json.loads(h3.wfile.getvalue().decode('utf-8'))
         self.assertEqual(len(res3["devices"]), 1)
@@ -225,7 +231,7 @@ class ApiDirectTests(unittest.TestCase):
         body.extend(f"--{boundary}--\r\n".encode('utf-8'))
 
         headers = {
-            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            **auth_headers(user_id), "Content-Type": f"multipart/form-data; boundary={boundary}",
             "Content-Length": str(len(body))
         }
 
@@ -259,7 +265,7 @@ class ApiDirectTests(unittest.TestCase):
         body3.extend(f"--{boundary}--\r\n".encode('utf-8'))
 
         h_up3 = create_mock_handler("/api/upload", "POST", bytes(body3), {
-            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            **auth_headers(user_id), "Content-Type": f"multipart/form-data; boundary={boundary}",
             "Content-Length": str(len(body3))
         })
         h_up3.do_POST()
@@ -307,7 +313,7 @@ class ApiDirectTests(unittest.TestCase):
         body1.extend(f"--{boundary}--\r\n".encode('utf-8'))
 
         h1 = create_mock_handler("/api/upload", "POST", bytes(body1), {
-            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            **auth_headers(user_id), "Content-Type": f"multipart/form-data; boundary={boundary}",
             "Content-Length": str(len(body1))
         })
         h1.do_POST()
@@ -334,7 +340,7 @@ class ApiDirectTests(unittest.TestCase):
         body2.extend(f"--{boundary}--\r\n".encode('utf-8'))
 
         h2 = create_mock_handler("/api/upload", "POST", bytes(body2), {
-            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            **auth_headers(user_id), "Content-Type": f"multipart/form-data; boundary={boundary}",
             "Content-Length": str(len(body2))
         })
         h2.do_POST()
@@ -363,7 +369,7 @@ class ApiDirectTests(unittest.TestCase):
         novel_id = json.loads(h_novels.wfile.getvalue().decode('utf-8'))["novels"][0]["id"]
 
         del_body = json.dumps({"user_id": user_id, "novel_id": novel_id}).encode('utf-8')
-        h_del = create_mock_handler("/api/novels/delete", "POST", del_body)
+        h_del = create_mock_handler("/api/novels/delete", "POST", del_body, auth_headers(user_id))
         h_del.do_POST()
         self.assertTrue(json.loads(h_del.wfile.getvalue().decode('utf-8'))["success"])
 
@@ -401,7 +407,7 @@ class ApiDirectTests(unittest.TestCase):
         import sample_books
         sample_books.seed_demo_novel(user_id)
 
-        h_backup = create_mock_handler(f"/api/backup?user_id={user_id}", "GET")
+        h_backup = create_mock_handler(f"/api/backup?user_id={user_id}", "GET", headers=auth_headers(user_id))
         h_backup.do_GET()
         backup_data = json.loads(h_backup.wfile.getvalue().decode('utf-8'))
         self.assertEqual(backup_data["user_id"], user_id)
@@ -414,7 +420,7 @@ class ApiDirectTests(unittest.TestCase):
             "backup_data": backup_data
         }).encode('utf-8')
 
-        h_restore = create_mock_handler("/api/restore", "POST", restore_body)
+        h_restore = create_mock_handler("/api/restore", "POST", restore_body, auth_headers(new_user))
         h_restore.do_POST()
         restore_res = json.loads(h_restore.wfile.getvalue().decode('utf-8'))
         self.assertTrue(restore_res["success"])
@@ -432,7 +438,7 @@ class ApiDirectTests(unittest.TestCase):
             "cover_data": custom_cover
         }).encode('utf-8')
 
-        h_cover = create_mock_handler("/api/novels/cover", "POST", cover_body)
+        h_cover = create_mock_handler("/api/novels/cover", "POST", cover_body, auth_headers(user_id))
         h_cover.do_POST()
         cover_res = json.loads(h_cover.wfile.getvalue().decode('utf-8'))
         self.assertTrue(cover_res["success"])
@@ -491,7 +497,7 @@ class ApiDirectTests(unittest.TestCase):
         body.extend(f"--{boundary}--\r\n".encode('utf-8'))
 
         handler = create_mock_handler("/api/upload", "POST", bytes(body), {
-            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            **auth_headers(user_id), "Content-Type": f"multipart/form-data; boundary={boundary}",
             "Content-Length": str(len(body))
         })
         handler.do_POST()

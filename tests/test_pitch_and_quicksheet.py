@@ -15,6 +15,14 @@ if TESTS_DIR not in sys.path:
 import server
 import database
 
+
+def _link_device(user_id):
+    """Link a test device to the account so the server accepts protected calls (the app sends this header)."""
+    token = f"test_device_{user_id}"
+    database.register_device(user_id, token, "Test Device", "unittest", True)
+    return token
+
+
 class PitchAndQuickSheetTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -248,7 +256,7 @@ class PitchAndQuickSheetTests(unittest.TestCase):
         conn.close()
 
         clean_body = json.dumps({"novel_id": nid, "user_id": uid}).encode('utf-8')
-        h_clean = create_mock_handler("/api/novels/clean-text", "POST", clean_body)
+        h_clean = create_mock_handler("/api/novels/clean-text", "POST", clean_body, {"X-Device-Token": _link_device(uid)})
         h_clean.do_POST()
         clean_res = json.loads(h_clean.wfile.getvalue().decode('utf-8'))
         self.assertTrue(clean_res["success"])
