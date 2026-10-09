@@ -279,8 +279,15 @@ const TTSEngine = {
         }
       } catch (e) {}
       if (this.isPlaying && this.isPaused) {
-        this.isPaused = false;
-        this.updateAudioUI();
+        // Resumed by the OS itself (lock screen / notification play button): sync our state. Special states need the
+        // full resume logic (chapter end, chapter still loading, device voice, silent hold loop).
+        this.logEvent('play event while paused -> resuming');
+        if (this._resumeAtChapterEnd || this._advancing || this.isUsingDeviceVoice || this.audioElement.loop) {
+          this.resume();
+        } else {
+          this.isPaused = false;
+          this.updateAudioUI();
+        }
       }
     };
 
@@ -2023,18 +2030,12 @@ const TTSEngine = {
   setupMediaSession() {
     if (!('mediaSession' in navigator)) return;
     try {
-      navigator.mediaSession.setActionHandler('play', () => {
-        if (this.isPlaying && this.isPaused) {
-          this.resume();
-        } else if (!this.isPlaying) {
-          this.start();
-        } else if (this.audioElement.paused && !this.isLoading) {
-          // Our state says playing but the element is stopped (OS paused it): restart it instead of ignoring the tap
-          this.audioElement.play().catch(() => this.speakParagraph(this.currentIndex));
-        }
-        navigator.mediaSession.playbackState = 'playing';
-      });
+      // No JS handler for 'play' on purpose: with one, the phone hands the tap to the page, and a page that was
+      // frozen while paused (or whose play() is refused without a gesture) just ignores it. With none, the OS resumes
+      // the audio element directly, which works even then; the element's 'play' event keeps our state in step.
+      navigator.mediaSession.setActionHandler('play', null);
       navigator.mediaSession.setActionHandler('pause', () => {
+        this.logEvent('lock-screen pause');
         this.pause();
         this.audioElement.pause();
         navigator.mediaSession.playbackState = 'paused';
