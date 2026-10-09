@@ -231,6 +231,21 @@ const TTSEngine = {
     } catch (e) {}
   },
 
+  // A play() refused in the background is often transient (the audio session is mid-handover); try a few more times
+  async retryPlay(sessionId) {
+    for (let i = 0; i < 4; i++) {
+      await new Promise(r => setTimeout(r, 350));
+      if (this.playbackSessionId !== sessionId || !this.isPlaying || this.isPaused) return true;
+      try {
+        await this.audioElement.play();
+        this.logEvent(`play() succeeded on retry ${i + 1}`);
+        this.isLoading = false;
+        return true;
+      } catch (e) {}
+    }
+    return false;
+  },
+
   releaseAudioSession() {
     this._ignorePauseUntil = Date.now() + 500;
     this.audioElement.pause();
@@ -1184,8 +1199,10 @@ const TTSEngine = {
     this.playbackSessionId = (this.playbackSessionId || 0) + 1;
     const sessionId = this.playbackSessionId;
 
+    // No pause() here: swapping src on the same element keeps the phone's audio session (and lock-screen controls)
+    // alive, whereas pausing between paragraphs lets the OS drop the session and refuse the next play() in the
+    // background. Every branch below either assigns a new src, holds the silent loop, or releases the session.
     this._ignorePauseUntil = Date.now() + 500;
-    this.audioElement.pause();
     this.audioElement.loop = false;
 
     this.isTransitioning = false;
@@ -1331,6 +1348,11 @@ const TTSEngine = {
       this.isLoading = false;
       this.updateAudioUI();
       if (this.playbackSessionId !== sessionId || !this.isPlaying || this.isPaused) return;
+      if (err && err.name === 'NotAllowedError' && await this.retryPlay(sessionId)) {
+        this.updateAudioUI();
+        this.prefetchAhead(index, 6);
+        return;
+      }
       if (err && err.name === 'NotAllowedError') {
         // The browser refused to start audio without a tap (typically after a long wait in the background). Device
         // speech would be refused too, so wait for the play button instead of silently falling through.
@@ -2006,10 +2028,16 @@ const TTSEngine = {
           this.resume();
         } else if (!this.isPlaying) {
           this.start();
+        } else if (this.audioElement.paused && !this.isLoading) {
+          // Our state says playing but the element is stopped (OS paused it): restart it instead of ignoring the tap
+          this.audioElement.play().catch(() => this.speakParagraph(this.currentIndex));
         }
+        navigator.mediaSession.playbackState = 'playing';
       });
       navigator.mediaSession.setActionHandler('pause', () => {
         this.pause();
+        this.audioElement.pause();
+        navigator.mediaSession.playbackState = 'paused';
       });
       navigator.mediaSession.setActionHandler('stop', () => {
         this.stop();
