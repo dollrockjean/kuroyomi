@@ -441,6 +441,11 @@ def import_backup_data(data: dict, user_id: str, sync_key: str = None):
         existing_novels = {r["title"].strip().lower(): r["id"] for r in cur.fetchall()}
     cur.execute("UPDATE users SET demo_seeded = 1 WHERE id = ?", (user_id,))
 
+    # Reading positions this account already has. Re-importing a novel replaces its row, and that cascades away its
+    # saved position, so keep these to put back whenever they are newer than what the backup carries.
+    cur.execute("SELECT * FROM reading_progress WHERE user_id = ?", (user_id,))
+    existing_progress = {r["novel_id"]: dict(r) for r in cur.fetchall()}
+
     # Map old novel ID -> final novel ID for this user
     novel_id_remap = {}
 
@@ -515,10 +520,35 @@ def import_backup_data(data: dict, user_id: str, sync_key: str = None):
         orig_cid = p.get("chapter_id", "")
         final_cid = chapter_id_remap.get(orig_cid, orig_cid)
 
+        # Keep the time the position was really saved. Stamping it "now" made an old snapshot (after a free-tier
+        # server reset) look newer than the reader's own place, and rolled the book back a chapter or two.
+        try:
+            saved_at = float(p.get("updated_at") or 0) or now
+        except (TypeError, ValueError):
+            saved_at = now
+        saved_at = min(saved_at, now)
+        # Never replace a position the server already has with an older one
+        kept = existing_progress.get(final_nid)
+        if kept and (kept["updated_at"] or 0) >= saved_at:
+            continue
         cur.execute("""
             INSERT OR REPLACE INTO reading_progress (id, user_id, novel_id, volume_id, chapter_id, paragraph_index, scroll_percent, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (p.get("id") or f"prog_{uuid.uuid4().hex[:12]}", user_id, final_nid, final_vid, final_cid, p.get("paragraph_index", 0), p.get("scroll_percent", 0.0), now))
+        """, ((kept or {}).get("id") or p.get("id") or f"prog_{uuid.uuid4().hex[:12]}", user_id, final_nid, final_vid, final_cid, p.get("paragraph_index", 0), p.get("scroll_percent", 0.0), saved_at))
+        existing_progress.pop(final_nid, None)
+
+    # Put back any existing position the novel re-import wiped and the backup did not replace with something newer
+    for nid, kept in existing_progress.items():
+        cur.execute("SELECT 1 FROM novels WHERE id = ? AND user_id = ?", (nid, user_id))
+        if not cur.fetchone():
+            continue
+        cur.execute("SELECT 1 FROM reading_progress WHERE user_id = ? AND novel_id = ?", (user_id, nid))
+        if cur.fetchone():
+            continue
+        cur.execute("""
+            INSERT OR REPLACE INTO reading_progress (id, user_id, novel_id, volume_id, chapter_id, paragraph_index, scroll_percent, updated_at, client_id, client_ts)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (kept["id"], user_id, nid, kept["volume_id"], kept["chapter_id"], kept["paragraph_index"], kept["scroll_percent"], kept["updated_at"], kept.get("client_id"), kept.get("client_ts")))
 
     if settings:
         cur.execute("""

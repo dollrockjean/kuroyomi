@@ -1779,7 +1779,7 @@ const App = {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                       user_id: userId,
-                      backup_data: mirror
+                      backup_data: this.withFreshLocalProgress(mirror, userId)
                     })
                   });
                   const restoreData = await restoreRes.json();
@@ -1819,7 +1819,7 @@ const App = {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                   user_id: userId,
-                  backup_data: mirroredBackup
+                  backup_data: this.withFreshLocalProgress(mirroredBackup, userId)
                 })
               });
               const restoreData = await restoreRes.json();
@@ -1849,6 +1849,30 @@ const App = {
     }
   },
 
+  // The device mirror's reading positions are only as fresh as the last library load. Before pushing it to a server
+  // that lost its data, lay this device's own (newer) saved positions over it so the restore cannot roll a book back.
+  withFreshLocalProgress(backup, userId) {
+    try {
+      if (!backup || !Array.isArray(backup.progress)) return backup;
+      const progress = backup.progress.map((p) => {
+        const local = Storage.getLocalProgress(p.novel_id, userId);
+        if (!local || !local.chapterId || !local.savedAt) return p;
+        if (local.savedAt <= (p.updated_at || 0) * 1000) return p;
+        return {
+          ...p,
+          volume_id: local.volumeId || p.volume_id,
+          chapter_id: local.chapterId,
+          paragraph_index: Number.isFinite(Number(local.paragraphIndex)) ? Number(local.paragraphIndex) : (p.paragraph_index || 0),
+          scroll_percent: local.scrollPercent || 0,
+          updated_at: local.savedAt / 1000
+        };
+      });
+      return { ...backup, progress };
+    } catch (e) {
+      return backup;
+    }
+  },
+
   async updateDeviceMirror() {
     try {
       const userId = SyncService.currentUserId;
@@ -1871,7 +1895,7 @@ const App = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               user_id: userId,
-              backup_data: localBackup
+              backup_data: this.withFreshLocalProgress(localBackup, userId)
             })
           });
           return;
