@@ -3666,3 +3666,18 @@ dfn .bionic-fixation,
 }
 
 
+
+
+/* Small version tag, bottom-left of the library screen */
+.app-version-tag {
+  position: fixed;
+  left: 12px;
+  bottom: calc(8px + var(--safe-bottom));
+  font-family: var(--font-sans, sans-serif);
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  opacity: 0.7;
+  pointer-events: none;
+  z-index: 5;
+}

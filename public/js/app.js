@@ -2750,6 +2750,17 @@ window.TTSEngine = TTSEngine;
 window.SyncService = SyncService;
 window.Storage = Storage;
 
+// Small version tag on the library screen: asset release 48 shows as 0.4.8, release 50 as 0.5.0
+function showAppVersion() {
+  const tag = document.getElementById('appVersionTag');
+  const src = (document.querySelector('script[src*="app.js"]') || {}).src || '';
+  const m = src.match(/[?&]v=(\d+)/);
+  if (!tag || !m) return;
+  const n = parseInt(m[1], 10);
+  tag.textContent = `0.${Math.floor(n / 10)}.${n % 10}`;
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+  showAppVersion();
   App.init();
 });
