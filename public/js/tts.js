@@ -940,7 +940,7 @@ const TTSEngine = {
     if (offlineStatusEl) {
       offlineStatusEl.style.display = enabled ? 'inline-flex' : 'none';
       if (enabled) {
-        offlineStatusEl.textContent = 'Offline: Device Voice';
+        offlineStatusEl.textContent = navigator.onLine ? 'Cloud voice unavailable: Device Voice' : 'Offline: Device Voice';
       }
     }
 
@@ -948,7 +948,9 @@ const TTSEngine = {
       if (window.App && typeof window.App.showToast === 'function') {
         const curVoiceObj = this.voices.find(v => v.id === this.selectedVoice);
         const name = curVoiceObj ? curVoiceObj.name : 'Cloud Voice';
-        window.App.showToast(`Offline: Switched from ${name} to Device Voice`);
+        window.App.showToast(navigator.onLine
+          ? `${name} is unavailable right now, using Device Voice`
+          : `Offline: Switched from ${name} to Device Voice`);
       }
     } else {
       if (window.App && typeof window.App.showToast === 'function') {

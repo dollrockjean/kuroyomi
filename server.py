@@ -199,6 +199,27 @@ TTS_CONCURRENCY_SEMAPHORE = threading.Semaphore(6)
 _IN_FLIGHT_TTS = {}
 _IN_FLIGHT_LOCK = threading.Lock()
 
+def use_new_edge_tts_endpoint():
+    """Microsoft moved the free Read Aloud service to a new host in Oct 2026; the old one now answers 403, which made
+    every cloud voice request fail until edge-tts ships a fix (rany2/edge-tts#490, #491). Point the library at the new
+    host. Does nothing once the installed edge-tts already uses it, or if EDGE_TTS_ENDPOINT=legacy is set."""
+    if os.environ.get("EDGE_TTS_ENDPOINT", "").lower() == "legacy":
+        return False
+    try:
+        import edge_tts.communicate as edge_comm
+        import edge_tts.constants as edge_const
+    except Exception:
+        return False
+    if "speech.platform.bing.com" not in getattr(edge_comm, "WSS_URL", ""):
+        return False
+    edge_comm.WSS_URL = (
+        "wss://api.msedgeservices.com/tts/cognitiveservices/websocket/v1"
+        f"?Ocp-Apim-Subscription-Key={edge_const.TRUSTED_CLIENT_TOKEN}"
+    )
+    return True
+
+use_new_edge_tts_endpoint()
+
 def synthesize_speech(text, voice="en-US-BrianNeural", rate="+0%", pitch="+0Hz"):
     clean_text = normalize_text_for_narration(text)
     if not clean_text:
