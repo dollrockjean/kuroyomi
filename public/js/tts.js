@@ -227,8 +227,35 @@ const TTSEngine = {
       a.loop = true;
       a.src = this._silenceUri;
       const p = a.play();
-      if (p && p.catch) p.catch(() => {});
+      if (p && p.catch) p.catch((e) => this.logEvent(`silent hold play() refused: ${e && e.name}`));
     } catch (e) {}
+  },
+
+  // Starts the first paragraph of the (preloaded) next chapter immediately. Returns its audio URL, or null if the
+  // chapter text or that audio is not ready yet.
+  startNextChapterAudioNow() {
+    try {
+      const reader = window.Reader;
+      const ref = reader && reader.currentChapter && reader.currentChapter.next_chapter;
+      if (!ref || !navigator.onLine || !reader.chapterCache) return null;
+      const nextCh = reader.chapterCache.get(ref.id);
+      if (!nextCh) return null;
+      const texts = reader.getSpeakableTexts(nextCh, 1);
+      if (!texts.length) return null;
+      const url = this.blobCache.get(`${this.selectedVoice}_1.0_${this.pitch}_${this.normalizeForSpeech(texts[0])}`);
+      if (!url) return null;
+      const a = this.audioElement;
+      this._ignorePauseUntil = Date.now() + 500;
+      a.loop = false;
+      a.src = url;
+      a.playbackRate = this.rate || 1.0;
+      const p = a.play();
+      if (p && p.catch) p.catch((e) => this.logEvent(`handoff play() refused: ${e && e.name}`));
+      this.logEvent('chapter handoff: next chapter audio started immediately');
+      return url;
+    } catch (e) {
+      return null;
+    }
   },
 
   // A play() refused in the background is often transient (the audio session is mid-handover); try a few more times
@@ -314,7 +341,7 @@ const TTSEngine = {
     this._onEndedHandler = () => {
       clearTimeout(this._pauseTimer);
       if (!this.isPlaying || this.isPaused || this.audioElement.loop) return;
-      if (this.isLoading) return;
+      if (this.isLoading || this._advancing) return;
       this.speakParagraph(this.currentIndex + 1);
     };
 
@@ -1240,7 +1267,11 @@ const TTSEngine = {
         return;
       }
       this.logEvent(`chapter end -> loading next (${window.Reader && window.Reader.currentChapter ? window.Reader.currentChapter.title : '?'})`);
-      this.holdAudioSession();
+      // When the next chapter's text and first audio are already preloaded, start that audio right here, in the same
+      // task as the 'ended' event, exactly like a paragraph-to-paragraph hand-off (which phones allow in the
+      // background). Only fall back to the silent loop plus a wait when it is not ready.
+      this._handoffUrl = this.startNextChapterAudioNow();
+      if (!this._handoffUrl) this.holdAudioSession();
       await this.advanceToNextChapter();
       return;
     }
@@ -1264,14 +1295,21 @@ const TTSEngine = {
     let started = null;
     if (isCached && navigator.onLine) {
       try {
-        this.audioElement.src = this.blobCache.get(cacheKey);
-        this.audioElement.playbackRate = this.rate || 1.0;
-        started = this.audioElement.play();
-        started.catch(() => {});
+        const cachedUrl = this.blobCache.get(cacheKey);
+        if (this._handoffUrl && this._handoffUrl === cachedUrl && this.audioElement.src === cachedUrl && !this.audioElement.paused && !this.audioElement.ended) {
+          // Already playing this paragraph from the chapter hand-off: let it carry on instead of restarting it
+          started = Promise.resolve();
+        } else {
+          this.audioElement.src = cachedUrl;
+          this.audioElement.playbackRate = this.rate || 1.0;
+          started = this.audioElement.play();
+          started.catch(() => {});
+        }
       } catch (e) {
         started = null;
       }
     }
+    this._handoffUrl = null;
 
     // Visual highlight on reader text
     this.clearHighlight();
