@@ -2782,6 +2782,42 @@ function showAppVersion() {
   if (!tag || !m) return;
   const n = parseInt(m[1], 10);
   tag.textContent = `0.${Math.floor(n / 10)}.${n % 10}`;
+
+  // Tap the version three times quickly to see (and copy) what read aloud has been doing on this device
+  let taps = [];
+  tag.addEventListener('click', () => {
+    const now = Date.now();
+    taps = taps.filter((t) => now - t < 1500).concat(now);
+    if (taps.length >= 3) { taps = []; showPlaybackLog(); }
+  });
+}
+
+function showPlaybackLog() {
+  let lines = [];
+  try { lines = JSON.parse(localStorage.getItem('kuroyomi_tts_log') || '[]'); } catch (e) {}
+  const text = lines.length ? lines.join('\n') : '(nothing recorded yet)';
+  const box = document.createElement('div');
+  box.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,0.85);display:flex;flex-direction:column;gap:10px;padding:16px;';
+  const area = document.createElement('textarea');
+  area.readOnly = true;
+  area.value = text;
+  area.style.cssText = 'flex:1;width:100%;background:#111;color:#ddd;border:1px solid #333;border-radius:8px;padding:10px;font:12px monospace;';
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:10px;';
+  const mk = (label, fn) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.style.cssText = 'flex:1;padding:12px;border-radius:8px;border:1px solid #444;background:#222;color:#fff;font-size:14px;';
+    b.onclick = fn;
+    return b;
+  };
+  row.append(
+    mk('Copy', () => { area.select(); try { navigator.clipboard.writeText(text); } catch (e) { document.execCommand('copy'); } }),
+    mk('Close', () => box.remove())
+  );
+  box.append(area, row);
+  document.body.appendChild(box);
+  area.scrollTop = area.scrollHeight;
 }
 
 document.addEventListener('DOMContentLoaded', () => {

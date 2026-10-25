@@ -3678,6 +3678,7 @@ dfn .bionic-fixation,
   letter-spacing: 0.5px;
   color: var(--text-muted);
   opacity: 0.7;
-  pointer-events: none;
+  pointer-events: auto;
+  padding: 6px 8px 6px 0;
   z-index: 5;
 }

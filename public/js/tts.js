@@ -258,6 +258,74 @@ const TTSEngine = {
     }
   },
 
+  // The OS paused our audio without the listener asking (the page is in the background, so the listener's own pause
+  // would have come through the media-session handler). Retry for a while, because a navigation prompt or call that
+  // caused it may end within seconds. Returns true if recovery is being attempted.
+  tryRecoverFromInterruption(sessionAtPause) {
+    const now = Date.now();
+    if (!this._interruptSince || now - this._interruptSince > 120000) {
+      this._interruptSince = now;
+      this._interruptTries = 0;
+    }
+    if (this._interruptTries >= 40) return false;
+    this._interruptTries++;
+    this.logEvent(`audio paused by the system while backgrounded, retry ${this._interruptTries}`);
+    clearTimeout(this._interruptTimer);
+    const a = this.audioElement;
+    const attempt = () => {
+      if (this.playbackSessionId !== sessionAtPause || !this.isPlaying || this.isPaused) return;
+      if (!a.paused) { this._interruptTries = 0; return; }
+      const p = a.play();
+      if (p && p.then) {
+        p.then(() => {
+          this.logEvent('audio resumed after system pause');
+          this._interruptTries = 0;
+        }).catch(() => {
+          if (this._interruptTries >= 40) {
+            this.logEvent('gave up resuming after system pause');
+            this.isPaused = true;
+            this.updateAudioUI();
+            return;
+          }
+          this._interruptTries++;
+          this._interruptTimer = setTimeout(attempt, 3000);
+        });
+      }
+    };
+    attempt();
+    return true;
+  },
+
+  // Car, headphone and lock-screen "play": start the audio inside the handler itself, and if the element turns out to
+  // be dead (nothing actually plays), rebuild the current paragraph from scratch
+  mediaPlay() {
+    this.logEvent('car/lock-screen play');
+    clearTimeout(this._interruptTimer);
+    this._interruptTries = 0;
+    if (!this.isPlaying) { this.start(); return; }
+    const a = this.audioElement;
+    const special = this._resumeAtChapterEnd || this._advancing || this.isUsingDeviceVoice || a.loop ||
+      !a.src || a.src === window.location.href;
+    if (special) { this.resume(); return; }
+    if (this.isPaused) {
+      this.isPaused = false;
+      this._lastProgressAt = Date.now();
+    }
+    const before = a.currentTime;
+    const rebuild = (why) => {
+      this.logEvent(`play did not start (${why}), rebuilding paragraph ${this.currentIndex}`);
+      this.isPaused = false;
+      this.speakParagraph(this.currentIndex);
+    };
+    const p = a.play();
+    if (p && p.catch) p.catch((e) => rebuild(e && e.name ? e.name : 'refused'));
+    this.updateAudioUI();
+    setTimeout(() => {
+      if (!this.isPlaying || this.isPaused || this.isLoading) return;
+      if (a.paused || (a.currentTime === before && !a.ended)) rebuild('no progress');
+    }, 1500);
+  },
+
   // A play() refused in the background is often transient (the audio session is mid-handover); try a few more times
   async retryPlay(sessionId) {
     for (let i = 0; i < 4; i++) {
@@ -331,6 +399,10 @@ const TTSEngine = {
         const nearEnd = a.ended || (isFinite(a.duration) && a.duration > 0 && a.duration - a.currentTime < 0.6);
         if (nearEnd) {
           this.speakParagraph(this.currentIndex + 1);
+        } else if (document.hidden && this.tryRecoverFromInterruption(sessionAtPause)) {
+          // Paused by something other than the listener (a navigation voice prompt, a notification, a call): keep
+          // trying to continue, since a real pause from the car or lock screen arrives through the media-session
+          // handler below and never reaches this branch
         } else {
           this.isPaused = true;
           this.updateAudioUI();
@@ -1055,6 +1127,7 @@ const TTSEngine = {
   },
 
   pause() {
+    clearTimeout(this._interruptTimer);
     if (this.isPlaying) {
       this.isPaused = true;
       this.audioElement.pause();
@@ -1125,6 +1198,7 @@ const TTSEngine = {
       window.__reloadWhenIdle = false;
       setTimeout(() => window.location.reload(), 400);
     }
+    clearTimeout(this._interruptTimer);
     this.stopWatchdog();
     this._advanceGen++;
     this._advancing = false;
@@ -2070,12 +2144,13 @@ const TTSEngine = {
   setupMediaSession() {
     if (!('mediaSession' in navigator)) return;
     try {
-      // No JS handler for 'play' on purpose: with one, the phone hands the tap to the page, and a page that was
-      // frozen while paused (or whose play() is refused without a gesture) just ignores it. With none, the OS resumes
-      // the audio element directly, which works even then; the element's 'play' event keeps our state in step.
-      navigator.mediaSession.setActionHandler('play', null);
+      navigator.mediaSession.setActionHandler('play', () => {
+        this.mediaPlay();
+        navigator.mediaSession.playbackState = 'playing';
+      });
       navigator.mediaSession.setActionHandler('pause', () => {
-        this.logEvent('lock-screen pause');
+        this.logEvent('car/lock-screen pause');
+        clearTimeout(this._interruptTimer);
         this.pause();
         this.audioElement.pause();
         navigator.mediaSession.playbackState = 'paused';
