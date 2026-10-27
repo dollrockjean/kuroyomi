@@ -3,6 +3,11 @@ FROM python:3.9-slim
 
 WORKDIR /app
 
+# Pull the latest OS root certificates (eMudhra CA compromise, Oct 2026)
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends --only-upgrade ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
 # Copy requirements & install dependencies
 COPY requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt
