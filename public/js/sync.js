@@ -17,7 +17,7 @@ const SyncService = {
   currentSyncKey: null,
   syncTimeout: null,
   isOnline: true,
-  cloudServerUrl: 'https://kuroyomi-webnovel-reader.onrender.com',
+  cloudServerUrl: 'https://byob-webnovel-reader.onrender.com',
 
   async init() {
     // Register online/offline status listeners once
