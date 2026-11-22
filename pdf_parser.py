@@ -196,92 +196,93 @@ def parse_single_pdf(file_bytes, file_name=""):
         'cover_data': cover_data
     }
 
-    bookmarks = extract_outline_bookmarks(reader)
+    from chaptering import repair_chapters, looks_like_chapter_title
+
+    page_texts = []
+    for p_idx in range(total_pages):
+        try:
+            page_texts.append(reader.pages[p_idx].extract_text() or "")
+        except Exception:
+            page_texts.append("")
+
+    # Lines that repeat on many pages (book title header, author footer) are page furniture.
+    from collections import Counter
+    line_pages = Counter()
+    for txt in page_texts:
+        seen = set()
+        lns = [l for l in txt.splitlines() if l.strip()]
+        for ln in lns[:2] + lns[-2:]:  # headers and footers live at the page edges
+            k = re.sub(r'\d+', '#', ln.strip().lower())
+            if k and len(k) < 90 and k not in seen:
+                seen.add(k)
+                line_pages[k] += 1
+    furniture = {k for k, c in line_pages.items() if total_pages >= 8 and c >= max(4, total_pages * 0.3)}
+
+    def page_lines(txt):
+        out = []
+        lns = txt.splitlines()
+        nonblank = [i for i, l in enumerate(lns) if l.strip()]
+        edge = set(nonblank[:2] + nonblank[-2:])
+        for i, ln in enumerate(lns):
+            k = re.sub(r'\d+', '#', ln.strip().lower())
+            if i in edge and k in furniture and not looks_like_chapter_title(ln.strip()):
+                continue
+            out.append(ln)
+        return out
+
+    def build(title, text, idx):
+        paras = reconstruct_paragraphs(text)
+        formatted_html, word_count = format_paragraphs_html(paras, title)
+        if word_count > 0:
+            chapters.append({'chapter_index': idx, 'title': title,
+                             'content_html': formatted_html, 'word_count': word_count})
+
     chapters = []
-    
-    if len(bookmarks) >= 2:
+    bookmarks = extract_outline_bookmarks(reader)
+    # A bookmark per page (common in converted PDFs) is not a chapter list.
+    if len(bookmarks) >= 2 and len(bookmarks) < max(3, total_pages * 0.9):
         for i, bm in enumerate(bookmarks):
             start_page = bm['page']
             end_page = bookmarks[i + 1]['page'] if (i + 1 < len(bookmarks)) else total_pages
-            
-            ch_text_parts = []
-            for p_idx in range(start_page, min(end_page, total_pages)):
-                try:
-                    txt = reader.pages[p_idx].extract_text()
-                    if txt:
-                        ch_text_parts.append(txt)
-                except Exception:
-                    pass
-
-            full_text = "\n\n".join(ch_text_parts)
-            paras = reconstruct_paragraphs(full_text)
+            text = "\n".join("\n".join(page_lines(page_texts[p])) for p in range(start_page, min(end_page, total_pages)))
             ch_title = bm['title'] or f"Chapter {i + 1}"
-            
-            ch_num_match = re.search(r'(?:chapter|ch|c)[\s._-]*(\d+)', ch_title, re.I)
-            assigned_idx = int(ch_num_match.group(1)) if ch_num_match else (i + 1)
+            build(ch_title, text, i + 1)
+        chapters = repair_chapters(chapters)
 
-            formatted_html, word_count = format_paragraphs_html(paras, ch_title)
-            if word_count > 0:
-                chapters.append({
-                    'chapter_index': assigned_idx,
-                    'title': ch_title,
-                    'content_html': formatted_html,
-                    'word_count': word_count
-                })
-
-    if not chapters:
-        chapter_starts = []
-        heading_re = re.compile(r'^\s*(?:chapter|ch|act|part|volume)\s+([0-9ivxlcdm]+)[\s:.\-]*(.*)$', re.I)
-        named_section_re = re.compile(r'^\s*(prologue|epilogue|interlude|afterword|preface)[\s:.\-]*(.*)$', re.I)
-
-        page_texts = []
-        for p_idx in range(total_pages):
-            try:
-                txt = reader.pages[p_idx].extract_text() or ""
-            except Exception:
-                txt = ""
-            page_texts.append(txt)
-
-            first_chunk = txt[:800]
-            lines = [line.strip() for line in first_chunk.splitlines() if line.strip()]
-            if lines:
-                for line in lines[:3]:
-                    m = heading_re.match(line)
-                    if m:
-                        chapter_starts.append({
-                            'page': p_idx,
-                            'title': line[:100]
-                        })
-                        break
-                    m2 = named_section_re.match(line)
-                    if m2:
-                        chapter_starts.append({
-                            'page': p_idx,
-                            'title': line[:100]
-                        })
-                        break
-
-        if len(chapter_starts) >= 2:
-            for i, cs in enumerate(chapter_starts):
-                start_page = cs['page']
-                end_page = chapter_starts[i + 1]['page'] if (i + 1 < len(chapter_starts)) else total_pages
-
-                ch_text_parts = page_texts[start_page:end_page]
-                full_text = "\n\n".join(ch_text_parts)
-                paras = reconstruct_paragraphs(full_text)
-                ch_title = cs['title']
-
-                ch_num_match = re.search(r'(?:chapter|ch|c)[\s._-]*(\d+)', ch_title, re.I)
-                assigned_idx = int(ch_num_match.group(1)) if ch_num_match else (i + 1)
-
-                formatted_html, word_count = format_paragraphs_html(paras, ch_title)
-                if word_count > 0:
-                    chapters.append({
-                        'chapter_index': assigned_idx,
-                        'title': ch_title,
-                        'content_html': formatted_html,
-                        'word_count': word_count
-                    })
+    if len(chapters) < 2:
+        # Scan every line (not only page tops) for chapter headings, so chapters that
+        # start mid-page are found and a heading repeated at the top of each page of
+        # the same chapter (running header) does not start a new chapter.
+        chapters = []
+        current_title, current_norm, buf, found = None, None, [], 0
+        front = []
+        for txt in page_texts:
+            for ln in page_lines(txt):
+                s_ln = ln.strip()
+                if s_ln and len(s_ln) <= 90 and looks_like_chapter_title(s_ln) and not s_ln.endswith(('.', ',')):
+                    n = re.sub(r'[^a-z0-9]', '', s_ln.lower())
+                    if n == current_norm:
+                        continue  # running header
+                    if current_title is not None:
+                        build(current_title, "\n".join(buf), len(chapters) + 1)
+                    elif buf:
+                        front = buf
+                    current_title, current_norm, buf = s_ln[:100], n, []
+                    found += 1
+                    continue
+                buf.append(ln)
+            # no blank line at the page edge: a sentence cut by the page joins back up
+        if current_title is not None:
+            build(current_title, "\n".join(buf), len(chapters) + 1)
+        if found < 2:
+            chapters = []
+        elif front and len(" ".join(front).split()) > 40:
+            paras = reconstruct_paragraphs("\n".join(front))
+            fh, fw = format_paragraphs_html(paras, title)
+            if fw:
+                chapters.insert(0, {'chapter_index': 0, 'title': title, 'content_html': fh, 'word_count': fw})
+                for i, c in enumerate(chapters):
+                    c['chapter_index'] = i + 1
 
     if not chapters:
         pages_per_chapter = 15 if total_pages > 45 else (10 if total_pages > 20 else total_pages)
@@ -297,7 +298,7 @@ def parse_single_pdf(file_bytes, file_name=""):
                 except Exception:
                     pass
 
-            full_text = "\n\n".join(ch_text_parts)
+            full_text = "\n".join(ch_text_parts)
             paras = reconstruct_paragraphs(full_text)
             
             if total_pages <= pages_per_chapter:

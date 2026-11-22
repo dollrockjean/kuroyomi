@@ -410,7 +410,11 @@ def parse_single_epub(file_bytes, file_name=""):
                 'word_count': word_count
             })
             ch_idx += 1
-            
+
+    # Converted EPUBs often store one page per file: fold page files into real chapters.
+    from chaptering import repair_chapters
+    chapters = repair_chapters(chapters)
+
     return {
         'metadata': metadata,
         'chapters': chapters
