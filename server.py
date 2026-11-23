@@ -4,7 +4,10 @@ import os
 import io
 import json
 import re
-import cgi
+try:
+    import cgi  # Python 3.12 and older; the live Render container is on 3.9
+except ModuleNotFoundError:  # 3.13 dropped cgi, so a newer Python (the PC) uses our own parser
+    cgi = None
 import time
 import uuid
 BOOT_ID = uuid.uuid4().hex[:12]
@@ -136,6 +139,10 @@ VALID_VOICES = {
     "en-US-ChristopherNeural",
     "en-GB-RyanNeural",
     "en-GB-SoniaNeural",
+    "en-AU-WilliamNeural",
+    "en-AU-NatashaNeural",
+    # Still accepted so a setting saved before the English-only change does not 400; narration maps
+    # each of these to its English-only twin (see MULTILINGUAL_TO_ENGLISH).
     "en-AU-WilliamMultilingualNeural",
     "en-US-AvaMultilingualNeural",
     "en-US-EmmaMultilingualNeural",
@@ -285,6 +292,39 @@ def use_new_edge_tts_endpoint():
 
 use_new_edge_tts_endpoint()
 
+
+# --- English narration ------------------------------------------------------------------------
+# Rocco only reads English books, and read-aloud was pronouncing invented names ("Kael", "Varyn")
+# with a French accent. The cause is the "Multilingual" voices: they detect a language phrase by
+# phrase and switch accent mid-sentence. Azure's documented fix, a <lang xml:lang="en-US"> element
+# inside <voice>, is NOT accepted by the free Read Aloud endpoint - tested 2026-11-23, it answers
+# NoAudioReceived for every voice, multilingual or not. So the fix is to narrate with the plain
+# en-US (and en-AU, en-GB) voices, which only know English and read a strange name as English.
+# A saved multilingual voice is mapped to its own twin, so an old setting still works.
+MULTILINGUAL_TO_ENGLISH = {
+    "en-US-AvaMultilingualNeural": "en-US-AvaNeural",
+    "en-US-EmmaMultilingualNeural": "en-US-EmmaNeural",
+    "en-US-BrianMultilingualNeural": "en-US-BrianNeural",
+    "en-US-AndrewMultilingualNeural": "en-US-AndrewNeural",
+    "en-US-ChristopherMultilingualNeural": "en-US-ChristopherNeural",
+    "en-GB-RyanMultilingualNeural": "en-GB-RyanNeural",
+    "en-GB-SoniaMultilingualNeural": "en-GB-SoniaNeural",
+    "en-AU-WilliamMultilingualNeural": "en-AU-WilliamNeural",
+    "en-AU-NatashaMultilingualNeural": "en-AU-NatashaNeural",
+}
+FORCE_ENGLISH_NARRATION = os.environ.get("BYOB_FORCE_ENGLISH", "1") != "0"
+
+
+def english_only_voice(voice):
+    """The voice actually used for narration: never a language-guessing multilingual one."""
+    if not FORCE_ENGLISH_NARRATION:
+        return voice
+    return MULTILINGUAL_TO_ENGLISH.get(voice, voice)
+
+
+print(f"[TTS] English-only narration: {'on' if FORCE_ENGLISH_NARRATION else 'off'}")
+
+
 def synthesize_speech(text, voice="en-US-BrianNeural", rate="+0%", pitch="+0Hz"):
     clean_text = normalize_text_for_narration(text)
     if not clean_text:
@@ -293,11 +333,17 @@ def synthesize_speech(text, voice="en-US-BrianNeural", rate="+0%", pitch="+0Hz")
     if voice not in VALID_VOICES:
         print(f"[TTS] Voice '{voice}' not in whitelist, falling back to en-US-BrianNeural")
         voice = "en-US-BrianNeural"
+    # A saved multilingual voice becomes its English-only twin here, so the same paragraph never
+    # comes back in a French accent.
+    voice = english_only_voice(voice)
+    if voice not in VALID_VOICES:
+        voice = "en-US-BrianNeural"
 
     norm_rate = normalize_rate(rate)
     norm_pitch = normalize_pitch(pitch)
 
-    cache_key = hashlib.sha256(f"{voice}_{norm_rate}_{norm_pitch}_{clean_text}".encode('utf-8')).hexdigest()
+    cache_key = hashlib.sha256(
+        f"{voice}_{norm_rate}_{norm_pitch}_{clean_text}".encode('utf-8')).hexdigest()
     cache_file = os.path.join(TTS_CACHE_DIR, f"{cache_key}.mp3")
     if os.path.exists(cache_file) and os.path.getsize(cache_file) > 0:
         with open(cache_file, "rb") as f:
@@ -1316,7 +1362,16 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             'CONTENT_TYPE': content_type,
             'CONTENT_LENGTH': self.headers.get('Content-Length', '0')
         }
-        fs = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ=environ)
+        if cgi is not None:
+            fs = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ=environ)
+        else:
+            import multipart_compat
+            try:
+                fs = multipart_compat.parse_multipart(
+                    self.rfile, content_type, int(environ['CONTENT_LENGTH'] or 0))
+            except ValueError:
+                self.send_json({"error": "Malformed multipart upload"}, status=400)
+                return
 
         user_id = fs.getvalue("user_id")
         if not user_id or not isinstance(user_id, str):

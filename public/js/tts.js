@@ -98,11 +98,28 @@ const TTSEngine = {
     { id: 'en-US-ChristopherNeural', name: 'Christopher', desc: 'Deep Resonant' },
     { id: 'en-GB-RyanNeural', name: 'Ryan', desc: 'Classic British' },
     { id: 'en-GB-SoniaNeural', name: 'Sonia', desc: 'Refined British' },
-    { id: 'en-AU-WilliamMultilingualNeural', name: 'William', desc: 'Smooth Australian' },
-    { id: 'en-US-AvaMultilingualNeural', name: 'Ava HD', desc: 'Most natural storyteller (new)' },
-    { id: 'en-US-EmmaMultilingualNeural', name: 'Emma HD', desc: 'Warm, lifelike narrator (new)' },
-    { id: 'en-US-BrianMultilingualNeural', name: 'Brian HD', desc: 'Lifelike deep narrator (new)' }
+    { id: 'en-AU-WilliamNeural', name: 'William', desc: 'Smooth Australian' },
+    { id: 'en-AU-NatashaNeural', name: 'Natasha', desc: 'Calm Australian' }
   ],
+
+  // The "Multilingual" voices guess a language phrase by phrase, so an invented name in an English
+  // book came out in a French accent. These books are all English, so a saved multilingual voice
+  // becomes its English-only twin (the server does the same for anything that slips through).
+  ENGLISH_ONLY_VOICE: {
+    'en-US-AvaMultilingualNeural': 'en-US-AvaNeural',
+    'en-US-EmmaMultilingualNeural': 'en-US-EmmaNeural',
+    'en-US-BrianMultilingualNeural': 'en-US-BrianNeural',
+    'en-US-AndrewMultilingualNeural': 'en-US-AndrewNeural',
+    'en-US-ChristopherMultilingualNeural': 'en-US-ChristopherNeural',
+    'en-GB-RyanMultilingualNeural': 'en-GB-RyanNeural',
+    'en-GB-SoniaMultilingualNeural': 'en-GB-SoniaNeural',
+    'en-AU-WilliamMultilingualNeural': 'en-AU-WilliamNeural',
+    'en-AU-NatashaMultilingualNeural': 'en-AU-NatashaNeural'
+  },
+
+  englishOnlyVoice(id) {
+    return (id && this.ENGLISH_ONLY_VOICE[id]) || id;
+  },
 
   normalizeForSpeech(text) {
     if (!text) return '';
@@ -678,9 +695,9 @@ const TTSEngine = {
       this.pitch = parseInt(window.ReaderSettings.tts_pitch, 10) || 0;
     }
     if (localSettings && localSettings.tts_voice) {
-      this.selectedVoice = localSettings.tts_voice;
+      this.selectedVoice = this.englishOnlyVoice(localSettings.tts_voice);
     } else if (window.ReaderSettings && window.ReaderSettings.tts_voice) {
-      this.selectedVoice = window.ReaderSettings.tts_voice;
+      this.selectedVoice = this.englishOnlyVoice(window.ReaderSettings.tts_voice);
     }
     this.loadEngineSettings();
     this.populateVoiceSelect();
@@ -925,7 +942,7 @@ const TTSEngine = {
     if (!selects.length) return;
 
     const saved = window.ReaderSettings?.tts_voice || this.selectedVoice;
-    this.selectedVoice = saved;
+    this.selectedVoice = this.englishOnlyVoice(saved);
 
     selects.forEach(sel => {
       sel.innerHTML = '';
@@ -982,7 +999,7 @@ const TTSEngine = {
   },
 
   setVoice(voiceId) {
-    this.selectedVoice = voiceId;
+    this.selectedVoice = this.englishOnlyVoice(voiceId);
     this.blobCache.clear(); // Clear cache when voice changes
     this.pendingFetches.clear();
     this.setDeviceVoiceMode(false); // ALWAYS prioritize selected cloud voice
@@ -1298,6 +1315,8 @@ const TTSEngine = {
 
   async getAudioBlobUrl(text, voiceId, rateVal, pitchVal, retries = 1) {
     const pVal = pitchVal !== undefined ? pitchVal : this.pitch;
+    // English books only: a voice that would guess the language becomes its English-only twin.
+    voiceId = this.englishOnlyVoice(voiceId);
     const cleanSpeechText = this.normalizeForSpeech(text);
     if (!cleanSpeechText) return '';
 
@@ -1571,14 +1590,23 @@ const TTSEngine = {
     const utterance = new SpeechSynthesisUtterance(cleanDeviceText);
     utterance.rate = Math.min(2.0, Math.max(0.5, this.rate));
     utterance.pitch = Math.max(0.5, Math.min(1.5, 1.0 + (this.pitch / 40.0)));
+    // English, always. Without this the system picks a language from the text and reads invented
+    // names and places with a French (or German, or Spanish) accent.
+    utterance.lang = 'en-US';
 
     // Choose best English system voice (e.g. Siri, Samantha, Daniel, etc.)
     const voices = window.speechSynthesis.getVoices();
     if (voices && voices.length > 0) {
-      const best = voices.find(v => v.lang && v.lang.startsWith('en') && (
+      const enUS = voices.filter(v => v.lang && v.lang.replace('_', '-').toLowerCase().startsWith('en-us'));
+      const anyEn = voices.filter(v => v.lang && v.lang.toLowerCase().startsWith('en'));
+      const pool = enUS.length ? enUS : anyEn;
+      const best = pool.find(v => (
         v.name.includes('Siri') || v.name.includes('Daniel') || v.name.includes('Samantha') || v.name.includes('Karen') || v.name.includes('Google')
-      )) || voices.find(v => v.lang && v.lang.startsWith('en')) || voices[0];
-      if (best) utterance.voice = best;
+      )) || pool[0] || voices[0];
+      if (best) {
+        utterance.voice = best;
+        if (best.lang) utterance.lang = best.lang;
+      }
     }
 
     utterance.onboundary = (event) => {
