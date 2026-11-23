@@ -220,6 +220,15 @@ const SyncService = {
       }
 
       if (data && data.success) {
+        // Joining another account: that account's settings win over this device's (the phone's font shows up here)
+        if (data.user_id && data.user_id !== Storage.getUserId()) {
+          const local = Storage.getLocalSettings();
+          if (local) {
+            local.changed_at = 0;
+            delete local.user_id;
+            Storage.setLocalSettings(local);
+          }
+        }
         this.currentUserId = data.user_id;
         this.currentSyncKey = data.sync_key;
         Storage.setUserId(data.user_id);
@@ -472,7 +481,9 @@ const SyncService = {
   // keepStamp: push as-is (startup merge). Otherwise this is a fresh change, stamped now so it wins on every device.
   async syncSettings(settings, keepStamp = false) {
     if (!settings) return;
-    if (!keepStamp || !settings.changed_at) settings.changed_at = Date.now();
+    // Settings never changed on this device keep stamp 0, so untouched defaults never beat a real change elsewhere
+    if (!keepStamp) settings.changed_at = Date.now();
+    else if (!settings.changed_at) settings.changed_at = 0;
     Storage.setLocalSettings(settings);
     if (!this.currentUserId) return;
     clearTimeout(this._settingsTimer);

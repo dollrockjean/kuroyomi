@@ -556,8 +556,8 @@ def import_backup_data(data: dict, user_id: str, sync_key: str = None):
 
     if settings:
         cur.execute("""
-            INSERT OR REPLACE INTO user_settings (user_id, theme, font_family, font_size, line_height, content_width, auto_scroll_speed, tts_voice, tts_rate, tts_pitch, library_view_mode, library_sort_by, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO user_settings (user_id, theme, font_family, font_size, line_height, content_width, auto_scroll_speed, tts_voice, tts_rate, tts_pitch, library_view_mode, library_sort_by, extra_json, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             user_id,
             settings.get("theme", "monochrome-dark"),
@@ -571,6 +571,7 @@ def import_backup_data(data: dict, user_id: str, sync_key: str = None):
             settings.get("tts_pitch", 0.0),
             settings.get("library_view_mode", "tile"),
             settings.get("library_sort_by", "last_read"),
+            settings.get("extra_json") if isinstance(settings.get("extra_json"), str) else "{}",
             now
         ))
 

@@ -161,13 +161,16 @@ const App = {
       const session = await SyncService.init();
       if (session && session.settings && Object.keys(session.settings).length > 0) {
         const server = SyncService.expandSettings(session.settings);
-        if (localSettings && Object.keys(localSettings).length > 0) {
+        // Read again: pairing a link (?pair=) during init resets the local stamp so the account's settings win
+        const localNow = Storage.getLocalSettings();
+        if (localNow && Object.keys(localNow).length > 0) {
           // Newest change wins: a setting changed on the phone shows up on the computer and the other way round
           const serverMs = (server.updated_at || 0) * 1000;
-          if (serverMs > (localSettings.changed_at || 0) + 1000) {
+          if (serverMs > (localNow.changed_at || 0) + 1000) {
             this.adoptServerSettings(server);
           } else {
-            const merged = { ...server, ...localSettings };
+            const merged = { ...server, ...localNow };
+            delete merged.user_id;
             this.applySettings(merged, false);
             SyncService.syncSettings(merged, true);
           }
