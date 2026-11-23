@@ -115,6 +115,23 @@ class Keeper:
             for db in data["idb"].values():
                 for m in (db.get("library_mirror") or []):
                     self.seed_backup(m.get("backup_data") or {})
+            # the app also keeps the latest spot per book in localStorage (often newer than the mirror)
+            for key, raw in (data.get("localStorage") or {}).items():
+                if "_prog_" not in key or "nov_" not in key:
+                    continue
+                try:
+                    v = json.loads(raw) if isinstance(raw, str) else raw
+                except ValueError:
+                    continue
+                if not isinstance(v, dict) or not v.get("chapterId"):
+                    continue
+                nid = key[key.index("nov_"):]
+                if self.take_progress({"novel_id": nid, "volume_id": v.get("volumeId"), "chapter_id": v.get("chapterId"),
+                                       "paragraph_index": v.get("paragraphIndex") or 0,
+                                       "scroll_percent": v.get("scrollPercent") or 0,
+                                       "updated_at": (v.get("savedAt") or 0) / 1000}):
+                    log(self.dir, f"seeded newer reading spot for {nid} ({v.get('chapterTitle')})")
+            self.save_meta()
             return
         self.seed_backup(data or {})
 
