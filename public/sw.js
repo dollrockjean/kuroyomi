@@ -6,6 +6,7 @@ const PRECACHE_ASSETS = [
   '/',
   '/index.html',
   '/css/brutalist.css?v=53.0',
+  '/css/refresh.css?v=53.0',
   '/js/app.js?v=53.0',
   '/js/reader.js?v=53.0',
   '/js/tts.js?v=53.0',

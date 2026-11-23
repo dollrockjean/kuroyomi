@@ -1,0 +1,247 @@
+/* BYoB v54 refresh layer. Loads after brutalist.css and overrides it.
+   Rules: zero emoji, Times stays the reading and title face, text never cut off with dots. */
+
+/* --------------------------------------------------------------------------
+   Library tiles: whole cover, 2:3 book shape, never cropped
+   -------------------------------------------------------------------------- */
+.novel-grid {
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 22px 18px;
+}
+
+.novel-card {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+
+.novel-card:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.novel-card-cover-wrap {
+  position: relative;
+  aspect-ratio: 2 / 3;
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--bg-card);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 10px 24px -8px rgba(0, 0, 0, 0.6);
+  transition: transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.18s ease;
+}
+
+.novel-card-cover-wrap::after {
+  /* thin inner edge so light covers do not melt into light themes */
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+  background: none;
+  pointer-events: none;
+}
+
+@media (hover: hover) {
+  .novel-card-cover-wrap:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.35), 0 18px 34px -10px rgba(0, 0, 0, 0.7);
+  }
+}
+
+.novel-card-cover-wrap:active {
+  transform: scale(0.98);
+}
+
+/* Blurred copy fills the box; the sharp cover sits on top, whole */
+.novel-card-cover-bg {
+  position: absolute;
+  inset: -12%;
+  width: 124%;
+  height: 124%;
+  object-fit: cover;
+  filter: blur(18px) saturate(1.2) brightness(0.7);
+  pointer-events: none;
+}
+
+.novel-card-cover {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  transition: none;
+}
+
+.novel-card:hover .novel-card-cover {
+  transform: none;
+}
+
+.novel-card-cover-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 2;
+}
+
+.novel-card-cover-progress > div {
+  height: 100%;
+  background: var(--accent);
+}
+
+.novel-card-body {
+  padding: 10px 2px 0;
+}
+
+.novel-card-title {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+  font-size: 15px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.novel-card-author {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  margin-bottom: 8px;
+}
+
+.novel-card-progress-info span:first-child,
+.novel-list-progress-info {
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  max-width: none !important;
+}
+
+.novel-card-progress-info {
+  gap: 8px;
+  line-height: 1.35;
+}
+
+.novel-card-progress-info span:last-child {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* List view: same rule, whole cover */
+.novel-list-cover-wrap {
+  width: 56px;
+  height: 84px;
+  border-radius: 5px;
+  border: none;
+  box-shadow: 0 4px 12px -4px rgba(0, 0, 0, 0.6);
+}
+
+.novel-list-cover {
+  object-fit: cover;
+}
+
+.novel-list-title {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+/* --------------------------------------------------------------------------
+   Continue Reading hero: whole cover, blurred cover glow behind
+   -------------------------------------------------------------------------- */
+.resume-hero {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.resume-backdrop {
+  position: absolute;
+  inset: -40px;
+  z-index: -1;
+  background-size: cover;
+  background-position: center;
+  filter: blur(40px) saturate(1.3);
+  opacity: 0.28;
+  pointer-events: none;
+}
+
+.resume-cover {
+  object-fit: contain;
+  background: var(--bg-card);
+  border: none;
+  box-shadow: 0 10px 26px -8px rgba(0, 0, 0, 0.7);
+}
+
+/* --------------------------------------------------------------------------
+   Upload form: optional cover picture
+   -------------------------------------------------------------------------- */
+.upload-cover-row {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+
+.upload-cover-thumb {
+  width: 64px;
+  aspect-ratio: 2 / 3;
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: var(--bg-card);
+  border: 1px dashed var(--border-color);
+}
+
+.upload-cover-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.upload-cover-empty {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-size: 10px;
+  color: var(--text-muted);
+  padding: 4px;
+}
+
+.upload-cover-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.upload-cover-hint {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+@media (max-width: 768px) {
+  .novel-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 18px 12px !important;
+  }
+
+  .novel-card-cover-wrap {
+    aspect-ratio: 2 / 3;
+  }
+
+  .novel-card-body {
+    padding: 8px 1px 0;
+  }
+
+  .novel-card-title {
+    font-size: 14px;
+  }
+}

@@ -31,6 +31,7 @@
 
   <!-- Styles -->
   <link rel="stylesheet" href="/css/brutalist.css?v=53.0">
+  <link rel="stylesheet" href="/css/refresh.css?v=53.0">
 
   <!-- Critical Quick Sheet Theme & Layout Styles (Anti-Cache Protection) -->
   <style id="quickSheetCriticalStyles">
@@ -215,6 +216,7 @@
       
       <!-- Resume Hero Card -->
       <section class="resume-hero" id="resumeHero" style="display: none;">
+        <div class="resume-backdrop" id="resumeBackdrop" aria-hidden="true"></div>
         <img src="" id="resumeCover" class="resume-cover" alt="Cover" />
         <div class="resume-info">
           <h3>Continue Reading</h3>
@@ -1074,6 +1076,24 @@
         <div class="form-group" id="customTitleGroup">
           <label class="form-label">Series Title (Optional)</label>
           <input type="text" id="seriesTitleInput" class="form-input" placeholder="Leave blank to auto-detect base title" />
+        </div>
+
+        <div class="form-group upload-cover-group" id="uploadCoverGroup">
+          <label class="form-label">Cover Picture (Optional)</label>
+          <div class="upload-cover-row">
+            <div class="upload-cover-thumb">
+              <img id="uploadCoverPreview" alt="Chosen cover" style="display: none;" />
+              <div id="uploadCoverEmpty" class="upload-cover-empty">From file</div>
+            </div>
+            <div class="upload-cover-actions">
+              <div class="upload-cover-hint">Leave empty to use the cover inside the book file.</div>
+              <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                <button type="button" class="btn-brutal btn-sm" id="uploadCoverPickBtn">Choose picture</button>
+                <button type="button" class="btn-brutal btn-sm" id="uploadCoverClearBtn" style="display: none;">Remove</button>
+              </div>
+            </div>
+          </div>
+          <input type="file" id="uploadCoverInput" accept="image/*" style="display: none;" />
         </div>
 
         <div id="epubDropzone" style="border: 1px dashed var(--border-color); border-radius: 8px; background: var(--bg-surface); padding: 28px 20px; text-align: center; cursor: pointer; margin-bottom: 14px;">

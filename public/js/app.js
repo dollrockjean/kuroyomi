@@ -372,118 +372,147 @@ const App = {
 
     document.getElementById('startUploadBtn').addEventListener('click', () => this.performUpload());
 
-    // Custom Cover Image Upload Handler
+    // Custom cover picture (Book Settings > Change Cover, or tapping a cover)
     const coverInput = document.getElementById('novelCoverInput');
     if (coverInput) {
-      coverInput.addEventListener('change', (e) => {
+      coverInput.addEventListener('change', async (e) => {
         const file = e.target.files && e.target.files[0];
-        if (!file || !this.targetCoverNovelId) return;
-
         const targetId = this.targetCoverNovelId;
+        if (!file || !targetId) return;
         this.showLoading('Updating cover...');
-
-        const processAndSave = async (dataUrl) => {
-          try {
-            // 1. Immediately cache locally in Storage
-            if (typeof Storage !== 'undefined' && Storage.setNovelCover) {
-              Storage.setNovelCover(targetId, dataUrl);
-            }
-
-            // 2. Immediately update in-memory novel item
-            const novel = (this.novels || []).find(n => n.id === targetId);
-            if (novel) {
-              novel.cover_data = dataUrl;
-            }
-
-            // 3. Immediately update IndexedDB mirror
-            const currentUid = (window.SyncService && SyncService.currentUserId) || (window.Storage && Storage.getUserId()) || 'guest';
-            if (typeof IDB !== 'undefined' && IDB.updateCoverInMirror) {
-              try { await IDB.updateCoverInMirror(currentUid, targetId, dataUrl); } catch (_) {}
-            }
-
-            // 4. Immediately re-render library cards & hero cover
-            this.renderLibraryGrid();
-
-            const resumeCover = document.getElementById('resumeCover');
-            if (resumeCover && this.lastReadNovelId === targetId) {
-              resumeCover.src = dataUrl;
-            }
-
-            const modalCover = document.getElementById('novelSettingsModalCover');
-            if (modalCover) {
-              modalCover.src = dataUrl;
-            }
-
-            this.hideLoading();
-            this.showToast('Cover updated');
-
-            // 5. Asynchronously persist to server
-            try {
-              fetch('/api/novels/cover', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  novel_id: targetId,
-                  user_id: currentUid,
-                  cover_data: dataUrl
-                })
-              }).then(r => r.json()).then(resData => {
-                if (resData && !resData.success) {
-                  console.warn('Cover upload server notice:', resData);
-                }
-              }).catch(err => {
-                console.warn('Cover upload server offline, retained locally:', err);
-              });
-            } catch (_) {}
-          } catch (saveErr) {
-            this.hideLoading();
-            alert('Failed to apply cover: ' + saveErr.message);
-          } finally {
-            coverInput.value = '';
-          }
-        };
-
-        const reader = new FileReader();
-        reader.onerror = () => {
+        try {
+          const dataUrl = await this.readCoverFile(file);
+          const onServer = await this.applyCover(targetId, dataUrl);
           this.hideLoading();
+          this.showToast(onServer ? 'Cover updated' : 'Cover saved on this device; it will sync when the server is back');
+        } catch (err) {
+          this.hideLoading();
+          alert('Could not use that picture: ' + (err && err.message ? err.message : err));
+        } finally {
           coverInput.value = '';
-          alert('Could not read selected image file.');
-        };
-        reader.onload = (ev) => {
-          const rawDataUrl = ev.target.result;
-          const img = new Image();
-          img.onerror = () => {
-            // Fallback to raw data url if image canvas decode fails
-            processAndSave(rawDataUrl);
-          };
-          img.onload = () => {
-            try {
-              // Scale to max 360x540 maintaining aspect ratio for lightweight storage (~25KB-35KB)
-              const maxW = 360;
-              const maxH = 540;
-              let w = img.width;
-              let h = img.height;
-              const ratio = Math.min(maxW / w, maxH / h, 1);
-              w = Math.round(w * ratio);
-              h = Math.round(h * ratio);
-
-              const canvas = document.createElement('canvas');
-              canvas.width = w;
-              canvas.height = h;
-              const ctx = canvas.getContext('2d');
-              ctx.drawImage(img, 0, 0, w, h);
-              const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
-              processAndSave(dataUrl);
-            } catch (canvasErr) {
-              console.warn('Canvas resize fallback to raw image:', canvasErr);
-              processAndSave(rawDataUrl);
-            }
-          };
-          img.src = rawDataUrl;
-        };
-        reader.readAsDataURL(file);
+        }
       });
     }
+
+    // Optional cover picture in the upload form
+    const uploadCoverInput = document.getElementById('uploadCoverInput');
+    if (uploadCoverInput) {
+      uploadCoverInput.addEventListener('change', async (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        try {
+          this.pendingUploadCover = await this.readCoverFile(file);
+          this.renderUploadCoverPreview();
+        } catch (err) {
+          alert('Could not use that picture: ' + (err && err.message ? err.message : err));
+        } finally {
+          uploadCoverInput.value = '';
+        }
+      });
+    }
+    const uploadCoverPick = document.getElementById('uploadCoverPickBtn');
+    if (uploadCoverPick) uploadCoverPick.addEventListener('click', () => uploadCoverInput && uploadCoverInput.click());
+    const uploadCoverClear = document.getElementById('uploadCoverClearBtn');
+    if (uploadCoverClear) uploadCoverClear.addEventListener('click', () => { this.pendingUploadCover = null; this.renderUploadCoverPreview(); });
+  },
+
+  // Reads a picture file and shrinks it to at most 480x720 JPEG (about 40-80 KB), sharp on phone screens.
+  readCoverFile(file) {
+    return new Promise((resolve, reject) => {
+      if (!file.type || !file.type.startsWith('image/')) { reject(new Error('Pick a picture file (JPG, PNG, WebP).')); return; }
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Could not read the picture.'));
+      reader.onload = (ev) => {
+        const raw = ev.target.result;
+        const img = new Image();
+        img.onerror = () => (raw.length < 5.5 * 1024 * 1024 ? resolve(raw) : reject(new Error('That picture is too big.')));
+        img.onload = () => {
+          try {
+            const ratio = Math.min(480 / img.width, 720 / img.height, 1);
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.max(1, Math.round(img.width * ratio));
+            canvas.height = Math.max(1, Math.round(img.height * ratio));
+            const ctx = canvas.getContext('2d');
+            ctx.imageSmoothingQuality = 'high';
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            resolve(canvas.toDataURL('image/jpeg', 0.82));
+          } catch (_) {
+            resolve(raw);
+          }
+        };
+        img.src = raw;
+      };
+      reader.readAsDataURL(file);
+    });
+  },
+
+  // Saves a cover on this device right away, then on the server. Returns true when the server has it.
+  async applyCover(novelId, dataUrl) {
+    if (typeof Storage !== 'undefined' && Storage.setNovelCover) Storage.setNovelCover(novelId, dataUrl);
+    try { localStorage.setItem('byob_cover_pending_' + novelId, '1'); } catch (_) {}
+    const novel = (this.novels || []).find(n => n.id === novelId);
+    if (novel) { novel.cover_data = dataUrl; novel.has_cover = true; }
+    const uid = (window.SyncService && SyncService.currentUserId) || (window.Storage && Storage.getUserId()) || 'guest';
+    if (typeof IDB !== 'undefined' && IDB.updateCoverInMirror) {
+      try { await IDB.updateCoverInMirror(uid, novelId, dataUrl); } catch (_) {}
+    }
+    this.renderLibraryGrid();
+    if (this.lastReadNovelId === novelId) {
+      const resumeCover = document.getElementById('resumeCover');
+      if (resumeCover) resumeCover.src = dataUrl;
+      const backdrop = document.getElementById('resumeBackdrop');
+      if (backdrop) backdrop.style.backgroundImage = `url("${dataUrl}")`;
+    }
+    return this.pushCoverToServer(novelId, dataUrl, uid);
+  },
+
+  async pushCoverToServer(novelId, dataUrl, uid) {
+    try {
+      const res = await fetch('/api/novels/cover', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ novel_id: novelId, user_id: uid, cover_data: dataUrl, sync_key: (window.Storage && Storage.getSyncKey && Storage.getSyncKey()) || '' })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data && data.success !== false) {
+        try { localStorage.removeItem('byob_cover_pending_' + novelId); } catch (_) {}
+        return true;
+      }
+      console.warn('Cover not saved on server:', res.status, data);
+    } catch (err) {
+      console.warn('Cover upload offline, kept on this device:', err);
+    }
+    return false;
+  },
+
+  // A cover changed while offline stays on this device until the server takes it.
+  coverFor(n) {
+    let pending = false;
+    try { pending = localStorage.getItem('byob_cover_pending_' + n.id) === '1'; } catch (_) {}
+    const local = typeof Storage !== 'undefined' && Storage.getNovelCover ? Storage.getNovelCover(n.id) : null;
+    return (pending && local) || n.cover_data || local || FALLBACK_COVER;
+  },
+
+  retryPendingCovers() {
+    const uid = (window.SyncService && SyncService.currentUserId) || 'guest';
+    (this.novels || []).forEach(n => {
+      let pending = false;
+      try { pending = localStorage.getItem('byob_cover_pending_' + n.id) === '1'; } catch (_) {}
+      const local = pending && Storage.getNovelCover(n.id);
+      if (local) this.pushCoverToServer(n.id, local, uid);
+    });
+  },
+
+  renderUploadCoverPreview() {
+    const img = document.getElementById('uploadCoverPreview');
+    const empty = document.getElementById('uploadCoverEmpty');
+    const clear = document.getElementById('uploadCoverClearBtn');
+    const pick = document.getElementById('uploadCoverPickBtn');
+    const has = !!this.pendingUploadCover;
+    if (img) { img.src = has ? this.pendingUploadCover : ''; img.style.display = has ? 'block' : 'none'; }
+    if (empty) empty.style.display = has ? 'none' : 'flex';
+    if (clear) clear.style.display = has ? 'inline-flex' : 'none';
+    if (pick) pick.textContent = has ? 'Change picture' : 'Choose picture';
   },
 
   bindMasterPanelEvents() {
@@ -1893,6 +1922,7 @@ const App = {
 
       // If server has novels, update our local device mirror safely
       if (this.novels.length > 0) {
+        this.retryPendingCovers();
         this.updateDeviceMirror();
         SyncService.reconcileProgress(this.novels).then((r) => {
           if (r && r.pulled > 0 && this.currentView !== 'reader') {
@@ -2064,17 +2094,12 @@ const App = {
     hero.style.display = 'grid';
     const resumeCoverEl = document.getElementById('resumeCover');
     if (resumeCoverEl) {
-      resumeCoverEl.src = (typeof Storage !== 'undefined' && Storage.getNovelCover(lastRead.novel_id)) || lastRead.cover_data || FALLBACK_COVER;
+      resumeCoverEl.src = this.coverFor({ id: lastRead.novel_id, cover_data: lastRead.cover_data });
       resumeCoverEl.style.cursor = 'pointer';
-      resumeCoverEl.title = 'Click to change cover image';
-      resumeCoverEl.onclick = () => {
-        this.targetCoverNovelId = lastRead.novel_id;
-        const input = document.getElementById('novelCoverInput');
-        if (input) {
-          input.value = '';
-          input.click();
-        }
-      };
+      resumeCoverEl.title = 'Resume reading';
+      resumeCoverEl.onclick = () => { const b = document.getElementById('resumeReadBtn'); if (b) b.click(); };
+      const backdrop = document.getElementById('resumeBackdrop');
+      if (backdrop) backdrop.style.backgroundImage = `url("${resumeCoverEl.src}")`;
     }
     const resumeTitle = document.getElementById('resumeNovelTitle');
     resumeTitle.textContent = lastRead.novel_title;
@@ -2288,7 +2313,7 @@ const App = {
     }
 
     items.forEach(n => {
-      const coverSrc = (typeof Storage !== 'undefined' && Storage.getNovelCover(n.id)) || n.cover_data || FALLBACK_COVER;
+      const coverSrc = this.coverFor(n);
       let lastReadTag = n.last_chapter_title ? `Last: ${n.last_chapter_title}` : 'Not started';
       let readPercent = Math.round(n.progress_overall_percent !== undefined ? n.progress_overall_percent : (n.progress_scroll || 0));
 
@@ -2309,21 +2334,12 @@ const App = {
         }
       }
 
-      const triggerCover = () => {
-        this.targetCoverNovelId = n.id;
-        const input = document.getElementById('novelCoverInput');
-        if (input) {
-          input.value = '';
-          input.click();
-        }
-      };
-
       if (viewMode === 'list') {
         const card = document.createElement('div');
         card.className = 'novel-card-list';
         card.setAttribute('data-id', n.id);
         card.innerHTML = `
-          <div class="novel-list-cover-wrap" style="cursor: pointer;" title="Click to change cover image">
+          <div class="novel-list-cover-wrap" title="Open ${escapeHtml(n.title)}">
             <img src="${escapeHtml(coverSrc)}" class="novel-list-cover" alt="${escapeHtml(n.title)}" loading="lazy" />
           </div>
           <div class="novel-list-body">
@@ -2357,7 +2373,7 @@ const App = {
         if (listTitle) listTitle.onclick = () => Reader.openNovel(n.id, true);
         const listSettingsBtn = card.querySelector('.novel-settings-cog-btn');
         if (listSettingsBtn) listSettingsBtn.onclick = (e) => { e.stopPropagation(); this.openNovelSettingsModal(n.id, n.title, coverSrc); };
-        card.querySelector('.novel-list-cover-wrap').onclick = triggerCover;
+        card.querySelector('.novel-list-cover-wrap').onclick = () => Reader.openNovel(n.id, true);
 
         grid.appendChild(card);
       } else {
@@ -2365,11 +2381,10 @@ const App = {
         card.className = 'novel-card';
         card.setAttribute('data-id', n.id);
         card.innerHTML = `
-          <div class="novel-card-cover-wrap" style="position: relative; cursor: pointer;" title="Click to change cover image">
+          <div class="novel-card-cover-wrap" title="Open ${escapeHtml(n.title)}">
+            <img src="${escapeHtml(coverSrc)}" class="novel-card-cover-bg" alt="" aria-hidden="true" loading="lazy" />
             <img src="${escapeHtml(coverSrc)}" class="novel-card-cover" alt="${escapeHtml(n.title)}" loading="lazy" />
-            <div class="cover-overlay-badge">
-              Change Cover
-            </div>
+            ${readPercent > 0 ? `<div class="novel-card-cover-progress"><div style="width: ${readPercent}%;"></div></div>` : ''}
           </div>
           <div class="novel-card-body">
             <h3 class="novel-card-title">${escapeHtml(n.title)}</h3>
@@ -2406,7 +2421,7 @@ const App = {
         if (cardTitle) cardTitle.onclick = () => Reader.openNovel(n.id, true);
         const cardSettingsBtn = card.querySelector('.novel-settings-cog-btn');
         if (cardSettingsBtn) cardSettingsBtn.onclick = (e) => { e.stopPropagation(); this.openNovelSettingsModal(n.id, n.title, coverSrc); };
-        card.querySelector('.novel-card-cover-wrap').onclick = triggerCover;
+        card.querySelector('.novel-card-cover-wrap').onclick = () => Reader.openNovel(n.id, true);
 
         grid.appendChild(card);
       }
@@ -2618,6 +2633,8 @@ const App = {
     this.targetUploadNovelId = targetNovelId;
     this.selectedUploadFiles = [];
     this.uploadAppendMode = false;
+    this.pendingUploadCover = null;
+    this.renderUploadCoverPreview();
     document.getElementById('uploadModal').style.display = 'flex';
     document.getElementById('epubFileInput').value = '';
     this.renderUploadFileList();
@@ -2820,6 +2837,13 @@ const App = {
 
       progressFill.style.width = '100%';
       progressText.textContent = 'Saving to device storage...';
+
+      // Cover picked in the upload form beats the one inside the file
+      if (this.pendingUploadCover && data.novel_id) {
+        progressText.textContent = 'Saving cover...';
+        await this.applyCover(data.novel_id, this.pendingUploadCover);
+        this.pendingUploadCover = null;
+      }
 
       // Immediately mirror to IndexedDB so novel is bulletproof against any reload/restart
       await this.updateDeviceMirror();
