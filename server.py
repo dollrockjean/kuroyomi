@@ -1003,8 +1003,10 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                     updated_at = excluded.updated_at,
                     client_id = excluded.client_id,
                     client_ts = excluded.client_ts
-                WHERE reading_progress.updated_at IS NULL
-                   OR excluded.updated_at >= reading_progress.updated_at
+                WHERE (reading_progress.updated_at IS NULL
+                       OR excluded.updated_at >= reading_progress.updated_at)
+                  AND NOT COALESCE(excluded.client_id = reading_progress.client_id
+                                   AND excluded.client_ts < reading_progress.client_ts, 0)
             """, (prog_id, user_id, novel_id, volume_id, chapter_id, paragraph_index, scroll_percent, now, client_id, client_ts))
             applied = cur.rowcount != 0
             if not applied:
