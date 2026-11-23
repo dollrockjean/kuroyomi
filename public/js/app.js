@@ -160,12 +160,19 @@ const App = {
       // 3. Connect to sync service & fetch cloud account settings (instant local fallback if offline)
       const session = await SyncService.init();
       if (session && session.settings && Object.keys(session.settings).length > 0) {
+        const server = SyncService.expandSettings(session.settings);
         if (localSettings && Object.keys(localSettings).length > 0) {
-          const merged = { ...session.settings, ...localSettings };
-          this.applySettings(merged, false);
-          SyncService.syncSettings(merged);
+          // Newest change wins: a setting changed on the phone shows up on the computer and the other way round
+          const serverMs = (server.updated_at || 0) * 1000;
+          if (serverMs > (localSettings.changed_at || 0) + 1000) {
+            this.adoptServerSettings(server);
+          } else {
+            const merged = { ...server, ...localSettings };
+            this.applySettings(merged, false);
+            SyncService.syncSettings(merged, true);
+          }
         } else {
-          this.applySettings(session.settings, false);
+          this.adoptServerSettings(server);
         }
       }
 
@@ -1731,6 +1738,22 @@ const App = {
     }, 30000);
   },
 
+  adoptServerSettings(serverSettings) {
+    try {
+      const server = SyncService.expandSettings(serverSettings);
+      const local = Storage.getLocalSettings() || {};
+      const merged = { ...local, ...server, changed_at: Math.round((server.updated_at || 0) * 1000) };
+      delete merged.user_id;
+      Storage.setLocalSettings(merged);
+      this.applySettings(merged, false);
+      if (typeof TTSEngine !== 'undefined' && TTSEngine.syncRateUI && merged.tts_rate) {
+        try { TTSEngine.rate = Number(merged.tts_rate) || TTSEngine.rate; localStorage.setItem('byob_tts_rate', String(TTSEngine.rate)); TTSEngine.syncRateUI(); } catch (e) {}
+      }
+    } catch (e) {
+      console.warn('adoptServerSettings failed:', e);
+    }
+  },
+
   async loadLibrary(allowAutoRestore = true) {
     try {
       const userId = SyncService.currentUserId || Storage.getUserId() || 'universal_device_mirror';
@@ -1871,6 +1894,12 @@ const App = {
       // If server has novels, update our local device mirror safely
       if (this.novels.length > 0) {
         this.updateDeviceMirror();
+        SyncService.reconcileProgress(this.novels).then((r) => {
+          if (r && r.pulled > 0 && this.currentView !== 'reader') {
+            fetch(`/api/last-read?user_id=${encodeURIComponent(userId)}`).then(x => x.json())
+              .then(d => this.renderResumeHero(d ? d.last_read : null)).catch(() => {});
+          }
+        }).catch(() => {});
       }
 
       this.renderResumeHero(lastReadData ? lastReadData.last_read : null);
@@ -1912,11 +1941,31 @@ const App = {
       const userId = SyncService.currentUserId;
       if (!userId || typeof IDB === 'undefined') return;
 
-      const res = await fetch(`/api/backup?user_id=${encodeURIComponent(userId)}`);
+      // The full backup holds every chapter of every book (tens of MB). Only download it when the server's book list
+      // or chapter counts differ from this device's copy; this used to run on every library open and made it slow.
+      const localBackup = await IDB.getLibraryMirror(userId);
+      try {
+        const sres = await fetch(`/api/sync/state?user_id=${encodeURIComponent(userId)}`, {
+          headers: { 'X-Device-Token': Storage.getDeviceToken() || '' }, cache: 'no-store'
+        });
+        if (sres.ok && localBackup && Array.isArray(localBackup.novels)) {
+          const st = await sres.json();
+          const localCounts = new Map();
+          for (const c of (localBackup.chapters || [])) localCounts.set(c.novel_id, (localCounts.get(c.novel_id) || 0) + 1);
+          const localCovers = new Map(localBackup.novels.map(n => [n.id, (n.cover_data || '').length]));
+          const same = (st.novels || []).length > 0 && (st.novels || []).every(n =>
+            localCounts.get(n.id) === n.chapter_count && localCovers.has(n.id) && (!!n.has_cover) === (localCovers.get(n.id) > 0)
+            && !(n.updated_at && localBackup.novels.find(m => m.id === n.id && (m.updated_at || 0) + 1 < n.updated_at)));
+          if (same && (st.novels || []).length >= localBackup.novels.filter(n => !n.id.startsWith('nov_demo')).length) return;
+        }
+      } catch (e) {}
+
+      const res = await fetch(`/api/backup?user_id=${encodeURIComponent(userId)}`, {
+        headers: { 'X-Device-Token': Storage.getDeviceToken() || '' }
+      });
       const serverBackup = await res.json();
       if (!serverBackup || !serverBackup.novels) return;
 
-      const localBackup = await IDB.getLibraryMirror(userId);
       if (localBackup && localBackup.novels && localBackup.novels.length > 0) {
         // Safety guard: NEVER overwrite a mirror that has user-uploaded books with a server backup that has FEWER books!
         const localUserBooks = localBackup.novels.filter(n => !n.id.startsWith('nov_demo') && !n.title.includes('Chronicles of the Aether'));

@@ -344,6 +344,16 @@ const SyncService = {
         }),
         keepalive: true
       }).then(res => res.json()).then(data => {
+        if (data && data.missing) {
+          Storage.queueOfflineProgress(record);
+          this.updateStatus('offline', 'RESTORING');
+          if (!this._healing && window.App && App.loadLibrary) {
+            this._healing = true;
+            setTimeout(() => { this._healing = false; }, 60000);
+            App.loadLibrary(true, { background: true }).catch(() => {});
+          }
+          return;
+        }
         if (data && data.success) {
           this.updateStatus('synced', 'SAVED');
           // Anything parked while the connection was bad can go now (the server drops it if it is stale)
@@ -448,22 +458,93 @@ const SyncService = {
     }
   },
 
-  async syncSettings(settings) {
+  // Server rows keep extra settings (letter spacing, margins...) in extra_json; spread them back out.
+  expandSettings(s) {
+    if (!s || typeof s !== 'object') return {};
+    const out = { ...s };
+    if (typeof out.extra_json === 'string') {
+      try { Object.assign(out, JSON.parse(out.extra_json) || {}); } catch (e) {}
+    }
+    delete out.extra_json;
+    return out;
+  },
+
+  // keepStamp: push as-is (startup merge). Otherwise this is a fresh change, stamped now so it wins on every device.
+  async syncSettings(settings, keepStamp = false) {
+    if (!settings) return;
+    if (!keepStamp || !settings.changed_at) settings.changed_at = Date.now();
     Storage.setLocalSettings(settings);
     if (!this.currentUserId) return;
+    clearTimeout(this._settingsTimer);
+    // Sliders fire many changes a second: send the last one
+    this._settingsTimer = setTimeout(async () => {
+      try {
+        const { user_id, updated_at, sync_key, ...rest } = settings;
+        const res = await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...rest,
+            user_id: this.currentUserId,
+            client_updated_at: (settings.changed_at || 0) / 1000
+          })
+        });
+        const data = await res.json().catch(() => null);
+        if (data && data.applied === false && data.settings && window.App && App.adoptServerSettings) {
+          App.adoptServerSettings(data.settings);
+        }
+      } catch (e) {
+        console.warn('Settings cloud sync error:', e);
+      }
+    }, 600);
+  },
 
+  // Library open: push this device's newer reading spots (made offline or while the server was asleep) and adopt
+  // newer spots from other devices, so the phone and the computer always open at the latest place.
+  async reconcileProgress(novels) {
+    const uid = this.currentUserId || Storage.getUserId();
+    if (!uid || !navigator.onLine) return { pushed: 0, pulled: 0 };
+    let state = null;
     try {
-      await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: this.currentUserId,
-          ...settings
-        })
-      });
-    } catch (e) {
-      console.warn('Settings cloud sync error:', e);
+      const res = await fetchWithTimeout(`/api/sync/state?user_id=${encodeURIComponent(uid)}`, {
+        headers: { 'X-Device-Token': Storage.getDeviceToken() || '' }, cache: 'no-store'
+      }, 10000);
+      if (!res.ok) return { pushed: 0, pulled: 0 };
+      state = await res.json();
+    } catch (e) { return { pushed: 0, pulled: 0 }; }
+    this.lastState = state;
+    const serverProg = new Map((state.progress || []).map(p => [p.novel_id, p]));
+    const serverNovels = new Set((state.novels || []).map(n => n.id));
+    let pushed = 0, pulled = 0;
+    for (const n of (novels || [])) {
+      if (!serverNovels.has(n.id)) continue;
+      const local = Storage.getLocalProgress(n.id, uid);
+      const remote = serverProg.get(n.id);
+      const localTs = (local && local.savedAt) || 0;
+      const remoteTs = remote ? (remote.updated_at || 0) * 1000 : 0;
+      if (local && local.chapterId && localTs > remoteTs + 1500) {
+        try {
+          const r = await fetch('/api/progress', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              user_id: uid, novel_id: n.id, volume_id: local.volumeId || 'vol_default', chapter_id: local.chapterId,
+              paragraph_index: local.paragraphIndex || 0, scroll_percent: local.scrollPercent || 0,
+              client_id: Storage.getClientId(), client_ts: localTs, saved_at: localTs / 1000
+            })
+          });
+          if (r.ok) pushed++;
+        } catch (e) {}
+      } else if (remote && remoteTs > localTs + 1500) {
+        Storage.saveLocalProgress(n.id, {
+          ...(local || {}),
+          volumeId: remote.volume_id, chapterId: remote.chapter_id,
+          paragraphIndex: remote.paragraph_index || 0, scrollPercent: remote.scroll_percent || 0,
+          savedAt: remoteTs
+        }, uid);
+        pulled++;
+      }
     }
+    return { pushed, pulled };
   },
 
   async pushLibraryToCloud(targetRemoteUrl = null) {

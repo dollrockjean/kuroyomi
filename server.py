@@ -7,6 +7,8 @@ import re
 import cgi
 import time
 import uuid
+BOOT_ID = uuid.uuid4().hex[:12]
+APP_VERSION = "v54"
 import urllib.parse
 import mimetypes
 import hashlib
@@ -430,7 +432,7 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         if path.startswith("/api/") or path in ("/health", "/ping"):
             database.track_connections()
             try:
-                if path in ("/api/backup", "/api/devices") and not self.is_authorized(query.get("user_id", [""])[0]):
+                if path in ("/api/backup", "/api/devices", "/api/sync/state") and not self.is_authorized(query.get("user_id", [""])[0], query.get("sync_key", [""])[0] or None):
                     self.deny()
                     return
                 if path == "/api/tts/speak" and self.rate_limited("tts"):
@@ -789,7 +791,7 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         # 10. Health Check (for Cloud Deployments: Render, Railway, Fly.io)
         if path in ("/health", "/api/health"):
             conn.close()
-            self.send_json({"status": "healthy", "service": "byob", "timestamp": time.time()})
+            self.send_json({"status": "healthy", "service": "byob", "version": APP_VERSION, "boot_id": BOOT_ID, "timestamp": time.time()})
             return
 
         # 11. Database Backup Export (Safeguard for Free Ephemeral Hosting)
@@ -799,8 +801,19 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             if not user_id or user_id in ("universal_device_mirror", "default_user"):
                 self.send_json({"error": "user_id required"}, status=400)
                 return
-            backup_data = database.export_backup_data(user_id)
+            backup_data = database.export_backup_data(user_id, query.get("novel_id", [""])[0] or None)
             self.send_json(backup_data)
+            return
+
+        # Cheap account summary (no chapter text) for cross-device sync and the keeper
+        if path == "/api/sync/state":
+            user_id = query.get("user_id", [""])[0]
+            conn.close()
+            if not user_id or not database.user_exists(user_id):
+                self.send_json({"boot_id": BOOT_ID, "version": APP_VERSION, "exists": False, "novels": [], "progress": [], "settings": {}})
+                return
+            state = database.sync_state(user_id)
+            self.send_json({"boot_id": BOOT_ID, "version": APP_VERSION, "exists": True, **state})
             return
 
         conn.close()
@@ -974,6 +987,10 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 client_ts = None
             if client_ts is None:
                 client_id = None
+            # Devices stamp each save with the time it was made (ms). Using that time, not arrival time, means a save
+            # queued offline on the phone cannot overwrite a newer place saved meanwhile on the computer.
+            if client_ts is not None and (now - 45 * 86400) * 1000 < client_ts < (now + 120) * 1000:
+                now = client_ts / 1000.0
 
             cur.execute("""
                 INSERT INTO reading_progress (id, user_id, novel_id, volume_id, chapter_id, paragraph_index, scroll_percent, updated_at, client_id, client_ts)
@@ -986,11 +1003,8 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                     updated_at = excluded.updated_at,
                     client_id = excluded.client_id,
                     client_ts = excluded.client_ts
-                WHERE excluded.client_id IS NULL
-                   OR reading_progress.client_id IS NULL
-                   OR reading_progress.client_id != excluded.client_id
-                   OR reading_progress.client_ts IS NULL
-                   OR excluded.client_ts >= reading_progress.client_ts
+                WHERE reading_progress.updated_at IS NULL
+                   OR excluded.updated_at >= reading_progress.updated_at
             """, (prog_id, user_id, novel_id, volume_id, chapter_id, paragraph_index, scroll_percent, now, client_id, client_ts))
             applied = cur.rowcount != 0
             if not applied:
@@ -1029,10 +1043,28 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             library_view_mode = body.get("library_view_mode", "tile")
             library_sort_by = body.get("library_sort_by", "last_read")
             now = time.time()
+            # Newest change wins across devices: a device sends when the change was made; an older change is refused
+            try:
+                client_updated = float(body.get("client_updated_at")) if body.get("client_updated_at") is not None else None
+            except (TypeError, ValueError):
+                client_updated = None
+            if client_updated is not None:
+                client_updated = min(client_updated, now)
+                cur.execute("SELECT * FROM user_settings WHERE user_id = ?", (user_id,))
+                cur_row = cur.fetchone()
+                if cur_row and (cur_row["updated_at"] or 0) > client_updated:
+                    conn.close()
+                    self.send_json({"success": True, "applied": False, "settings": dict(cur_row), "updated_at": cur_row["updated_at"]})
+                    return
+                now = client_updated
+            known = {"user_id", "theme", "font_family", "font_size", "line_height", "content_width", "auto_scroll_speed", "tts_voice",
+                     "tts_rate", "tts_pitch", "library_view_mode", "library_sort_by", "updated_at", "client_updated_at", "extra_json", "sync_key"}
+            extra = {k: v for k, v in body.items() if k not in known and isinstance(v, (str, int, float, bool)) and len(str(v)) < 200}
+            extra_json = json.dumps(dict(list(extra.items())[:60]))
 
             cur.execute("""
-                INSERT INTO user_settings (user_id, theme, font_family, font_size, line_height, content_width, auto_scroll_speed, tts_voice, tts_rate, tts_pitch, library_view_mode, library_sort_by, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO user_settings (user_id, theme, font_family, font_size, line_height, content_width, auto_scroll_speed, tts_voice, tts_rate, tts_pitch, library_view_mode, library_sort_by, extra_json, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(user_id) DO UPDATE SET
                     theme = excluded.theme,
                     font_family = excluded.font_family,
@@ -1045,11 +1077,12 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                     tts_pitch = excluded.tts_pitch,
                     library_view_mode = excluded.library_view_mode,
                     library_sort_by = excluded.library_sort_by,
+                    extra_json = excluded.extra_json,
                     updated_at = excluded.updated_at
-            """, (user_id, theme, font_family, font_size, line_height, content_width, auto_scroll_speed, tts_voice, tts_rate, tts_pitch, library_view_mode, library_sort_by, now))
+            """, (user_id, theme, font_family, font_size, line_height, content_width, auto_scroll_speed, tts_voice, tts_rate, tts_pitch, library_view_mode, library_sort_by, extra_json, now))
             conn.commit()
             conn.close()
-            self.send_json({"success": True, "updated_at": now})
+            self.send_json({"success": True, "applied": True, "updated_at": now})
             return
 
         # 5. Delete Novel (Strictly User Scoped)
