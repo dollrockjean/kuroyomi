@@ -458,6 +458,7 @@ const Reader = {
       this.currentNovel = data.novel;
       this.volumes = data.volumes || [];
       this.chapterList = data.chapters || [];
+      this._tocKey = null; // rebuild the chapter list once for this book
 
       let targetChapterId = null;
       let targetPid = 0;
@@ -979,100 +980,114 @@ const Reader = {
     return null;
   },
 
+  // Builds the chapter list once per book (3,000+ rows), then only moves the highlight on chapter change
   renderTOC() {
     const listEl = document.getElementById('tocList');
     if (!listEl) return;
-    listEl.innerHTML = '';
+    const novelId = this.currentNovel ? this.currentNovel.id : '';
+    const key = `${novelId}|${this.chapterList.length}|${this.volumes.length}`;
 
-    const volMap = {};
-    this.volumes.forEach(v => {
-      volMap[v.id] = { volume: v, chapters: [] };
-    });
-
-    this.chapterList.forEach(c => {
-      if (volMap[c.volume_id]) {
-        volMap[c.volume_id].chapters.push(c);
-      } else {
-        if (!volMap['misc']) volMap['misc'] = { volume: { title: 'Chapters' }, chapters: [] };
-        volMap['misc'].chapters.push(c);
-      }
-    });
-
-    Object.values(volMap).forEach(group => {
-      const volHead = document.createElement('li');
-      volHead.className = 'toc-volume-header';
-      volHead.textContent = group.volume.title;
-      listEl.appendChild(volHead);
-
-      group.chapters.forEach(c => {
-        const item = document.createElement('li');
-        item.className = 'toc-item';
-        item.setAttribute('data-id', c.id);
-        if (this.currentChapter && this.currentChapter.id === c.id) {
-          item.classList.add('active');
+    if (this._tocKey !== key) {
+      this._tocKey = key;
+      const volMap = new Map();
+      this.volumes.forEach(v => volMap.set(v.id, { volume: v, chapters: [] }));
+      this.chapterList.forEach(c => {
+        let group = volMap.get(c.volume_id);
+        if (!group) {
+          if (!volMap.has('misc')) volMap.set('misc', { volume: { title: 'Chapters' }, chapters: [] });
+          group = volMap.get('misc');
         }
-        item.innerHTML = `
-          <span class="toc-chapter-title">${this.esc(c.title)}</span>
-          <span class="toc-item-words">${c.word_count || ''} words</span>
-        `;
-        item.onclick = () => {
-          this.loadChapter(c.id, false);
-          App.closeMasterPanel();
-        };
-        listEl.appendChild(item);
+        group.chapters.push(c);
       });
-    });
+
+      const parts = [];
+      const titles = [];
+      volMap.forEach(group => {
+        if (!group.chapters.length) return;
+        parts.push(`<li class="toc-volume-header">${this.esc(group.volume.title)}</li>`);
+        group.chapters.forEach(c => {
+          const words = c.word_count ? `<span class="toc-item-words">${Number(c.word_count).toLocaleString()} words</span>` : '';
+          parts.push(`<li class="toc-item" data-id="${this.esc(c.id)}"><span class="toc-chapter-title">${this.esc(c.title)}</span>${words}</li>`);
+          titles.push(String(c.title || '').toLowerCase());
+        });
+      });
+      listEl.innerHTML = parts.join('');
+      this._tocItems = Array.from(listEl.querySelectorAll('.toc-item'));
+      this._tocTitles = titles;
+      this._tocActive = null;
+
+      if (!listEl._tocBound) {
+        listEl._tocBound = true;
+        listEl.addEventListener('click', (e) => {
+          const item = e.target.closest('.toc-item');
+          if (!item) return;
+          this.loadChapter(item.getAttribute('data-id'), false);
+          App.closeMasterPanel();
+        });
+      }
+      const searchInput = document.getElementById('tocSearchInput');
+      if (searchInput && searchInput.value) this.filterTOC(searchInput.value);
+    }
+    this.markActiveTOC();
+  },
+
+  markActiveTOC() {
+    const id = this.currentChapter ? this.currentChapter.id : null;
+    if (this._tocActive && this._tocActive.getAttribute('data-id') === id) return this._tocActive;
+    if (this._tocActive) this._tocActive.classList.remove('active');
+    this._tocActive = null;
+    if (!id || !this._tocItems) return null;
+    const idx = this.chapterList.findIndex(c => c.id === id);
+    let item = idx >= 0 ? this._tocItems[idx] : null;
+    if (!item || item.getAttribute('data-id') !== id) {
+      item = this._tocItems.find(it => it.getAttribute('data-id') === id) || null;
+    }
+    if (item) item.classList.add('active');
+    this._tocActive = item;
+    return item;
   },
 
   centerActiveChapterInTOC() {
     const listEl = document.getElementById('tocList');
     if (!listEl) return;
+    if (!this._tocItems || !listEl.firstChild) this.renderTOC();
 
-    // Reset search query if filtered so full TOC is visible
+    // Clear an old search so the whole list shows
     const searchInput = document.getElementById('tocSearchInput');
     if (searchInput && searchInput.value) {
       searchInput.value = '';
       this.filterTOC('');
     }
 
-    const doCenter = () => {
-      let activeItem = listEl.querySelector('.toc-item.active');
-      if (!activeItem && this.currentChapter) {
-        activeItem = listEl.querySelector(`.toc-item[data-id="${this.currentChapter.id}"]`);
-        if (activeItem) activeItem.classList.add('active');
-      }
-
-      if (activeItem) {
-        try {
-          activeItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        } catch (e) {
-          activeItem.scrollIntoView(true);
-        }
-
-        const masterBody = document.querySelector('.master-panel-body');
-        if (masterBody && masterBody.scrollHeight > masterBody.clientHeight) {
-          const bodyRect = masterBody.getBoundingClientRect();
-          const itemRect = activeItem.getBoundingClientRect();
-          const offsetDiff = itemRect.top - bodyRect.top - (masterBody.clientHeight / 2) + (activeItem.clientHeight / 2);
-          masterBody.scrollTop += offsetDiff;
-        }
-      }
-    };
-
-    doCenter();
-    requestAnimationFrame(doCenter);
-    setTimeout(doCenter, 60);
-    setTimeout(doCenter, 180);
-    setTimeout(doCenter, 300);
+    const item = this.markActiveTOC();
+    if (!item) return;
+    // One instant jump in the next frame (the panel must be laid out first); no smooth scroll, no repeats
+    cancelAnimationFrame(this._tocCenterRaf || 0);
+    this._tocCenterRaf = requestAnimationFrame(() => {
+      const body = document.querySelector('.master-panel-body');
+      if (!body) return;
+      const bodyRect = body.getBoundingClientRect();
+      const itemRect = item.getBoundingClientRect();
+      body.scrollTop += itemRect.top - bodyRect.top - (body.clientHeight / 2) + (itemRect.height / 2);
+    });
   },
 
   filterTOC(query) {
-    const q = query.toLowerCase();
-    const items = document.querySelectorAll('.toc-item');
-    items.forEach(it => {
-      const text = it.innerText.toLowerCase();
-      it.style.display = text.includes(q) ? 'flex' : 'none';
-    });
+    if (!this._tocItems) return;
+    clearTimeout(this._tocFilterTimer);
+    const run = () => {
+      const q = String(query || '').trim().toLowerCase();
+      const items = this._tocItems;
+      const titles = this._tocTitles || [];
+      const list = document.getElementById('tocList');
+      if (list) list.classList.toggle('toc-filtered', !!q);
+      for (let i = 0; i < items.length; i++) {
+        const show = !q || titles[i].includes(q);
+        if (items[i].hidden === show) items[i].hidden = !show;
+      }
+    };
+    // Typing waits a moment so each key press does not touch 3,000 rows
+    if (query) this._tocFilterTimer = setTimeout(run, 90); else run();
   },
 
   // Fetches a chapter ahead of time (memory + IndexedDB) so read-aloud can cross into it without waiting on the network

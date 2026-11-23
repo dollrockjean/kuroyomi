@@ -245,3 +245,78 @@
     font-size: 14px;
   }
 }
+
+/* --------------------------------------------------------------------------
+   Speed: menus open in the first frame
+   - every blur sat on a solid background (cost with no look): removed
+   - side panel slides with transform (GPU) instead of animating `right` (layout every frame)
+   - backdrops fade with opacity + visibility instead of jumping from display:none
+   - 3,000+ chapter rows skip layout and paint while off screen
+   -------------------------------------------------------------------------- */
+.app-header,
+.reader-top-bar,
+.reader-floating-bar,
+.autoscroll-pill,
+.tts-mini-badge,
+.cover-overlay-badge,
+.drawer-backdrop,
+.quick-sheet-backdrop,
+.modal-overlay {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.drawer.master-panel {
+  right: 0;
+  transform: translate3d(calc(100% + 32px), 0, 0);
+  transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+  will-change: transform;
+  contain: layout paint;
+}
+
+.drawer.master-panel.open {
+  transform: none;
+}
+
+.drawer-backdrop,
+.quick-sheet-backdrop {
+  display: block;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.18s ease, visibility 0s linear 0.18s;
+}
+
+.drawer-backdrop.open,
+.quick-sheet-backdrop.open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition: opacity 0.18s ease, visibility 0s;
+}
+
+.mobile-quick-sheet {
+  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+  will-change: transform;
+}
+
+.toc-item {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 40px;
+  transition: none;
+}
+
+.toc-item[hidden],
+.toc-filtered .toc-volume-header {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drawer.master-panel,
+  .drawer.master-panel.open,
+  .mobile-quick-sheet,
+  .drawer-backdrop,
+  .quick-sheet-backdrop {
+    transition: none;
+  }
+}
