@@ -45,6 +45,8 @@
   
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
 }
 
 /* 1. Monochrome Dark (Default) */
@@ -65,6 +67,126 @@
   --highlight-border: #ffffff;
   --shadow-subtle: 0 2px 10px rgba(0, 0, 0, 0.4);
   --shadow-card: 0 4px 18px rgba(0, 0, 0, 0.45);
+}
+
+/* 1b. Graphite: plain dark grey, no blue in it. The "less boring than slate black" one. */
+[data-theme="graphite-dark"] {
+  --bg-primary: #2a2a2a;
+  --bg-surface: #333333;
+  --bg-card: #3b3b3b;
+  --bg-hover: #474747;
+  --text-primary: #ececec;
+  --text-secondary: #b0b0b0;
+  --text-muted: #878787;
+  --border-color: #4d4d4d;
+  --border-active: #ffffff;
+  --accent: #f2f2f2;
+  --accent-secondary: #d4d4d4;
+  --accent-text: #1c1c1c;
+  --highlight-bg: rgba(255, 255, 255, 0.13);
+  --highlight-border: #ffffff;
+  --shadow-subtle: 0 2px 10px rgba(0, 0, 0, 0.35);
+  --shadow-card: 0 4px 18px rgba(0, 0, 0, 0.4);
+}
+
+/* 1c. Warm Dark: dark brown-grey with cream text. Easiest on the eyes at night. */
+[data-theme="warm-dark"] {
+  --bg-primary: #221d19;
+  --bg-surface: #2b2520;
+  --bg-card: #342d27;
+  --bg-hover: #403830;
+  --text-primary: #f0e6d8;
+  --text-secondary: #bdae9c;
+  --text-muted: #8e8273;
+  --border-color: #4a4138;
+  --border-active: #e8b773;
+  --accent: #e8b773;
+  --accent-secondary: #d2a261;
+  --accent-text: #221d19;
+  --highlight-bg: rgba(232, 183, 115, 0.18);
+  --highlight-border: #e8b773;
+  --shadow-subtle: 0 2px 10px rgba(0, 0, 0, 0.4);
+  --shadow-card: 0 4px 18px rgba(0, 0, 0, 0.45);
+}
+
+/* 1d. Dark Sepia: the warm-paper feel without the brightness. */
+[data-theme="sepia-dark"] {
+  --bg-primary: #2b2419;
+  --bg-surface: #352d20;
+  --bg-card: #3f3627;
+  --bg-hover: #4b4130;
+  --text-primary: #e9dcc3;
+  --text-secondary: #bfae8e;
+  --text-muted: #938468;
+  --border-color: #544834;
+  --border-active: #c99b55;
+  --accent: #d9ab63;
+  --accent-secondary: #c2954f;
+  --accent-text: #2b2419;
+  --highlight-bg: rgba(217, 171, 99, 0.2);
+  --highlight-border: #d9ab63;
+  --shadow-subtle: 0 2px 10px rgba(0, 0, 0, 0.4);
+  --shadow-card: 0 4px 18px rgba(0, 0, 0, 0.45);
+}
+
+/* 1e. Forest: deep green-grey, calm without being cold. */
+[data-theme="forest-dark"] {
+  --bg-primary: #1b2420;
+  --bg-surface: #222d28;
+  --bg-card: #2a3630;
+  --bg-hover: #35433b;
+  --text-primary: #e4ece6;
+  --text-secondary: #a8bbb0;
+  --text-muted: #7b8c83;
+  --border-color: #3c4b43;
+  --border-active: #8fd3ad;
+  --accent: #8fd3ad;
+  --accent-secondary: #74bb94;
+  --accent-text: #15201b;
+  --highlight-bg: rgba(143, 211, 173, 0.16);
+  --highlight-border: #8fd3ad;
+  --shadow-subtle: 0 2px 10px rgba(0, 0, 0, 0.4);
+  --shadow-card: 0 4px 18px rgba(0, 0, 0, 0.45);
+}
+
+/* 1f. Plum: dark violet-grey. Different enough to be a mood change. */
+[data-theme="plum-dark"] {
+  --bg-primary: #221c2a;
+  --bg-surface: #2b2435;
+  --bg-card: #332b3f;
+  --bg-hover: #3f354d;
+  --text-primary: #ece6f2;
+  --text-secondary: #b6abc4;
+  --text-muted: #8a8098;
+  --border-color: #473c55;
+  --border-active: #c4a2e8;
+  --accent: #c4a2e8;
+  --accent-secondary: #ab8ad0;
+  --accent-text: #1d1724;
+  --highlight-bg: rgba(196, 162, 232, 0.17);
+  --highlight-border: #c4a2e8;
+  --shadow-subtle: 0 2px 10px rgba(0, 0, 0, 0.4);
+  --shadow-card: 0 4px 18px rgba(0, 0, 0, 0.45);
+}
+
+/* 1g. Nord: cool steel blue-grey, lower contrast than Slate Dark. */
+[data-theme="nord-dark"] {
+  --bg-primary: #2e3440;
+  --bg-surface: #3b4252;
+  --bg-card: #434c5e;
+  --bg-hover: #4c566a;
+  --text-primary: #eceff4;
+  --text-secondary: #c2cbd8;
+  --text-muted: #8b96a8;
+  --border-color: #4c566a;
+  --border-active: #88c0d0;
+  --accent: #88c0d0;
+  --accent-secondary: #81a1c1;
+  --accent-text: #2e3440;
+  --highlight-bg: rgba(136, 192, 208, 0.18);
+  --highlight-border: #88c0d0;
+  --shadow-subtle: 0 2px 10px rgba(0, 0, 0, 0.35);
+  --shadow-card: 0 4px 18px rgba(0, 0, 0, 0.4);
 }
 
 /* 2. Monochrome Light */

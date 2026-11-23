@@ -28,6 +28,160 @@ window.ReaderSettings = {
   library_sort_by: 'last_read'
 };
 
+// One list for every theme picker. Colors match the [data-theme] blocks in brutalist.css
+// (bg = --bg-primary, fg = --text-primary, accent = --accent). Dark themes first, then light.
+const THEMES = [
+  { id: 'monochrome-dark', name: 'Charcoal', bg: '#141518', fg: '#f3f4f6', accent: '#ffffff' },
+  { id: 'graphite-dark', name: 'Graphite', bg: '#2a2a2a', fg: '#ececec', accent: '#f2f2f2' },
+  { id: 'warm-dark', name: 'Warm Dark', bg: '#221d19', fg: '#f0e6d8', accent: '#e8b773' },
+  { id: 'sepia-dark', name: 'Sepia Night', bg: '#2b2419', fg: '#e9dcc3', accent: '#d9ab63' },
+  { id: 'forest-dark', name: 'Forest', bg: '#1b2420', fg: '#e4ece6', accent: '#8fd3ad' },
+  { id: 'plum-dark', name: 'Plum', bg: '#221c2a', fg: '#ece6f2', accent: '#c4a2e8' },
+  { id: 'nord-dark', name: 'Nord', bg: '#2e3440', fg: '#eceff4', accent: '#88c0d0' },
+  { id: 'webnovel-dark', name: 'Slate', bg: '#23272e', fg: '#e2e8f0', accent: '#ffffff' },
+  { id: 'webnovel-ocean', name: 'Midnight', bg: '#0f172a', fg: '#cbd5e1', accent: '#38bdf8' },
+  { id: 'oled-blackout', name: 'True Black', bg: '#000000', fg: '#c9d1d9', accent: '#ffffff' },
+  { id: 'monochrome-light', name: 'Light', bg: '#ffffff', fg: '#1f2328', accent: '#000000' },
+  { id: 'webnovel-paper', name: 'Paper', bg: '#f8f4e6', fg: '#2c2c2c', accent: '#3e3428' },
+  { id: 'sepia-parchment', name: 'Sepia', bg: '#f7f1e5', fg: '#2d261e', accent: '#8b5a2b' },
+  { id: 'webnovel-mint', name: 'Mint', bg: '#e8f5e9', fg: '#1b4332', accent: '#1b4332' }
+];
+
+// Reading fonts (ids match the [data-font] rules in brutalist.css)
+const FONTS = [
+  { id: 'times', name: 'Times New Roman' },
+  { id: 'merriweather', name: 'Merriweather' },
+  { id: 'georgia', name: 'Georgia' },
+  { id: 'palatino', name: 'Palatino' },
+  { id: 'lora', name: 'Lora' },
+  { id: 'ptserif', name: 'PT Serif' },
+  { id: 'sans', name: 'Clean Sans' },
+  { id: 'roboto', name: 'Roboto' },
+  { id: 'opensans', name: 'Open Sans' },
+  { id: 'lato', name: 'Lato' },
+  { id: 'mono', name: 'Monospace' },
+  { id: 'dyslexic', name: 'Dyslexic' }
+];
+
+function themeById(id) {
+  return THEMES.find(t => t.id === id) || THEMES.find(t => t.id === 'monochrome-dark');
+}
+
+// Listening and reading time, chapters finished, per local day. Device only (no server), 120 days kept.
+const ReadingStats = {
+  KEY: 'byob_stats_v1',
+  KEEP_DAYS: 120,
+  TICK_MS: 15000,
+  IDLE_MS: 60000,
+  _lastActivity: 0,
+  _timer: null,
+  _lastTick: 0,
+
+  dayKey(d = new Date()) {
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${d.getFullYear()}-${m}-${day}`;
+  },
+
+  load() {
+    try {
+      const data = JSON.parse(localStorage.getItem(this.KEY) || '{}');
+      if (data && typeof data === 'object' && data.days && typeof data.days === 'object') return data;
+    } catch (e) {}
+    return { days: {} };
+  },
+
+  save(data) {
+    const keys = Object.keys(data.days).sort();
+    while (keys.length > this.KEEP_DAYS) delete data.days[keys.shift()];
+    try { localStorage.setItem(this.KEY, JSON.stringify(data)); } catch (e) {}
+  },
+
+  add(field, amount) {
+    if (!amount) return;
+    const data = this.load();
+    const k = this.dayKey();
+    const day = data.days[k] || (data.days[k] = { listen: 0, read: 0, chapters: 0 });
+    day[field] = Math.round(((day[field] || 0) + amount) * 10) / 10;
+    this.save(data);
+  },
+
+  chapterFinished() {
+    this.add('chapters', 1);
+  },
+
+  isListening() {
+    return typeof TTSEngine !== 'undefined' && TTSEngine.isPlaying && !TTSEngine.isPaused;
+  },
+
+  isReading() {
+    return App.currentView === 'reader' && document.visibilityState === 'visible'
+      && Date.now() - this._lastActivity < this.IDLE_MS;
+  },
+
+  // One cheap timer: every 15 s, credit the time since the last tick to listening or reading (never both)
+  start() {
+    if (this._timer) return;
+    const mark = () => { this._lastActivity = Date.now(); };
+    ['scroll', 'touchstart', 'pointerdown', 'keydown', 'wheel'].forEach(ev =>
+      window.addEventListener(ev, mark, { passive: true, capture: true }));
+    this._lastTick = Date.now();
+    this._timer = setInterval(() => {
+      const now = Date.now();
+      const secs = Math.min(60, (now - this._lastTick) / 1000);
+      this._lastTick = now;
+      if (this.isListening()) this.add('listen', secs);
+      else if (this.isReading()) this.add('read', secs);
+    }, this.TICK_MS);
+  },
+
+  summary() {
+    const days = this.load().days;
+    const today = days[this.dayKey()] || {};
+    let week = 0, weekListen = 0, chapters = 0;
+    const d = new Date();
+    for (let i = 0; i < 7; i++) {
+      const x = days[this.dayKey(new Date(d.getFullYear(), d.getMonth(), d.getDate() - i))];
+      if (x) { week += (x.listen || 0) + (x.read || 0); weekListen += (x.listen || 0); }
+    }
+    Object.values(days).forEach(x => { chapters += x.chapters || 0; });
+    // Streak: consecutive days with at least a minute, counting back from today (or yesterday if today is empty)
+    const active = (x) => x && ((x.listen || 0) + (x.read || 0) >= 60 || (x.chapters || 0) > 0);
+    let streak = 0;
+    let offset = active(today) ? 0 : 1;
+    for (; offset < this.KEEP_DAYS; offset++) {
+      const x = days[this.dayKey(new Date(d.getFullYear(), d.getMonth(), d.getDate() - offset))];
+      if (!active(x)) break;
+      streak++;
+    }
+    return {
+      todaySeconds: (today.listen || 0) + (today.read || 0),
+      weekSeconds: week, weekListenSeconds: weekListen, streak, chapters
+    };
+  },
+
+  formatMinutes(sec) {
+    const m = Math.round(sec / 60);
+    if (m < 60) return `${m} min`;
+    const h = Math.floor(m / 60);
+    const r = m % 60;
+    return r ? `${h} h ${r} min` : `${h} h`;
+  },
+
+  render() {
+    const s = this.summary();
+    const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+    set('statsToday', this.formatMinutes(s.todaySeconds));
+    set('statsWeek', this.formatMinutes(s.weekSeconds));
+    set('statsStreak', s.streak === 1 ? '1 day' : `${s.streak} days`);
+    set('statsChapters', String(s.chapters));
+    set('statsSplit', s.weekSeconds >= 60
+      ? `Last 7 days: ${this.formatMinutes(s.weekListenSeconds)} listening, ${this.formatMinutes(s.weekSeconds - s.weekListenSeconds)} reading`
+      : 'Time counts while narration plays or while you read and scroll.');
+  }
+};
+window.ReadingStats = ReadingStats;
+
 const App = {
   // Server backup plus any book only this device still has (never drops anything either side holds)
   mergeBackupForExport(serverData, mirror) {
@@ -107,6 +261,10 @@ const App = {
       AutoScroll.init(() => Reader.loadNextChapter());
       TTSEngine.init(() => Reader.loadNextChapter());
       Reader.init();
+
+      // Theme swatches and font chips come from THEMES / FONTS, so build them before settings mark the selection
+      this.renderAppearancePickers();
+      ReadingStats.start();
 
       // 2. Load locally cached settings first for instant zero-flicker render
       const localSettings = Storage.getLocalSettings();
@@ -680,6 +838,9 @@ const App = {
       c.classList.toggle('active', c.id === tabId);
     });
 
+    if (tabId === 'tabPrefs') ReadingStats.render();
+    if (tabId === 'tabTTS' && typeof TTSEngine !== 'undefined' && TTSEngine.updateEngineUI) TTSEngine.updateEngineUI();
+
     // Auto-center TOC on active reading chapter whenever the Chapters tab is selected
     if (tabId === 'tabChapters' && this.currentView === 'reader' && Reader.currentNovel) {
       Reader.centerActiveChapterInTOC();
@@ -742,10 +903,9 @@ const App = {
       marginVal.textContent = labels[cur.margin_width || 'edge'] || 'Edge';
     }
 
-    const themeVal = document.getElementById('quickSheetThemeVal');
-    if (themeVal) {
-      const isDark = (cur.theme || 'monochrome-dark').includes('dark') || (cur.theme || '').includes('black');
-      themeVal.textContent = isDark ? 'Dark' : 'Light';
+    this.updateAppearancePickers(cur);
+    if (typeof TTSEngine !== 'undefined' && typeof TTSEngine.updateEngineUI === 'function') {
+      TTSEngine.updateEngineUI();
     }
 
     const ttsText = document.getElementById('quickSheetTTSText');
@@ -801,6 +961,7 @@ const App = {
       const chNum = currentCh.chapter_index || currentCh.global_index || 1;
       chTitleEl.textContent = `Vol. ${volNum}, Chap. ${chNum}`;
     }
+    this.updateQuickSheetChapterMeta();
     if (prevBtn) {
       const hasPrev = !!(currentCh && currentCh.prev_chapter);
       prevBtn.disabled = !hasPrev;
@@ -826,6 +987,7 @@ const App = {
 
     sheet.classList.add('open');
     backdrop.classList.add('open');
+    requestAnimationFrame(() => this.scrollPickersToSelection());
   },
 
   closeMobileQuickSheet() {
@@ -1015,16 +1177,6 @@ const App = {
       });
     }
 
-    const themeToggleBtn = document.getElementById('quickSheetThemeToggleBtn');
-    if (themeToggleBtn) {
-      themeToggleBtn.addEventListener('click', () => {
-        const themes = ['monochrome-dark', 'monochrome-light', 'webnovel-paper', 'webnovel-mint', 'sepia-parchment', 'webnovel-dark', 'oled-blackout'];
-        const curTheme = window.ReaderSettings.theme || 'monochrome-dark';
-        const nextIdx = (themes.indexOf(curTheme) + 1) % themes.length;
-        this.applySettings({ theme: themes[nextIdx] });
-      });
-    }
-
     const settingsBtn = document.getElementById('quickSheetSettingsBtn');
     if (settingsBtn) {
       settingsBtn.addEventListener('click', () => {
@@ -1144,18 +1296,36 @@ const App = {
         }
       });
     });
-    document.querySelectorAll('.theme-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('.theme-btn').forEach(b => b.classList.remove('selected'));
-        btn.classList.add('selected');
-        const theme = btn.getAttribute('data-theme');
-        this.applySettings({ theme });
+    // Theme swatches (quick sheet + Display tab) and quick-sheet font chips: one delegated listener each
+    ['quickSheetThemeRow', 'prefsThemeGrid'].forEach(id => {
+      const host = document.getElementById(id);
+      if (!host) return;
+      host.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-theme-id]');
+        if (!btn || !host.contains(btn)) return;
+        this.applySettings({ theme: btn.getAttribute('data-theme-id') });
       });
     });
+    const fontRow = document.getElementById('quickSheetFontRow');
+    if (fontRow) {
+      fontRow.addEventListener('click', (e) => {
+        const chip = e.target.closest('[data-font]');
+        if (!chip || !fontRow.contains(chip)) return;
+        this.applySettings({ font_family: chip.getAttribute('data-font') });
+      });
+    }
 
-    document.querySelectorAll('.font-btn').forEach(btn => {
+    // Voice engine switch: every [data-engine-option] button anywhere in the app
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-engine-option]');
+      if (!btn || typeof TTSEngine === 'undefined' || typeof TTSEngine.setEngineMode !== 'function') return;
+      e.preventDefault();
+      TTSEngine.setEngineMode(btn.getAttribute('data-engine-option'));
+    });
+
+    document.querySelectorAll('.choice-btn.font-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        document.querySelectorAll('.font-btn').forEach(b => b.classList.remove('selected'));
+        document.querySelectorAll('.choice-btn.font-btn').forEach(b => b.classList.remove('selected'));
         btn.classList.add('selected');
         const font = btn.getAttribute('data-font');
         this.applySettings({ font_family: font });
@@ -1205,6 +1375,100 @@ const App = {
     });
   },
 
+  // Builds the theme swatches (quick sheet row + Display tab grid) and the quick-sheet font chips
+  renderAppearancePickers() {
+    const swatch = (t) => `<button type="button" class="theme-swatch" role="radio" aria-checked="false" data-theme-id="${t.id}"`
+      + ` title="${escapeHtml(t.name)}" style="--sw-bg:${t.bg};--sw-fg:${t.fg};--sw-accent:${t.accent};">`
+      + `<span class="theme-swatch-tile"><span class="theme-swatch-aa">Aa</span><span class="theme-swatch-dot"></span></span>`
+      + `<span class="theme-swatch-name">${escapeHtml(t.name)}</span></button>`;
+    const html = THEMES.map(swatch).join('');
+    ['quickSheetThemeRow', 'prefsThemeGrid'].forEach(id => {
+      const host = document.getElementById(id);
+      if (host) host.innerHTML = html;
+    });
+    const fontRow = document.getElementById('quickSheetFontRow');
+    if (fontRow) {
+      fontRow.innerHTML = FONTS.map(f => `<button type="button" class="font-chip" role="radio" aria-checked="false"`
+        + ` data-font="${f.id}">${escapeHtml(f.name)}</button>`).join('');
+    }
+  },
+
+  updateAppearancePickers(cur = window.ReaderSettings) {
+    const theme = themeById(cur.theme);
+    const fontId = cur.font_family || 'times';
+    document.querySelectorAll('[data-theme-id]').forEach(b => {
+      const on = b.getAttribute('data-theme-id') === theme.id;
+      b.classList.toggle('selected', on);
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+    document.querySelectorAll('.font-btn, .font-chip').forEach(b => {
+      const on = b.getAttribute('data-font') === fontId;
+      b.classList.toggle('selected', on);
+      if (b.classList.contains('font-chip')) b.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+    const themeVal = document.getElementById('quickSheetThemeVal');
+    if (themeVal) themeVal.textContent = theme.name;
+    const fontName = document.getElementById('quickSheetFontName');
+    if (fontName) {
+      const f = FONTS.find(x => x.id === fontId);
+      fontName.textContent = f ? f.name : fontId;
+    }
+  },
+
+  // Keeps the iOS status bar (theme-color), the overscroll area and the boot background on the theme's color
+  applyThemeChrome(themeId) {
+    const t = themeById(themeId);
+    const doc = document.documentElement;
+    doc.style.setProperty('--boot-bg', t.bg);
+    doc.style.setProperty('--boot-fg', t.fg);
+    doc.style.backgroundColor = t.bg;
+    doc.style.color = t.fg;
+    if (document.body) {
+      document.body.style.backgroundColor = t.bg;
+      document.body.style.color = t.fg;
+    }
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta && meta.getAttribute('content') !== t.bg) meta.setAttribute('content', t.bg);
+  },
+
+  // Brings the selected swatch and font chip into view inside their scroll rows
+  scrollPickersToSelection() {
+    ['quickSheetThemeRow', 'quickSheetFontRow'].forEach(id => {
+      const row = document.getElementById(id);
+      const sel = row && row.querySelector('.selected');
+      if (!row || !sel) return;
+      const left = sel.offsetLeft - (row.clientWidth - sel.offsetWidth) / 2;
+      row.scrollLeft = Math.max(0, left);
+    });
+  },
+
+  // "Chapter N of M" and, while narrating, "about X min left in chapter". Computed when the sheet opens.
+  updateQuickSheetChapterMeta() {
+    const el = document.getElementById('quickSheetChapterMeta');
+    if (!el) return;
+    const reader = window.Reader;
+    const ch = reader ? reader.currentChapter : null;
+    if (!ch) { el.textContent = ''; return; }
+    const list = (reader.chapterList || []);
+    let idx = list.findIndex(c => c.id === ch.id);
+    if (idx < 0 && typeof ch.global_index === 'number' && ch.global_index >= 1) idx = ch.global_index - 1;
+    const total = list.length || 0;
+    const parts = [];
+    if (idx >= 0 && total) parts.push(`Chapter ${idx + 1} of ${total}`);
+    const tts = typeof TTSEngine !== 'undefined' ? TTSEngine : null;
+    if (tts && (tts.isPlaying || tts.isPaused) && tts.paragraphs && tts.paragraphs.length) {
+      let words = 0;
+      for (let i = Math.max(0, tts.currentIndex || 0); i < tts.paragraphs.length; i++) {
+        const t = (tts.paragraphs[i] && tts.paragraphs[i].textContent) || '';
+        words += t.split(/\s+/).filter(Boolean).length;
+      }
+      const rate = parseFloat(tts.rate) || 1;
+      const mins = Math.max(1, Math.round(words / (165 * rate)));
+      parts.push(`about ${mins} min left in chapter`);
+    }
+    el.textContent = parts.join(' · ');
+  },
+
   applySettings(s, syncToCloud = true) {
     window.ReaderSettings = { ...window.ReaderSettings, ...s };
     const cur = window.ReaderSettings;
@@ -1225,14 +1489,9 @@ const App = {
     doc.style.setProperty('--reader-line-height', `${cur.line_height || 1.85}`);
     doc.style.setProperty('--reader-letter-spacing', `${cur.letter_spacing || 0}px`);
 
-    // Update Theme buttons
-    document.querySelectorAll('.theme-btn').forEach(b => {
-      b.classList.toggle('selected', b.getAttribute('data-theme') === cur.theme);
-    });
-    // Update Font buttons
-    document.querySelectorAll('.font-btn').forEach(b => {
-      b.classList.toggle('selected', b.getAttribute('data-font') === cur.font_family);
-    });
+    // Status bar color, overscroll background and every theme / font picker follow the theme (sync included)
+    this.applyThemeChrome(cur.theme);
+    this.updateAppearancePickers(cur);
     // Update Width buttons
     document.querySelectorAll('.width-btn').forEach(b => {
       b.classList.toggle('selected', b.getAttribute('data-width') === cur.content_width);
@@ -1269,11 +1528,6 @@ const App = {
       quickTtsText.textContent = (TTSEngine.isPlaying && !TTSEngine.isPaused) ? 'Pause' : 'Read Aloud';
     }
 
-    const quickThemeVal = document.getElementById('quickSheetThemeVal');
-    if (quickThemeVal) {
-      const isDark = (cur.theme || 'monochrome-dark').includes('dark') || (cur.theme || '').includes('black');
-      quickThemeVal.textContent = isDark ? 'Dark' : 'Light';
-    }
 
     // Update Font Size Slider
     const fsSlider = document.getElementById('fontSizeSlider');

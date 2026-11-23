@@ -1,4 +1,4 @@
-/* BYoB v54 refresh layer. Loads after brutalist.css and overrides it.
+/* BYoB v54-v55 refresh layer. Loads after brutalist.css and overrides it.
    Rules: zero emoji, Times stays the reading and title face, text never cut off with dots. */
 
 /* --------------------------------------------------------------------------
@@ -728,4 +728,379 @@
 
 .logo-sub {
   white-space: nowrap;
+}
+
+/* --------------------------------------------------------------------------
+   v55: safe areas (iPhone Dynamic Island, home indicator, landscape sides)
+   All insets go through --safe-* (brutalist.css :root), never env() directly.
+   -------------------------------------------------------------------------- */
+body {
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
+}
+
+/* The body already pads by --safe-top; the sticky header pads for the status bar itself, so pull it up
+   over the body padding instead of counting the inset twice (it sits right under the status bar). */
+.app-header {
+  margin-top: calc(-1 * var(--safe-top));
+  padding-left: max(20px, calc(12px + var(--safe-left)));
+  padding-right: max(20px, calc(12px + var(--safe-right)));
+}
+
+.reader-top-bar {
+  padding-left: max(18px, calc(10px + var(--safe-left)));
+  padding-right: max(18px, calc(10px + var(--safe-right)));
+}
+
+.drawer.master-panel {
+  padding-right: var(--safe-right);
+}
+
+.floating-quick-menu-btn {
+  right: calc(20px + var(--safe-right));
+}
+
+.toast-container {
+  right: calc(18px + var(--safe-right));
+}
+
+.app-version-tag {
+  left: calc(12px + var(--safe-left));
+}
+
+.modal-overlay {
+  padding-top: calc(16px + var(--safe-top));
+  padding-bottom: calc(16px + var(--safe-bottom));
+}
+
+/* id + class: beats the inline critical styles in index.html <head>, which load after this file */
+#mobileQuickSheet.mobile-quick-sheet {
+  max-height: min(88vh, calc(100vh - var(--safe-top) - 12px));
+  padding-left: calc(16px + var(--safe-left));
+  padding-right: calc(16px + var(--safe-right));
+}
+
+@media (max-width: 768px) {
+  .tts-mini-badge {
+    right: calc(14px + var(--safe-right));
+  }
+}
+
+/* --------------------------------------------------------------------------
+   v55: quick sheet pickers (theme swatches, font chips), engine switch
+   -------------------------------------------------------------------------- */
+.quick-sheet-chapter-meta {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.quick-sheet-chapter-meta:empty {
+  display: none;
+}
+
+.quick-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 8px 0 6px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.quick-picker-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0 10px;
+}
+
+.quick-picker-title,
+.engine-switch-title {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.quick-picker-val {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.theme-swatch-row,
+.font-chip-row {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding: 4px 10px 4px;
+  scroll-padding: 0 10px;
+}
+
+.theme-swatch-row::-webkit-scrollbar,
+.font-chip-row::-webkit-scrollbar {
+  display: none;
+}
+
+.theme-swatch {
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  width: 60px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+}
+
+.theme-swatch-tile {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  background: var(--sw-bg);
+  color: var(--sw-fg);
+  border: 1px solid color-mix(in srgb, var(--sw-fg) 18%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 0 0 transparent;
+  transition: box-shadow 0.15s ease, transform 0.12s ease;
+}
+
+.theme-swatch-aa {
+  font-family: var(--font-times);
+  font-size: 19px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.theme-swatch-dot {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--sw-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--sw-bg) 60%, transparent);
+}
+
+.theme-swatch-name {
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.2;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.theme-swatch:active .theme-swatch-tile {
+  transform: scale(0.95);
+}
+
+.theme-swatch.selected .theme-swatch-tile {
+  box-shadow: 0 0 0 2px var(--bg-card), 0 0 0 4px var(--text-primary);
+}
+
+.theme-swatch.selected .theme-swatch-name {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.theme-swatch:focus-visible .theme-swatch-tile {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 3px;
+}
+
+/* Display tab: same swatches as a wrapping grid */
+.theme-swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: 12px 6px;
+  justify-items: center;
+}
+
+.theme-swatch-grid .theme-swatch {
+  width: 64px;
+}
+
+/* Every font option is drawn in its own face: a [data-font] element gets its own --reader-font */
+.font-chip {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 0 auto;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: var(--reader-font) !important;
+  font-size: 15px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: transform 0.12s ease, background-color 0.15s ease;
+}
+
+.font-chip:active {
+  transform: scale(0.96);
+}
+
+.font-chip.selected {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+
+.choice-btn.font-btn[data-font] {
+  font-family: var(--reader-font);
+  font-size: 14px;
+}
+
+/* Voice engine segmented control */
+.engine-switch {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.quick-sheet-engine {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 8px 10px;
+}
+
+.engine-switch-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.engine-switch-status {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-align: right;
+}
+
+.engine-switch-status.engine-live {
+  color: var(--text-primary);
+}
+
+.engine-switch-detail,
+.engine-note {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.engine-note {
+  margin-top: 4px;
+}
+
+.engine-seg {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 3px;
+  padding: 3px;
+  border-radius: 11px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+}
+
+.engine-seg-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 34px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.engine-seg-btn.active {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.engine-seg-compact .engine-seg-btn {
+  height: 26px;
+  font-size: 11px;
+}
+
+.quick-sheet-footer-single {
+  grid-template-columns: 1fr;
+}
+
+/* Reading stats card (Display tab) */
+.stats-card {
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-surface);
+  padding: 12px 14px;
+  margin-bottom: 18px;
+}
+
+.stats-card-title {
+  font-family: var(--font-times);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 10px;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.stats-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stats-num {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.stats-label,
+.stats-sub {
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+.stats-sub {
+  margin-top: 8px;
+  line-height: 1.4;
 }

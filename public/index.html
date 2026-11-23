@@ -10,15 +10,41 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="BYoB">
   <meta name="theme-color" content="#141518">
+  <script>
+    // Paint the saved theme before first render so the status bar and overscroll match it (keys: storage.js)
+    (function () {
+      var bgs = { 'monochrome-dark': ['#141518', '#f3f4f6'], 'graphite-dark': ['#2a2a2a', '#ececec'], 'warm-dark': ['#221d19', '#f0e6d8'],
+        'sepia-dark': ['#2b2419', '#e9dcc3'], 'forest-dark': ['#1b2420', '#e4ece6'], 'plum-dark': ['#221c2a', '#ece6f2'],
+        'nord-dark': ['#2e3440', '#eceff4'], 'webnovel-dark': ['#23272e', '#e2e8f0'], 'webnovel-ocean': ['#0f172a', '#cbd5e1'],
+        'oled-blackout': ['#000000', '#c9d1d9'], 'monochrome-light': ['#ffffff', '#1f2328'], 'webnovel-paper': ['#f8f4e6', '#2c2c2c'],
+        'sepia-parchment': ['#f7f1e5', '#2d261e'], 'webnovel-mint': ['#e8f5e9', '#1b4332'] };
+      try {
+        var raw = localStorage.getItem('byob_settings');
+        var s = raw ? JSON.parse(raw) : null;
+        var theme = s && s.theme;
+        var c = theme && bgs[theme];
+        if (!c) return;
+        var d = document.documentElement;
+        d.setAttribute('data-theme', theme);
+        if (s.font_family) d.setAttribute('data-font', s.font_family);
+        d.style.setProperty('--boot-bg', c[0]);
+        d.style.setProperty('--boot-fg', c[1]);
+        d.style.backgroundColor = c[0];
+        d.style.color = c[1];
+        var m = document.querySelector('meta[name="theme-color"]');
+        if (m) m.setAttribute('content', c[0]);
+      } catch (e) {}
+    })();
+  </script>
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
 
   <!-- Instant Critical Styles (Zero-flicker dark background) -->
-  <style>
+  <style id="criticalBootStyles">
     html, body {
-      background-color: #141518 !important;
-      color: #f0f0f0;
+      background-color: var(--boot-bg, #141518) !important;
+      color: var(--boot-fg, #f0f0f0);
       margin: 0;
       padding: 0;
     }
@@ -30,8 +56,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,300;0,400;0,700;1,300;1,400;1,700&family=Lora:ital,wght@0,400..700;1,400..700&family=Merriweather:ital,wght@0,300;0,400;0,700;1,300;1,400;1,700&family=Open+Sans:ital,wght@0,300..800;1,300..800&family=PT+Serif:ital,wght@0,400;0,700;1,400;1,700&family=Roboto:ital,wght@0,300;0,400;0,500;0,700;1,400;1,700&display=swap" rel="stylesheet">
 
   <!-- Styles -->
-  <link rel="stylesheet" href="/css/brutalist.css?v=54.0">
-  <link rel="stylesheet" href="/css/refresh.css?v=54.0">
+  <link rel="stylesheet" href="/css/brutalist.css?v=55.0">
+  <link rel="stylesheet" href="/css/refresh.css?v=55.0">
 
   <!-- Critical Quick Sheet Theme & Layout Styles (Anti-Cache Protection) -->
   <style id="quickSheetCriticalStyles">
@@ -505,6 +531,15 @@
           <span class="audiobook-compact-label">Voice:</span>
           <select id="audiobookModalVoiceSelect" class="form-select audiobook-compact-select"></select>
         </div>
+
+        <div class="audiobook-compact-row">
+          <span class="audiobook-compact-label">Engine:</span>
+          <div class="engine-seg engine-seg-compact" role="group" aria-label="Voice engine" style="flex: 1;">
+            <button type="button" class="engine-seg-btn" data-engine-option="edge" aria-pressed="true">Edge</button>
+            <button type="button" class="engine-seg-btn" data-engine-option="kokoro" aria-pressed="false">Kokoro</button>
+            <button type="button" class="engine-seg-btn" data-engine-option="auto" aria-pressed="false">Auto</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -530,6 +565,22 @@
         <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border-color); gap: 10px;">
           <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px; white-space: nowrap;">Voice</span>
           <select id="audiobookCogVoiceSelect" class="form-select audiobook-compact-select" style="flex: 1; min-height: 28px; font-size: 11px; padding: 2px 6px;"></select>
+        </div>
+        <div class="engine-switch engine-switch-flat" style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border-color);">
+          <div class="engine-switch-head">
+            <span class="engine-switch-title">Voice engine</span>
+            <span class="engine-switch-status" data-engine-status>Edge voices</span>
+          </div>
+          <div class="engine-seg" role="group" aria-label="Voice engine">
+            <button type="button" class="engine-seg-btn" data-engine-option="edge" aria-pressed="true">Edge</button>
+            <button type="button" class="engine-seg-btn" data-engine-option="kokoro" aria-pressed="false">Kokoro</button>
+            <button type="button" class="engine-seg-btn" data-engine-option="auto" aria-pressed="false">Auto</button>
+          </div>
+          <div class="engine-switch-detail" data-engine-detail></div>
+        </div>
+        <div data-kokoro-row data-kokoro-display="flex" style="display: none; align-items: center; justify-content: space-between; margin-top: 8px; gap: 10px;">
+          <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px; white-space: nowrap;">Kokoro narrator</span>
+          <select id="audiobookCogKokoroVoiceSelect" class="form-select audiobook-compact-select" style="flex: 1; min-height: 28px; font-size: 11px; padding: 2px 6px;"></select>
         </div>
       </div>
 
@@ -573,6 +624,7 @@
         </button>
         <div class="quick-sheet-chapter-info" id="quickSheetChapterInfo">
           <div class="quick-sheet-chapter-title" id="quickSheetChapterTitle">Chapter</div>
+          <div class="quick-sheet-chapter-meta" id="quickSheetChapterMeta"></div>
         </div>
         <button class="btn-brutal quick-sheet-nav-btn" id="quickSheetNextChBtn" title="Next Chapter">
           <span>Next</span>
@@ -654,6 +706,20 @@
           <span class="quick-bionic-step-val" id="qsBionicSizeVal">1.2x</span>
         </div>
         <input type="checkbox" id="quickSheetBionicToggle" style="display: none;" />
+      </div>
+
+      <!-- 2.75 Voice Engine Switch (always visible) -->
+      <div class="engine-switch quick-sheet-engine" id="quickSheetEngineBlock">
+        <div class="engine-switch-head">
+          <span class="engine-switch-title">Voice</span>
+          <span class="engine-switch-status" data-engine-status>Edge voices</span>
+        </div>
+        <div class="engine-seg" role="group" aria-label="Voice engine">
+          <button type="button" class="engine-seg-btn" data-engine-option="edge" aria-pressed="true">Edge</button>
+          <button type="button" class="engine-seg-btn" data-engine-option="kokoro" aria-pressed="false">Kokoro</button>
+          <button type="button" class="engine-seg-btn" data-engine-option="auto" aria-pressed="false">Auto</button>
+        </div>
+        <div class="engine-switch-detail" data-engine-detail></div>
       </div>
 
       <!-- 3. Narration Speed Row (Only visible when Narration is active) -->
@@ -739,13 +805,28 @@
         </div>
       </div>
 
-      <!-- 4. Quick Toggles Row (Margin & Theme Switch) -->
-      <div class="quick-sheet-footer-row">
+      <!-- 5. Theme Selector -->
+      <div class="quick-picker" id="quickSheetThemePicker">
+        <div class="quick-picker-head">
+          <span class="quick-picker-title">Theme</span>
+          <span class="quick-picker-val" id="quickSheetThemeVal">Charcoal</span>
+        </div>
+        <div class="theme-swatch-row" id="quickSheetThemeRow" role="radiogroup" aria-label="Theme"></div>
+      </div>
+
+      <!-- 6. Font Picker -->
+      <div class="quick-picker" id="quickSheetFontPicker">
+        <div class="quick-picker-head">
+          <span class="quick-picker-title">Font</span>
+          <span class="quick-picker-val" id="quickSheetFontName">Times New Roman</span>
+        </div>
+        <div class="font-chip-row" id="quickSheetFontRow" role="radiogroup" aria-label="Font"></div>
+      </div>
+
+      <!-- 7. Quick Toggles Row (Margin) -->
+      <div class="quick-sheet-footer-row quick-sheet-footer-single">
         <button class="btn-brutal quick-sheet-footer-btn" id="quickSheetMarginsBtn">
           Margin: <span id="quickSheetMarginVal" style="font-weight: 700; margin-left: 4px;">Edge</span>
-        </button>
-        <button class="btn-brutal quick-sheet-footer-btn" id="quickSheetThemeToggleBtn">
-          Theme: <span id="quickSheetThemeVal" style="font-weight: 700; margin-left: 4px;">Dark</span>
         </button>
       </div>
     </div>
@@ -808,6 +889,26 @@
         </div>
 
         <div class="form-group">
+          <div class="engine-switch engine-switch-flat">
+            <div class="engine-switch-head">
+              <label class="form-label" style="margin-bottom: 0;">Voice engine</label>
+              <span class="engine-switch-status" data-engine-status>Edge voices</span>
+            </div>
+            <div class="engine-seg" role="group" aria-label="Voice engine">
+              <button type="button" class="engine-seg-btn" data-engine-option="edge" aria-pressed="true">Edge</button>
+              <button type="button" class="engine-seg-btn" data-engine-option="kokoro" aria-pressed="false">Kokoro</button>
+              <button type="button" class="engine-seg-btn" data-engine-option="auto" aria-pressed="false">Auto</button>
+            </div>
+            <div class="engine-switch-detail" data-engine-detail></div>
+          </div>
+        </div>
+
+        <div class="form-group" id="kokoroVoiceRow" data-kokoro-row style="display: none;">
+          <label class="form-label" for="kokoroVoiceSelect">Kokoro narrator</label>
+          <select id="kokoroVoiceSelect" class="form-select"></select>
+        </div>
+
+        <div class="form-group">
           <div style="display: flex; justify-content: space-between;">
             <label class="form-label">Narrator Speed</label>
             <span id="ttsRateVal" style="font-size: 12px; font-weight: 600; color: var(--text-secondary);">1.0x</span>
@@ -821,6 +922,7 @@
             <span id="ttsPitchVal" style="font-size: 12px; font-weight: 700; color: var(--text-primary);">0Hz (Normal)</span>
           </div>
           <input type="range" id="ttsPitchSlider" class="range-slider" min="-50" max="50" step="2" value="0" />
+          <p id="ttsPitchKokoroNote" class="engine-note" style="display: none;">Pitch applies to Edge voices only.</p>
         </div>
 
         <div class="form-group" style="margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--border-color);">
@@ -860,18 +962,20 @@
 
       <!-- Tab 4: Display & Preferences (Times New Roman & Monochrome) -->
       <div class="master-tab-content" id="tabPrefs">
+        <div class="stats-card" id="readingStatsCard">
+          <div class="stats-card-title">Your reading</div>
+          <div class="stats-grid">
+            <div class="stats-cell"><span class="stats-num" id="statsToday">0 min</span><span class="stats-label">Today</span></div>
+            <div class="stats-cell"><span class="stats-num" id="statsWeek">0 min</span><span class="stats-label">Last 7 days</span></div>
+            <div class="stats-cell"><span class="stats-num" id="statsStreak">0 days</span><span class="stats-label">Streak</span></div>
+            <div class="stats-cell"><span class="stats-num" id="statsChapters">0</span><span class="stats-label">Chapters</span></div>
+          </div>
+          <div class="stats-sub" id="statsSplit"></div>
+        </div>
+
         <div class="form-group">
           <label class="form-label">Theme</label>
-          <div class="grid-choices">
-            <button class="choice-btn theme-btn selected" data-theme="monochrome-dark">Monochrome Dark</button>
-            <button class="choice-btn theme-btn" data-theme="monochrome-light">Monochrome Light</button>
-            <button class="choice-btn theme-btn" data-theme="webnovel-paper">Warm Paper</button>
-            <button class="choice-btn theme-btn" data-theme="webnovel-mint">Eye-Protection Mint</button>
-            <button class="choice-btn theme-btn" data-theme="sepia-parchment">Warm Sepia</button>
-            <button class="choice-btn theme-btn" data-theme="webnovel-dark">Slate Dark</button>
-            <button class="choice-btn theme-btn" data-theme="webnovel-ocean">Midnight Ocean</button>
-            <button class="choice-btn theme-btn" data-theme="oled-blackout">AMOLED Black</button>
-          </div>
+          <div class="theme-swatch-grid" id="prefsThemeGrid" role="radiogroup" aria-label="Theme"></div>
         </div>
 
         <div class="form-group">
@@ -1236,11 +1340,11 @@
   <input type="file" id="novelCoverInput" accept="image/*" style="display: none;" />
 
   <!-- Application Logic Modules -->
-  <script src="/js/storage.js?v=54.0"></script>
-  <script src="/js/sync.js?v=54.0"></script>
-  <script src="/js/autoscroll.js?v=54.0"></script>
-  <script src="/js/tts.js?v=54.0"></script>
-  <script src="/js/reader.js?v=54.0"></script>
-  <script src="/js/app.js?v=54.0"></script>
+  <script src="/js/storage.js?v=55.0"></script>
+  <script src="/js/sync.js?v=55.0"></script>
+  <script src="/js/autoscroll.js?v=55.0"></script>
+  <script src="/js/tts.js?v=55.0"></script>
+  <script src="/js/reader.js?v=55.0"></script>
+  <script src="/js/app.js?v=55.0"></script>
 </body>
 </html>

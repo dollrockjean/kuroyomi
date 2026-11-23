@@ -33,6 +33,23 @@ const TTSEngine = {
   pitch: 0,
   isUsingDeviceVoice: false,
   deviceUtterance: null,
+
+  // --- Voice engine: Edge (Microsoft cloud) or Kokoro (Rocco's PC graphics card) ----------------
+  // engineMode is what he picked; engineActive is what the audio now playing actually came from.
+  // In Auto the app uses the PC whenever it answers and falls straight back to Edge when it does
+  // not, mid-chapter included, because every paragraph is fetched on its own.
+  engineMode: 'edge',               // 'auto' | 'kokoro' | 'edge' (Edge by default until Kokoro is measured; a saved choice wins)
+  engineActive: 'edge',
+  kokoroVoice: '',                  // '' = use the match for the chosen Edge voice
+  kokoro: null,                     // { url, token, device, deviceName, rtf } while the PC is up
+  kokoroVoices: [],
+  _enginePromise: null,
+  _engineCheckedAt: 0,
+  _kokoroColdUntil: 0,              // after a failure, stop trying for a few seconds
+  _kokoroPrefetched: new Set(),
+  ENGINE_PROBE_MS: 30000,           // re-ask the server at most this often
+  KOKORO_FIRST_TIMEOUT_MS: 4500,    // a paragraph the PC has not rendered yet
+  KOKORO_COLD_MS: 20000,            // how long to stay on Edge after the PC failed
   
   paragraphs: [],
   currentIndex: 0,
@@ -45,6 +62,12 @@ const TTSEngine = {
   _resumeAtChapterEnd: false,
   _preloadedChapterId: null,
   _prefetchActive: 0,
+  // Dead-zone buffer: keep this much audio fetched past the paragraph now playing, so a drive through
+  // a cellular dead zone keeps talking. Time-based, capped by paragraph count, three requests at a time.
+  BUFFER_AHEAD_SECONDS: 240,
+  BUFFER_MAX_PARAGRAPHS: 40,
+  BUFFER_CHARS_PER_SECOND: 15,      // speech at 1.0x, used when a paragraph's real length is not known yet
+  AUDIO_BYTES_KEEP: 160,
   _silenceUri: null,
 
   // Event handlers
@@ -189,7 +212,7 @@ const TTSEngine = {
       const el = this.paragraphs[i];
       const text = el ? el.innerText.trim() : '';
       if (!text) continue;
-      const info = this.audioBytes.get(`${this.selectedVoice}_1.0_${this.pitch}_${this.normalizeForSpeech(text)}`);
+      const info = this.audioBytes.get(this.cacheKeyFor(text));
       if (!info || (rate && info.rate !== rate)) break;
       rate = info.rate;
       parts.push({ index: i, start: t, end: t + info.duration });
@@ -659,9 +682,18 @@ const TTSEngine = {
     } else if (window.ReaderSettings && window.ReaderSettings.tts_voice) {
       this.selectedVoice = window.ReaderSettings.tts_voice;
     }
+    this.loadEngineSettings();
     this.populateVoiceSelect();
+    this.populateKokoroVoiceSelect();
     this.updatePitchUI();
     this.syncRateUI();
+    this.updateEngineUI();
+    // Ask once at startup and then whenever the tab comes back, so Auto knows if the PC is up.
+    this.probeEngines(true);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) this.probeEngines(true);
+    });
+    window.addEventListener('online', () => this.probeEngines(true));
 
     this.audioElement.playsInline = true;
     this.testAudioElement.playsInline = true;
@@ -913,6 +945,42 @@ const TTSEngine = {
     });
   },
 
+  // The narrators Kokoro ships. Kept here so the picker works even before the PC has answered.
+  KOKORO_VOICE_LIST: [
+    { id: '', name: 'Match my Edge voice', desc: 'closest narrator' },
+    { id: 'am_michael', name: 'Michael', desc: 'warm American' },
+    { id: 'am_adam', name: 'Adam', desc: 'steady American' },
+    { id: 'am_eric', name: 'Eric', desc: 'deeper American' },
+    { id: 'am_fenrir', name: 'Fenrir', desc: 'dark and heavy' },
+    { id: 'am_puck', name: 'Puck', desc: 'lively American' },
+    { id: 'am_onyx', name: 'Onyx', desc: 'low and calm' },
+    { id: 'af_heart', name: 'Heart', desc: 'expressive American' },
+    { id: 'af_bella', name: 'Bella', desc: 'rich American' },
+    { id: 'af_nicole', name: 'Nicole', desc: 'soft, close-mic' },
+    { id: 'af_aoede', name: 'Aoede', desc: 'clear American' },
+    { id: 'bm_george', name: 'George', desc: 'classic British' },
+    { id: 'bm_fable', name: 'Fable', desc: 'storybook British' },
+    { id: 'bm_lewis', name: 'Lewis', desc: 'gravelly British' },
+    { id: 'bf_emma', name: 'Emma', desc: 'refined British' },
+    { id: 'bf_isabella', name: 'Isabella', desc: 'bright British' }
+  ],
+
+  populateKokoroVoiceSelect() {
+    const selects = [document.getElementById('kokoroVoiceSelect'),
+                     document.getElementById('audiobookCogKokoroVoiceSelect')].filter(Boolean);
+    selects.forEach(sel => {
+      sel.innerHTML = '';
+      this.KOKORO_VOICE_LIST.forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v.id;
+        opt.textContent = v.id ? `${v.name} (${v.desc})` : v.name;
+        if (v.id === this.kokoroVoice) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      sel.onchange = (e) => this.setKokoroVoice(e.target.value);
+    });
+  },
+
   setVoice(voiceId) {
     this.selectedVoice = voiceId;
     this.blobCache.clear(); // Clear cache when voice changes
@@ -1005,13 +1073,237 @@ const TTSEngine = {
     if (val3) val3.textContent = pStr;
   },
 
+  // ---------------------------------------------------------------------------------------------
+  // Voice engine plumbing
+  // ---------------------------------------------------------------------------------------------
+
+  // One key per (engine, voice, pitch, text). The engine is part of it so switching engines never
+  // replays the other one's audio, and the joined-stream code only ever joins same-engine parts.
+  cacheKeyFor(text, voiceId, pitchVal, engine) {
+    const clean = this.normalizeForSpeech(text);
+    const v = voiceId === undefined ? this.selectedVoice : voiceId;
+    const p = pitchVal === undefined ? this.pitch : pitchVal;
+    const e = engine === undefined ? this.engineForNextFetch() : engine;
+    // Edge keeps the original key shape so audio already cached on his phone still counts.
+    return e === 'kokoro'
+      ? `k:${this.kokoroVoiceFor(v)}_1.0_${clean}`
+      : `${v}_1.0_${p}_${clean}`;
+  },
+
+  engineStorageKey: 'byob_tts_engine',
+
+  loadEngineSettings() {
+    let mode = '';
+    try { mode = localStorage.getItem(this.engineStorageKey) || ''; } catch (e) {}
+    if (!mode) {
+      const s = (typeof Storage !== 'undefined' && Storage.getLocalSettings) ? Storage.getLocalSettings() : null;
+      mode = (s && s.tts_engine) || (window.ReaderSettings && window.ReaderSettings.tts_engine) || '';
+    }
+    if (['auto', 'kokoro', 'edge'].indexOf(mode) !== -1) this.engineMode = mode;
+    let kv = '';
+    try { kv = localStorage.getItem('byob_kokoro_voice') || ''; } catch (e) {}
+    if (!kv) {
+      const s = (typeof Storage !== 'undefined' && Storage.getLocalSettings) ? Storage.getLocalSettings() : null;
+      kv = (s && s.kokoro_voice) || (window.ReaderSettings && window.ReaderSettings.kokoro_voice) || '';
+    }
+    this.kokoroVoice = kv || '';
+  },
+
+  setEngineMode(mode) {
+    if (['auto', 'kokoro', 'edge'].indexOf(mode) === -1) return;
+    if (mode === this.engineMode) { this.updateEngineUI(); return; }
+    this.engineMode = mode;
+    this._kokoroColdUntil = 0;
+    try { localStorage.setItem(this.engineStorageKey, mode); } catch (e) {}
+    this.persistEngineSetting('tts_engine', mode);
+    this._engineCheckedAt = 0;
+    this.probeEngines().then(() => this.updateEngineUI());
+    this.updateEngineUI();
+    this.logEvent(`voice engine set to ${mode}`);
+  },
+
+  setKokoroVoice(voiceId) {
+    this.kokoroVoice = voiceId || '';
+    try { localStorage.setItem('byob_kokoro_voice', this.kokoroVoice); } catch (e) {}
+    this.persistEngineSetting('kokoro_voice', this.kokoroVoice);
+    this.updateEngineUI();
+  },
+
+  persistEngineSetting(key, value) {
+    if (!window.ReaderSettings) return;
+    window.ReaderSettings[key] = value;
+    try {
+      if (typeof Storage !== 'undefined' && typeof Storage.setLocalSettings === 'function') {
+        Storage.setLocalSettings(window.ReaderSettings);
+      }
+      if (window.SyncService && typeof window.SyncService.syncSettings === 'function') {
+        window.SyncService.syncSettings(window.ReaderSettings);
+      }
+    } catch (e) {}
+  },
+
+  // Which Kokoro narrator stands in for an Edge voice, so his saved voice keeps its character.
+  kokoroVoiceFor(edgeVoiceId) {
+    if (this.kokoroVoice) return this.kokoroVoice;
+    const map = {
+      'en-US-BrianNeural': 'am_michael', 'en-US-BrianMultilingualNeural': 'am_michael',
+      'en-US-AndrewNeural': 'am_adam', 'en-US-ChristopherNeural': 'am_eric',
+      'en-US-AvaNeural': 'af_heart', 'en-US-AvaMultilingualNeural': 'af_heart',
+      'en-US-EmmaNeural': 'af_nicole', 'en-US-EmmaMultilingualNeural': 'af_nicole',
+      'en-GB-RyanNeural': 'bm_george', 'en-GB-SoniaNeural': 'bf_emma',
+      'en-AU-WilliamMultilingualNeural': 'bm_lewis'
+    };
+    return map[edgeVoiceId || this.selectedVoice] || 'am_michael';
+  },
+
+  kokoroUsable() {
+    return !!(this.kokoro && this.kokoro.url && Date.now() > this._kokoroColdUntil);
+  },
+
+  engineForNextFetch() {
+    if (this.engineMode === 'edge') return 'edge';
+    if (this.kokoroUsable()) return 'kokoro';
+    // Kokoro-only mode still has to make a sound when the PC is off, so it borrows Edge rather than
+    // leaving him with silence on the road. The label says which one is actually speaking.
+    return 'edge';
+  },
+
+  // Asks the BYoB server which engines are up. Cheap, cached, never blocks playback.
+  probeEngines(force) {
+    const now = Date.now();
+    if (!force && this._enginePromise && now - this._engineCheckedAt < this.ENGINE_PROBE_MS) {
+      return this._enginePromise;
+    }
+    this._engineCheckedAt = now;
+    this._enginePromise = (async () => {
+      try {
+        const userId = (window.SyncService && window.SyncService.currentUserId)
+          || (typeof Storage !== 'undefined' && Storage.getUserId && Storage.getUserId()) || '';
+        const token = (typeof Storage !== 'undefined' && Storage.getDeviceToken
+          && Storage.getDeviceToken()) || '';
+        if (!userId) { this.kokoro = null; return null; }
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 6000);
+        const res = await fetch(`/api/tts/engines?user_id=${encodeURIComponent(userId)}`, {
+          signal: controller.signal,
+          headers: token ? { 'X-Device-Token': token } : {}
+        });
+        clearTimeout(timer);
+        if (!res.ok) throw new Error('engine list ' + res.status);
+        const data = await res.json();
+        const k = data && data.engines && data.engines.kokoro;
+        if (k && k.available && k.url) {
+          const changed = !this.kokoro || this.kokoro.url !== k.url;
+          this.kokoro = {
+            url: String(k.url).replace(/\/$/, ''),
+            token: k.token || '',
+            device: k.device || '',
+            deviceName: k.device_name || 'PC',
+            rtf: k.realtime_factor || 0
+          };
+          if (changed) this._kokoroPrefetched.clear();
+        } else {
+          this.kokoro = null;
+        }
+      } catch (e) {
+        this.kokoro = null;
+      }
+      this.updateEngineUI();
+      return this.kokoro;
+    })();
+    return this._enginePromise;
+  },
+
+  // Tells the PC which paragraphs are coming so it renders them before they are asked for. This is
+  // what removes the gaps on a slow cellular link: by the time the app asks, the audio is ready and
+  // the request is only a download.
+  kokoroPrefetch(texts) {
+    if (!this.kokoroUsable() || !texts || !texts.length) return;
+    const voice = this.kokoroVoiceFor(this.selectedVoice);
+    const fresh = [];
+    for (const t of texts) {
+      const clean = this.normalizeForSpeech(t);
+      if (!clean) continue;
+      const mark = voice + '|' + clean;
+      if (this._kokoroPrefetched.has(mark)) continue;
+      this._kokoroPrefetched.add(mark);
+      fresh.push(clean);
+    }
+    if (!fresh.length) return;
+    if (this._kokoroPrefetched.size > 3000) this._kokoroPrefetched.clear();
+    const url = this.kokoro.url + '/prefetch';
+    try {
+      fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-BYoB-Token': this.kokoro.token },
+        body: JSON.stringify({ texts: fresh.slice(0, 60), voice: voice }),
+        keepalive: true
+      }).catch(() => {});
+    } catch (e) {}
+  },
+
+  engineStatusText() {
+    if (this.engineMode === 'edge') return 'Edge voices';
+    const live = this.kokoroUsable();
+    if (this.engineMode === 'kokoro') {
+      return live ? 'Your PC is speaking' : 'PC not reachable, using Edge';
+    }
+    return live ? 'Auto: your PC is speaking' : 'Auto: using Edge (PC not reachable)';
+  },
+
+  // Keeps every engine control in the app showing the same truth: the chosen mode, whether the PC is
+  // reachable right now, and which engine the audio playing came from.
+  updateEngineUI() {
+    const live = this.kokoroUsable();
+    document.querySelectorAll('[data-engine-option]').forEach(btn => {
+      const on = btn.getAttribute('data-engine-option') === this.engineMode;
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    document.querySelectorAll('[data-engine-status]').forEach(el => {
+      el.textContent = this.engineStatusText();
+      el.classList.toggle('engine-live', live);
+    });
+    document.querySelectorAll('[data-engine-active]').forEach(el => {
+      el.textContent = this.engineActive === 'kokoro' ? 'Kokoro' : 'Edge';
+    });
+    document.querySelectorAll('[data-engine-detail]').forEach(el => {
+      if (live && this.kokoro) {
+        const dev = this.kokoro.device === 'cuda' ? 'graphics card' : 'processor';
+        el.textContent = `${this.kokoro.deviceName} on its ${dev}`
+          + (this.kokoro.rtf ? `, ${this.kokoro.rtf}x faster than real time` : '');
+      } else {
+        el.textContent = 'Kokoro runs on your PC. It starts by itself when the PC is on.';
+      }
+    });
+    // Narrator pickers only matter when Kokoro can be used (#kokoroVoiceRow plus any [data-kokoro-row])
+    const kokoroRows = new Set(document.querySelectorAll('[data-kokoro-row]'));
+    const kokoroRow = document.getElementById('kokoroVoiceRow');
+    if (kokoroRow) kokoroRows.add(kokoroRow);
+    kokoroRows.forEach(row => {
+      row.style.display = (this.engineMode === 'edge') ? 'none' : (row.getAttribute('data-kokoro-display') || '');
+    });
+    const pitchNote = document.getElementById('ttsPitchKokoroNote');
+    if (pitchNote) pitchNote.style.display = (this.engineMode === 'edge') ? 'none' : '';
+  },
+
+  markKokoroDown(why) {
+    this._kokoroColdUntil = Date.now() + this.KOKORO_COLD_MS;
+    this.engineActive = 'edge';
+    this.logEvent(`PC voice unavailable (${why}), using Edge`);
+    this.updateEngineUI();
+    // Ask the server again soon: the PC may have come back with a new address.
+    setTimeout(() => this.probeEngines(true), 2000);
+  },
+
   async getAudioBlobUrl(text, voiceId, rateVal, pitchVal, retries = 1) {
     const pVal = pitchVal !== undefined ? pitchVal : this.pitch;
     const cleanSpeechText = this.normalizeForSpeech(text);
     if (!cleanSpeechText) return '';
 
+    const engine = this.engineForNextFetch();
     // Synthesize cloud audio at base rate (+0%) so audioElement.playbackRate handles speed changes instantly without refetching or double-speeding
-    const cacheKey = `${voiceId}_1.0_${pVal}_${cleanSpeechText}`;
+    const cacheKey = this.cacheKeyFor(text, voiceId, pVal, engine);
     if (this.blobCache.has(cacheKey)) {
       return this.blobCache.get(cacheKey);
     }
@@ -1019,10 +1311,58 @@ const TTSEngine = {
       return await this.pendingFetches.get(cacheKey);
     }
 
+    const storeBlob = async (blob, key) => {
+      const blobUrl = URL.createObjectURL(blob);
+      try {
+        const info = this.parseMp3(new Uint8Array(await blob.arrayBuffer()));
+        if (info) {
+          this.audioBytes.set(key, info);
+          // A long drive must not fill the phone's memory, but the dead-zone buffer (about 4 minutes, up to
+          // 40 paragraphs ahead) must survive until it is played: keep the newest 160 paragraphs (48 kbps is
+          // about 6 KB a second, so even 160 long paragraphs stay in the low tens of MB).
+          while (this.audioBytes.size > this.AUDIO_BYTES_KEEP) this.audioBytes.delete(this.audioBytes.keys().next().value);
+        }
+      } catch (e) {}
+      this.blobCache.set(key, blobUrl);
+      return blobUrl;
+    };
+
     const fetchPromise = (async () => {
+      // 1. The PC, when it is up. One short timeout, then Edge: never leave him in silence.
+      if (engine === 'kokoro') {
+        const kUrl = `${this.kokoro.url}/tts?text=${encodeURIComponent(cleanSpeechText)}`
+          + `&voice=${encodeURIComponent(this.kokoroVoiceFor(voiceId || this.selectedVoice))}`
+          + `&token=${encodeURIComponent(this.kokoro.token)}`;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), this.KOKORO_FIRST_TIMEOUT_MS);
+        try {
+          const res = await fetch(kUrl, { signal: controller.signal });
+          clearTimeout(timer);
+          if (!res.ok) throw new Error('PC voice status ' + res.status);
+          const blob = await res.blob();
+          if (!blob || blob.size < 200) throw new Error('PC voice sent nothing');
+          const blobUrl = await storeBlob(blob, cacheKey);
+          this.engineActive = 'kokoro';
+          this.pendingFetches.delete(cacheKey);
+          this.updateEngineUI();
+          return blobUrl;
+        } catch (err) {
+          clearTimeout(timer);
+          this.markKokoroDown(err && err.name === 'AbortError' ? 'too slow' : (err.message || 'error'));
+          // fall through to Edge below, under Edge's own cache key
+        }
+      }
+
+      // 2. Edge through the BYoB server: the one that is always there.
+      const edgeKey = this.cacheKeyFor(text, voiceId, pVal, 'edge');
+      if (this.blobCache.has(edgeKey)) {
+        this.pendingFetches.delete(cacheKey);
+        this.engineActive = 'edge';
+        return this.blobCache.get(edgeKey);
+      }
       const pitchParam = this.getPitchParam(pVal);
       const url = `/api/tts/speak?text=${encodeURIComponent(cleanSpeechText)}&voice=${encodeURIComponent(voiceId)}&rate=${encodeURIComponent('+0%')}&pitch=${encodeURIComponent(pitchParam)}`;
-      
+
       for (let attempt = 0; attempt <= retries; attempt++) {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 35000);
@@ -1033,17 +1373,11 @@ const TTSEngine = {
             throw new Error(`Speech synthesis returned status ${res.status}`);
           }
           const blob = await res.blob();
-          const blobUrl = URL.createObjectURL(blob);
-          try {
-            const info = this.parseMp3(new Uint8Array(await blob.arrayBuffer()));
-            if (info) {
-              this.audioBytes.set(cacheKey, info);
-              // A long drive must not fill the phone's memory: keep the newest 80 paragraphs ready for joining
-              while (this.audioBytes.size > 80) this.audioBytes.delete(this.audioBytes.keys().next().value);
-            }
-          } catch (e) {}
-          this.blobCache.set(cacheKey, blobUrl);
+          const blobUrl = await storeBlob(blob, edgeKey);
+          if (edgeKey !== cacheKey) this.blobCache.set(cacheKey, blobUrl);
           this.pendingFetches.delete(cacheKey);
+          this.engineActive = 'edge';
+          this.updateEngineUI();
           return blobUrl;
         } catch (err) {
           clearTimeout(timer);
@@ -1666,19 +2000,48 @@ const TTSEngine = {
     }
   },
 
+  // Seconds of audio a paragraph lasts at 1.0x: the real length when its audio is here, else a guess from its text
+  estimateParagraphSeconds(text, cacheKey) {
+    const info = cacheKey ? this.audioBytes.get(cacheKey) : null;
+    if (info && info.duration) return info.duration;
+    return Math.max(1, text.length / this.BUFFER_CHARS_PER_SECOND);
+  },
+
+  // Fetches ahead until about BUFFER_AHEAD_SECONDS of listening is ready past `fromIndex` (at the current speed,
+  // so 2x needs twice the audio), at most BUFFER_MAX_PARAGRAPHS, nearest first. `count` is a minimum paragraph
+  // look-ahead kept for the callers.
   async prefetchAhead(fromIndex, count = 6) {
     if (!this.paragraphs || this.paragraphs.length === 0) return;
     const currentVoice = this.selectedVoice;
     const currentPitch = this.pitch;
     const sessionId = this.playbackSessionId;
 
+    const speed = Math.max(1, parseFloat(this.rate) || 1);
+    const targetAudioSeconds = this.BUFFER_AHEAD_SECONDS * speed;
     const needed = [];
-    for (let offset = 1; offset <= count; offset++) {
-      const el = this.paragraphs[fromIndex + offset];
+    let bufferedSeconds = 0;
+    let reachedChapterEnd = false;
+    for (let offset = 1; offset <= this.BUFFER_MAX_PARAGRAPHS; offset++) {
+      const idx = fromIndex + offset;
+      if (idx >= this.paragraphs.length) { reachedChapterEnd = true; break; }
+      if (offset > count && bufferedSeconds >= targetAudioSeconds) break;
+      const el = this.paragraphs[idx];
       const text = el ? el.innerText.trim() : '';
       if (!text) continue;
-      const cacheKey = `${currentVoice}_1.0_${currentPitch}_${this.normalizeForSpeech(text)}`;
+      const cacheKey = this.cacheKeyFor(text, currentVoice, currentPitch);
+      bufferedSeconds += this.estimateParagraphSeconds(text, cacheKey);
       if (!this.blobCache.has(cacheKey) && !this.pendingFetches.has(cacheKey)) needed.push(text);
+    }
+    // Give the PC a longer run-up than the app downloads, so it is always rendering ahead of the
+    // drive. Costs one small request and nothing when the PC is not there.
+    if (this.kokoroUsable()) {
+      const ahead = [];
+      for (let offset = 1; offset <= Math.max(count, 24, needed.length); offset++) {
+        const el = this.paragraphs[fromIndex + offset];
+        const t = el ? el.innerText.trim() : '';
+        if (t) ahead.push(t);
+      }
+      this.kokoroPrefetch(ahead);
     }
 
     // Synthesis is slower than playback at higher speeds, so one request at a time lets the buffer run dry and
@@ -1704,7 +2067,8 @@ const TTSEngine = {
     };
     await Promise.all([worker(), worker(), worker()]);
 
-    if (fromIndex >= this.paragraphs.length - 2) {
+    // The buffer window ran into the end of the chapter: get the next chapter's text and first audio ready too
+    if (reachedChapterEnd || fromIndex >= this.paragraphs.length - 2) {
       this.preloadNextChapter();
     }
   },

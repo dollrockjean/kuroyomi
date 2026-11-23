@@ -8,7 +8,7 @@ import cgi
 import time
 import uuid
 BOOT_ID = uuid.uuid4().hex[:12]
-APP_VERSION = "v54"
+APP_VERSION = "v55"
 import urllib.parse
 import mimetypes
 import hashlib
@@ -171,7 +171,64 @@ class RateLimiter:
             return True, 0
 
 RATE_LIMITER = RateLimiter()
-RATE_LIMITS = {"register": 30, "upload": 20, "restore": 10, "tts": 300}
+RATE_LIMITS = {"register": 30, "upload": 20, "restore": 10, "tts": 300, "engine": 120}
+
+# --- The PC voice (Kokoro) -------------------------------------------------------------------------
+# Rocco's PC runs Kokoro on its graphics card and publishes itself through a Cloudflare tunnel. The
+# tunnel address changes whenever the PC restarts, so the PC tells this server where it is every 45
+# seconds (POST /api/tts/engine) and the app asks this server for it (GET /api/tts/engines).
+# Nothing is stored on disk: Render wipes it anyway, and the PC re-announces within a minute.
+# An announcement older than KOKORO_STALE_SECONDS counts as gone, which is what makes the app drop
+# back to Edge by itself when the PC sleeps, loses its connection or is switched off.
+KOKORO_STALE_SECONDS = 150
+_KOKORO_ENGINES = {}
+_KOKORO_LOCK = threading.Lock()
+
+
+def kokoro_set(user_id, info):
+    with _KOKORO_LOCK:
+        if not info or not info.get("url"):
+            _KOKORO_ENGINES.pop(user_id, None)
+            return
+        info["announced_at"] = time.time()
+        _KOKORO_ENGINES[user_id] = info
+        if len(_KOKORO_ENGINES) > 50:  # one entry per account; this is only a guard
+            oldest = sorted(_KOKORO_ENGINES.items(), key=lambda kv: kv[1].get("announced_at", 0))
+            for uid, _v in oldest[:10]:
+                _KOKORO_ENGINES.pop(uid, None)
+
+
+def kokoro_get(user_id):
+    """The live PC voice for this account, or None when nothing has checked in recently."""
+    with _KOKORO_LOCK:
+        info = dict(_KOKORO_ENGINES.get(user_id) or {})
+    if not info.get("url"):
+        return None
+    age = time.time() - info.get("announced_at", 0)
+    if age > KOKORO_STALE_SECONDS:
+        return None
+    info["age_seconds"] = round(age, 1)
+    return info
+
+
+def fetch_kokoro_audio(info, text, voice, timeout=20):
+    """Ask the PC for one paragraph as MP3. Returns the bytes, or None so the caller uses Edge."""
+    import urllib.request as _ur
+    url = (info["url"].rstrip("/") + "/tts?" + urllib.parse.urlencode(
+        {"text": text, "voice": voice}))
+    req = _ur.Request(url, headers={
+        "X-BYoB-Token": info.get("token", ""),
+        "User-Agent": "BYoB-Server/1",
+    })
+    try:
+        with _ur.urlopen(req, timeout=timeout) as r:
+            if r.status != 200:
+                return None
+            data = r.read()
+        return data if data[:1] else None
+    except Exception as exc:  # noqa: BLE001 - any failure means fall back to Edge
+        print(f"[TTS] PC voice unreachable ({type(exc).__name__}): {exc}")
+        return None
 
 _TTS_CACHE_MAX_BYTES = 400 * 1024 * 1024
 _TTS_CACHE_TARGET_BYTES = 300 * 1024 * 1024
@@ -737,11 +794,23 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_json({"error": "text too long"}, status=413)
                 return
 
-            audio_data = synthesize_speech(text, voice, rate, pitch)
+            # engine=kokoro asks the PC first and quietly uses Edge if the PC does not answer, so a
+            # paragraph never fails just because the PC went to sleep halfway through a chapter.
+            audio_data = None
+            engine_used = "edge"
+            if query.get("engine", [""])[0] == "kokoro":
+                info = kokoro_get(query.get("user_id", [""])[0])
+                if info:
+                    audio_data = fetch_kokoro_audio(info, text, query.get("kvoice", [voice])[0])
+                    if audio_data:
+                        engine_used = "kokoro"
+            if audio_data is None:
+                audio_data = synthesize_speech(text, voice, rate, pitch)
             conn.close()
             if not audio_data:
                 self.send_json({"error": "Neural TTS unavailable"}, status=503)
                 return
+            self._tts_engine_used = engine_used
 
             total_len = len(audio_data)
             range_header = self.headers.get("Range")
@@ -769,6 +838,8 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_header("Accept-Ranges", "bytes")
                 self.send_header("Cache-Control", "public, max-age=86400")
                 self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Expose-Headers", "X-BYoB-Engine, Content-Range")
+                self.send_header("X-BYoB-Engine", getattr(self, "_tts_engine_used", "edge"))
                 self.end_headers()
                 self.wfile.write(chunk)
             else:
@@ -778,6 +849,8 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_header("Accept-Ranges", "bytes")
                 self.send_header("Cache-Control", "public, max-age=86400")
                 self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Expose-Headers", "X-BYoB-Engine, Content-Range")
+                self.send_header("X-BYoB-Engine", getattr(self, "_tts_engine_used", "edge"))
                 self.end_headers()
                 self.wfile.write(audio_data)
             return
@@ -786,6 +859,39 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         if path == "/api/tts/voices":
             conn.close()
             self.send_json({"voices": BUILTIN_NEURAL_VOICES})
+            return
+
+        # 9b. Which voice engines the app can use right now. "edge" is always there; "kokoro" only
+        # while Rocco's PC has checked in. The app reads this to decide what Auto does.
+        if path == "/api/tts/engines":
+            conn.close()
+            info = kokoro_get(query.get("user_id", [""])[0])
+            engines = {
+                "edge": {"available": True, "label": "Edge",
+                         "description": "Microsoft cloud voices (always available)"},
+                "kokoro": {
+                    "available": bool(info),
+                    "label": "Kokoro",
+                    "description": "Your PC's graphics card, more natural narration",
+                },
+            }
+            if info:
+                # The address and token let the app talk to the PC directly, which is the fast path.
+                # Only hand them to a device that proves it belongs to the account; anyone else still
+                # sees that Kokoro is up and can use it through this server.
+                trusted = self.is_authorized(query.get("user_id", [""])[0],
+                                             query.get("sync_key", [""])[0] or None)
+                engines["kokoro"].update({
+                    "url": info.get("url") if trusted else None,
+                    "token": info.get("token") if trusted else None,
+                    "direct": bool(trusted),
+                    "device": info.get("device"),
+                    "device_name": info.get("device_name"),
+                    "version": info.get("version"),
+                    "realtime_factor": info.get("realtime_factor"),
+                    "age_seconds": info.get("age_seconds"),
+                })
+            self.send_json({"engines": engines, "stale_after_seconds": KOKORO_STALE_SECONDS})
             return
 
         # 10. Health Check (for Cloud Deployments: Render, Railway, Fly.io)
@@ -870,6 +976,8 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 return
             if path == "/api/restore" and self.rate_limited("restore"):
                 return
+            if path == "/api/tts/engine" and self.rate_limited("engine"):
+                return
             if path in ("/api/restore", "/api/devices/unlink", "/api/novels/cover", "/api/novels/clean-text", "/api/novels/rechapter") or path.startswith("/api/novels/delete"):
                 if not self.is_authorized(body.get("user_id"), body.get("sync_key")):
                     self.deny()
@@ -884,6 +992,38 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         import secrets
         conn = database.get_db()
         cur = conn.cursor()
+
+        # 0. The PC says where its Kokoro voice can be reached (or that it is going away).
+        # Only a registered device of the account may do this, so a stranger cannot point the app at
+        # their own machine. An empty url withdraws it and the app falls back to Edge immediately.
+        if path == "/api/tts/engine":
+            user_id = (body.get("user_id") or "").strip()
+            conn.close()
+            if not user_id:
+                self.send_json({"error": "user_id required"}, status=400)
+                return
+            if not self.is_authorized(user_id, body.get("sync_key")):
+                self.send_json({"error": "not authorized for this account"}, status=403)
+                return
+            url = (body.get("url") or "").strip()
+            if not url:
+                kokoro_set(user_id, None)
+                self.send_json({"ok": True, "registered": False})
+                return
+            if not url.startswith("https://") or len(url) > 300:
+                self.send_json({"error": "url must be https"}, status=400)
+                return
+            kokoro_set(user_id, {
+                "url": url.rstrip("/"),
+                "token": str(body.get("token") or "")[:200],
+                "device": str(body.get("device") or "")[:20],
+                "device_name": str(body.get("device_name") or "PC")[:60],
+                "version": str(body.get("version") or "")[:40],
+                "realtime_factor": body.get("realtime_factor"),
+            })
+            self.send_json({"ok": True, "registered": True,
+                            "stale_after_seconds": KOKORO_STALE_SECONDS})
+            return
 
         # 1. Register Device / Sync Profile (High-Entropy Cryptographic Keys)
         if path == "/api/auth/register-device":
