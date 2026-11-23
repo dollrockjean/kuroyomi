@@ -45,7 +45,10 @@ BUILTIN_NEURAL_VOICES = [
     {"id": "en-US-ChristopherNeural", "name": "Christopher", "description": "Deep Resonant", "gender": "Male"},
     {"id": "en-GB-RyanNeural", "name": "Ryan", "description": "Classic British", "gender": "Male"},
     {"id": "en-GB-SoniaNeural", "name": "Sonia", "description": "Refined British", "gender": "Female"},
-    {"id": "en-AU-WilliamMultilingualNeural", "name": "William", "description": "Smooth Australian", "gender": "Male"}
+    {"id": "en-AU-WilliamMultilingualNeural", "name": "William", "description": "Smooth Australian", "gender": "Male"},
+    {"id": "en-US-AvaMultilingualNeural", "name": "Ava HD", "description": "Most natural storyteller (new)", "gender": "Female"},
+    {"id": "en-US-EmmaMultilingualNeural", "name": "Emma HD", "description": "Warm, lifelike narrator (new)", "gender": "Female"},
+    {"id": "en-US-BrianMultilingualNeural", "name": "Brian HD", "description": "Lifelike deep narrator (new)", "gender": "Male"}
 ]
 
 HTML_TAG_RE = re.compile(
@@ -131,7 +134,10 @@ VALID_VOICES = {
     "en-US-ChristopherNeural",
     "en-GB-RyanNeural",
     "en-GB-SoniaNeural",
-    "en-AU-WilliamMultilingualNeural"
+    "en-AU-WilliamMultilingualNeural",
+    "en-US-AvaMultilingualNeural",
+    "en-US-EmmaMultilingualNeural",
+    "en-US-BrianMultilingualNeural"
 }
 
 # Endpoints that read out or change an account wholesale. They need proof the caller is that account: a registered
@@ -851,7 +857,7 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 return
             if path == "/api/restore" and self.rate_limited("restore"):
                 return
-            if path in ("/api/restore", "/api/devices/unlink", "/api/novels/cover", "/api/novels/clean-text") or path.startswith("/api/novels/delete"):
+            if path in ("/api/restore", "/api/devices/unlink", "/api/novels/cover", "/api/novels/clean-text", "/api/novels/rechapter") or path.startswith("/api/novels/delete"):
                 if not self.is_authorized(body.get("user_id"), body.get("sync_key")):
                     self.deny()
                     return
@@ -1105,6 +1111,18 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 return
             res = database.clean_novel_obfuscation(novel_id, user_id)
             self.send_json(res)
+            return
+
+        # 9. Fix chapter breaks (fold page-split entries into real chapters)
+        if path == "/api/novels/rechapter":
+            novel_id = body.get("novel_id")
+            user_id = body.get("user_id")
+            conn.close()
+            if not novel_id or not user_id:
+                self.send_json({"error": "novel_id and user_id are required"}, status=400)
+                return
+            res = database.rechapter_novel(novel_id, user_id)
+            self.send_json(res, status=200 if res.get("success") else 404)
             return
 
         conn.close()

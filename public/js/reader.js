@@ -505,6 +505,10 @@ const Reader = {
         } else if (hasCloud) {
           chooseSource = 'cloud';
         }
+        // A saved spot on a chapter that no longer exists (chapters were joined on another
+        // device) must not win over one that still resolves.
+        if (chooseSource === 'local' && localChIdx === -1 && cloudChIdx !== -1) chooseSource = 'cloud';
+        if (chooseSource === 'cloud' && cloudChIdx === -1 && localChIdx !== -1) chooseSource = 'local';
 
         if (chooseSource === 'local') {
           targetChapterId = local.chapterId;

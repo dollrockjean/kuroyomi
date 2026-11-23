@@ -17,6 +17,11 @@ const TTSEngine = {
   testAudioElement: new Audio(),
   blobCache: new Map(),
   pendingFetches: new Map(),
+  // Raw MP3 frames + exact length per cached paragraph, so several paragraphs can be stitched into one stream
+  audioBytes: new Map(),
+  // The stitched stream now playing: { url, parts: [{ index, start, end }] }, or null for a single paragraph
+  _chain: null,
+  _lastSkipAt: 0,
   
   isPlaying: false,
   isPaused: false,
@@ -70,7 +75,10 @@ const TTSEngine = {
     { id: 'en-US-ChristopherNeural', name: 'Christopher', desc: 'Deep Resonant' },
     { id: 'en-GB-RyanNeural', name: 'Ryan', desc: 'Classic British' },
     { id: 'en-GB-SoniaNeural', name: 'Sonia', desc: 'Refined British' },
-    { id: 'en-AU-WilliamMultilingualNeural', name: 'William', desc: 'Smooth Australian' }
+    { id: 'en-AU-WilliamMultilingualNeural', name: 'William', desc: 'Smooth Australian' },
+    { id: 'en-US-AvaMultilingualNeural', name: 'Ava HD', desc: 'Most natural storyteller (new)' },
+    { id: 'en-US-EmmaMultilingualNeural', name: 'Emma HD', desc: 'Warm, lifelike narrator (new)' },
+    { id: 'en-US-BrianMultilingualNeural', name: 'Brian HD', desc: 'Lifelike deep narrator (new)' }
   ],
 
   normalizeForSpeech(text) {
@@ -105,6 +113,149 @@ const TTSEngine = {
     clean = clean.replace(/\s+/g, ' ').trim();
     clean = clean.replace(/\s+([,!?;:]|\.(?!\.))/g, '$1');
     return clean;
+  },
+
+  // Reads an MP3 (what the cloud voice returns) frame by frame. Returns the bare audio frames (no ID3 tags, no
+  // Xing/Info header, which would make a joined file look as long as its first part) and the exact duration, or null
+  // when it is not a plain MPEG Layer III stream (that paragraph then simply plays on its own).
+  parseMp3(u8) {
+    try {
+      const BR1 = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320];
+      const BR2 = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160];
+      const SR = { 3: [44100, 48000, 32000], 2: [22050, 24000, 16000], 0: [11025, 12000, 8000] };
+      let i = 0;
+      if (u8.length > 10 && u8[0] === 0x49 && u8[1] === 0x44 && u8[2] === 0x33) {
+        const size = ((u8[6] & 0x7f) << 21) | ((u8[7] & 0x7f) << 14) | ((u8[8] & 0x7f) << 7) | (u8[9] & 0x7f);
+        i = 10 + size + ((u8[5] & 0x10) ? 10 : 0);
+      }
+      const keep = [];
+      let samples = 0;
+      let rate = 0;
+      let first = true;
+      while (i + 4 <= u8.length) {
+        if (u8[i] !== 0xff || (u8[i + 1] & 0xe0) !== 0xe0) {
+          if (keep.length) break;      // trailing junk or an ID3v1 tag
+          i++;                         // leading junk before the first frame
+          continue;
+        }
+        const ver = (u8[i + 1] >> 3) & 3;
+        const layer = (u8[i + 1] >> 1) & 3;
+        const bri = u8[i + 2] >> 4;
+        const sri = (u8[i + 2] >> 2) & 3;
+        const pad = (u8[i + 2] >> 1) & 1;
+        if (ver === 1 || layer !== 1 || bri === 0 || bri === 15 || sri === 3) {
+          if (keep.length) break;
+          i++;
+          continue;
+        }
+        const sr = SR[ver][sri];
+        const kbps = (ver === 3 ? BR1 : BR2)[bri];
+        const len = Math.floor(((ver === 3 ? 144 : 72) * kbps * 1000) / sr) + pad;
+        if (len < 4 || i + len > u8.length) break;
+        if (rate && sr !== rate) return null;
+        rate = sr;
+        let isInfo = false;
+        if (first) {
+          const head = String.fromCharCode.apply(null, u8.subarray(i + 4, Math.min(i + len, i + 60)));
+          isInfo = /Xing|Info|VBRI/.test(head);
+          first = false;
+        }
+        if (!isInfo) {
+          keep.push([i, i + len]);
+          samples += ver === 3 ? 1152 : 576;
+        }
+        i += len;
+      }
+      if (!keep.length || !rate) return null;
+      const total = keep.reduce((n, [a, b]) => n + (b - a), 0);
+      const bytes = new Uint8Array(total);
+      let o = 0;
+      for (const [a, b] of keep) { bytes.set(u8.subarray(a, b), o); o += b - a; }
+      return { bytes, duration: samples / rate, rate };
+    } catch (e) {
+      return null;
+    }
+  },
+
+  // Joins the paragraphs from `startIndex` whose audio is already here into ONE audio file. The phone then plays one
+  // continuous track: no track ends between those paragraphs, so there is nothing for iOS to stall or kill on the lock
+  // screen, and skipping inside it is just a seek. Returns null when fewer than two paragraphs are ready.
+  buildChain(startIndex) {
+    const parts = [];
+    const blobs = [];
+    let t = 0;
+    let rate = 0;
+    for (let i = startIndex; i < this.paragraphs.length && parts.length < 12 && t < 300; i++) {
+      const el = this.paragraphs[i];
+      const text = el ? el.innerText.trim() : '';
+      if (!text) continue;
+      const info = this.audioBytes.get(`${this.selectedVoice}_1.0_${this.pitch}_${this.normalizeForSpeech(text)}`);
+      if (!info || (rate && info.rate !== rate)) break;
+      rate = info.rate;
+      parts.push({ index: i, start: t, end: t + info.duration });
+      blobs.push(info.bytes);
+      t += info.duration;
+    }
+    if (parts.length < 2) return null;
+    const url = URL.createObjectURL(new Blob(blobs, { type: 'audio/mpeg' }));
+    return { url, parts };
+  },
+
+  // The stitched stream, only while it is what the audio element is actually playing
+  activeChain() {
+    const c = this._chain;
+    return c && this.audioElement.src === c.url ? c : null;
+  },
+
+  chainPartAt(chain, time) {
+    for (const part of chain.parts) {
+      if (time < part.end - 0.05) return part;
+    }
+    return chain.parts[chain.parts.length - 1];
+  },
+
+  // Paragraph that should play once the current audio has finished
+  indexAfterAudio() {
+    const chain = this.activeChain();
+    return chain ? chain.parts[chain.parts.length - 1].index + 1 : this.currentIndex + 1;
+  },
+
+  setChain(chain) {
+    const old = this._chain;
+    this._chain = chain;
+    if (old && (!chain || old.url !== chain.url)) {
+      setTimeout(() => { try { URL.revokeObjectURL(old.url); } catch (e) {} }, 2000);
+    }
+  },
+
+  // Called as the stitched stream plays: when it crosses into the next paragraph, move the highlight, the saved spot,
+  // the lock-screen title and the look-ahead along, without touching the audio itself
+  syncChainPosition() {
+    const chain = this.activeChain();
+    if (!chain || !this.isPlaying || this.isPaused) return;
+    const part = this.chainPartAt(chain, this.audioElement.currentTime || 0);
+    if (part.index !== this.currentIndex) this.enterChainParagraph(part.index);
+  },
+
+  enterChainParagraph(index) {
+    this.currentIndex = index;
+    this._lastProgressAt = Date.now();
+    const el = this.paragraphs[index];
+    this.clearHighlight();
+    if (el) {
+      el.classList.add('speaking-active');
+      if (!document.hidden && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    if (window.Reader) {
+      const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+      const scrollPct = docHeight > 0 ? Math.round((window.scrollY / docHeight) * 100) : 0;
+      window.Reader.saveCurrentProgress(this.getParagraphPid(index), scrollPct, index === 0);
+    }
+    this.updateMediaSessionMetadata();
+    this.updateAudiobookModalContent();
+    this.updateAudioUI();
+    this.prefetchAhead(index, 8);
+    if (index >= this.paragraphs.length - 8) this.preloadNextChapter();
   },
 
   generateSilenceWavUri(seconds = 1) {
@@ -213,7 +364,7 @@ const TTSEngine = {
       this._advancing = false;
       this.speakParagraph(this.paragraphs.length);
     } else {
-      this.speakParagraph(Math.min(this.currentIndex + (finished ? 1 : 0), this.paragraphs.length));
+      this.speakParagraph(Math.min(finished ? this.indexAfterAudio() : this.currentIndex, this.paragraphs.length));
     }
   },
 
@@ -398,7 +549,7 @@ const TTSEngine = {
         if (!a.paused) return;
         const nearEnd = a.ended || (isFinite(a.duration) && a.duration > 0 && a.duration - a.currentTime < 0.6);
         if (nearEnd) {
-          this.speakParagraph(this.currentIndex + 1);
+          this.speakParagraph(this.indexAfterAudio());
         } else if (document.hidden && this.tryRecoverFromInterruption(sessionAtPause)) {
           // Paused by something other than the listener (a navigation voice prompt, a notification, a call): keep
           // trying to continue, since a real pause from the car or lock screen arrives through the media-session
@@ -414,10 +565,11 @@ const TTSEngine = {
       clearTimeout(this._pauseTimer);
       if (!this.isPlaying || this.isPaused || this.audioElement.loop) return;
       if (this.isLoading || this._advancing) return;
-      this.speakParagraph(this.currentIndex + 1);
+      this.speakParagraph(this.indexAfterAudio());
     };
 
     this._onTimeUpdateHandler = () => {
+      this.syncChainPosition();
       this.syncWordHighlight();
     };
 
@@ -882,6 +1034,14 @@ const TTSEngine = {
           }
           const blob = await res.blob();
           const blobUrl = URL.createObjectURL(blob);
+          try {
+            const info = this.parseMp3(new Uint8Array(await blob.arrayBuffer()));
+            if (info) {
+              this.audioBytes.set(cacheKey, info);
+              // A long drive must not fill the phone's memory: keep the newest 80 paragraphs ready for joining
+              while (this.audioBytes.size > 80) this.audioBytes.delete(this.audioBytes.keys().next().value);
+            }
+          } catch (e) {}
           this.blobCache.set(cacheKey, blobUrl);
           this.pendingFetches.delete(cacheKey);
           return blobUrl;
@@ -1211,6 +1371,7 @@ const TTSEngine = {
     this.audioElement.pause();
     this.audioElement.loop = false;
     this.audioElement.src = '';
+    this.setChain(null);
     this.preloadedIndex = -1;
     this.preloadedBlobUrl = null;
     this.isTransitioning = false;
@@ -1250,6 +1411,19 @@ const TTSEngine = {
 
     const shouldPlay = (autoPlay !== null) ? autoPlay : (this.isPlaying && !this.isPaused);
 
+    const chain = this.activeChain();
+    const part = chain && !this.audioElement.ended ? chain.parts.find(p => p.index === clampedIndex) : null;
+    if (shouldPlay && part && this.isPlaying && !this.isUsingDeviceVoice) {
+      // Already inside the joined stream: seek, keep the same track (fast and safe from the car or lock screen)
+      this.isPaused = false;
+      try { this.audioElement.currentTime = part.start + 0.01; } catch (e) {}
+      this.enterChainParagraph(clampedIndex);
+      if (this.audioElement.paused) {
+        const p = this.audioElement.play();
+        if (p && p.catch) p.catch(() => this.speakParagraph(clampedIndex));
+      }
+      return;
+    }
     if (shouldPlay) {
       this.isPlaying = true;
       this.isPaused = false;
@@ -1374,10 +1548,13 @@ const TTSEngine = {
           // Already playing this paragraph from the chapter hand-off: let it carry on instead of restarting it
           started = Promise.resolve();
         } else {
-          this.audioElement.src = cachedUrl;
+          const chain = this.buildChain(index);
+          this.setChain(chain);
+          this.audioElement.src = chain ? chain.url : cachedUrl;
           this.audioElement.playbackRate = this.rate || 1.0;
           started = this.audioElement.play();
           started.catch(() => {});
+          if (chain) this.logEvent(`stream: paragraphs ${chain.parts[0].index}-${chain.parts[chain.parts.length - 1].index} joined (${Math.round(chain.parts[chain.parts.length - 1].end)}s)`);
         }
       } catch (e) {
         started = null;
@@ -1458,8 +1635,8 @@ const TTSEngine = {
       } catch (e) {}
       this.updateAudioUI();
 
-      // Proactively prefetch next 6 paragraphs
-      this.prefetchAhead(index, 6);
+      // Proactively prefetch the next paragraphs so the next stream can join several of them
+      this.prefetchAhead(index, 8);
 
       // Near the end of the chapter, get the next one (text and first audio) ready before it is needed
       if (index >= this.paragraphs.length - 8) {
@@ -1645,7 +1822,25 @@ const TTSEngine = {
   prevParagraph() {
     if (this.currentIndex > 0) {
       this.jumpToParagraph(this.currentIndex - 1);
+    } else if (this.isPlaying && window.Reader && window.Reader.currentChapter && window.Reader.currentChapter.prev_chapter) {
+      this.prevChapter();
+    } else {
+      this.jumpToParagraph(0);
     }
+  },
+
+  // Car steering-wheel and lock-screen skip buttons. Head units sometimes send one press twice; ignore repeats
+  // that arrive within 200 ms.
+  carSkip(direction) {
+    const now = Date.now();
+    if (now - this._lastSkipAt < 200) return;
+    this._lastSkipAt = now;
+    this.logEvent(`car/lock-screen ${direction > 0 ? 'next' : 'previous'} paragraph`);
+    if (!this.isPlaying) {
+      this.start(Math.max(0, this.currentIndex + direction));
+      return;
+    }
+    if (direction > 0) this.nextParagraph(); else this.prevParagraph();
   },
 
   async nextChapter() {
@@ -2012,7 +2207,11 @@ const TTSEngine = {
     if (!this.audioElement || !this.audioElement.duration || isNaN(this.audioElement.duration)) return;
     if (this.audioElement.paused || this.audioElement.loop) return;
 
-    const progress = Math.min(1.0, Math.max(0, this.audioElement.currentTime / this.audioElement.duration));
+    const chain = this.activeChain();
+    const part = chain ? chain.parts.find(p => p.index === this.currentIndex) : null;
+    const progress = part
+      ? Math.min(1.0, Math.max(0, (this.audioElement.currentTime - part.start) / Math.max(0.1, part.end - part.start)))
+      : Math.min(1.0, Math.max(0, this.audioElement.currentTime / this.audioElement.duration));
     const targetChar = Math.floor(progress * (this.currentSpokenLength || 1));
 
     let activeIdx = 0;
@@ -2158,14 +2357,15 @@ const TTSEngine = {
       navigator.mediaSession.setActionHandler('stop', () => {
         this.stop();
       });
-      navigator.mediaSession.setActionHandler('nexttrack', () => {
-        this.nextParagraph();
-      });
-      navigator.mediaSession.setActionHandler('previoustrack', () => {
-        this.prevParagraph();
-      });
+      navigator.mediaSession.setActionHandler('nexttrack', () => this.carSkip(1));
+      navigator.mediaSession.setActionHandler('previoustrack', () => this.carSkip(-1));
     } catch (e) {
       console.warn('MediaSession handler error:', e);
+    }
+    // With seek handlers set, iPhones (and CarPlay / car Bluetooth) show 15-second skip buttons instead of next and
+    // previous track. Clearing them makes the steering-wheel buttons send next/previous, which move a paragraph.
+    for (const action of ['seekforward', 'seekbackward', 'seekto']) {
+      try { navigator.mediaSession.setActionHandler(action, null); } catch (e) {}
     }
   },
 
@@ -2175,15 +2375,19 @@ const TTSEngine = {
       const novelTitle = (window.Reader && window.Reader.currentNovel && window.Reader.currentNovel.title) || 'BYoB';
       const chTitle = (window.Reader && window.Reader.currentChapter && window.Reader.currentChapter.title) || 'Audiobook';
 
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title: chTitle,
-        artist: novelTitle,
-        album: 'BYoB Audiobook',
-        artwork: [
-          { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
-          { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' }
-        ]
-      });
+      const total = this.paragraphs ? this.paragraphs.length : 0;
+      const album = total ? `Paragraph ${Math.min(this.currentIndex + 1, total)} of ${total}` : 'BYoB Audiobook';
+      const cover = window.Reader && window.Reader.currentNovel && window.Reader.currentNovel.cover_data;
+      const artwork = [
+        { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+        { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' }
+      ];
+      if (typeof cover === 'string' && cover.length < 2000000 && /^(https?:|\/|data:image\/)/.test(cover)) {
+        artwork.unshift({ src: cover, sizes: '512x512' });
+      }
+      const m = navigator.mediaSession.metadata;
+      if (m && m.title === chTitle && m.artist === novelTitle && m.album === album) return;
+      navigator.mediaSession.metadata = new MediaMetadata({ title: chTitle, artist: novelTitle, album, artwork });
     } catch (e) {}
   },
 

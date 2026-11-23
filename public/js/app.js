@@ -29,6 +29,25 @@ window.ReaderSettings = {
 };
 
 const App = {
+  // Server backup plus any book only this device still has (never drops anything either side holds)
+  mergeBackupForExport(serverData, mirror) {
+    const hasBooks = (d) => d && Array.isArray(d.novels) && d.novels.length > 0;
+    if (!hasBooks(mirror)) return serverData;
+    if (!hasBooks(serverData)) return { ...mirror, exported_at: new Date().toISOString() };
+    const out = { ...serverData };
+    const have = new Set(serverData.novels.map(n => n.id));
+    const extra = new Set(mirror.novels.filter(n => !have.has(n.id)).map(n => n.id));
+    if (!extra.size) return out;
+    const add = (key) => {
+      out[key] = [...(serverData[key] || []), ...((mirror[key] || []).filter(r => extra.has(r.novel_id)))];
+    };
+    out.novels = [...serverData.novels, ...mirror.novels.filter(n => extra.has(n.id))];
+    add('volumes');
+    add('chapters');
+    add('progress');
+    return out;
+  },
+
   currentView: 'library',
   novels: [],
   searchQuery: '',
@@ -1553,12 +1572,27 @@ const App = {
       exportBtn.addEventListener('click', async () => {
         try {
           this.showLoading('Exporting backup...');
-          const res = await fetch(`/api/backup?user_id=${encodeURIComponent(SyncService.currentUserId)}`);
-          if (!res.ok) {
-            throw new Error(`Server returned HTTP ${res.status}`);
+          // The server copy can be empty for a while after the host restarts (books come back from this device's own
+          // saved copy), so the export always adds every book this device holds that the server does not have yet.
+          const uid = SyncService.currentUserId;
+          let serverData = null;
+          let serverError = '';
+          try {
+            const res = await fetch(`/api/backup?user_id=${encodeURIComponent(uid)}`);
+            if (res.ok) serverData = await res.json();
+            else serverError = `server returned HTTP ${res.status}`;
+          } catch (e) {
+            serverError = e.message || 'server unreachable';
           }
-          const backupData = await res.json();
+          let mirror = null;
+          try {
+            if (typeof IDB !== 'undefined') mirror = await IDB.getLibraryMirror(uid);
+          } catch (e) {}
+          const backupData = App.mergeBackupForExport(serverData, mirror);
           this.hideLoading();
+          if (!backupData || !Array.isArray(backupData.novels) || backupData.novels.length === 0) {
+            throw new Error(serverError || 'no books found on the server or on this device');
+          }
 
           const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
           const url = URL.createObjectURL(blob);
@@ -2458,6 +2492,64 @@ const App = {
             statusEl.style.borderColor = '#ef4444';
             statusEl.textContent = `Request failed: ${err.message}`;
           }
+        }
+      });
+    }
+
+    const rechapterBtn = document.getElementById('novelSettingsRechapterBtn');
+    if (rechapterBtn) {
+      rechapterBtn.addEventListener('click', async () => {
+        if (!this.activeSettingsNovel || rechapterBtn.disabled) return;
+        const { id } = this.activeSettingsNovel;
+        const statusEl = document.getElementById('novelSettingsCleanStatus');
+        const say = (msg, bad = false) => {
+          if (!statusEl) return;
+          statusEl.style.display = 'block';
+          statusEl.style.borderColor = bad ? '#ef4444' : 'var(--accent)';
+          statusEl.textContent = msg;
+        };
+        rechapterBtn.disabled = true;
+        say('Joining page fragments into real chapters...');
+        try {
+          const uid = (window.SyncService && window.SyncService.currentUserId) || Storage.getUserId() || 'usr_default';
+          const res = await fetch('/api/novels/rechapter', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ novel_id: id, user_id: uid })
+          });
+          const data = await res.json();
+          if (!data.success) {
+            say(`Error: ${data.error || 'Could not fix chapter breaks'}`, true);
+            return;
+          }
+          if (!data.merged) {
+            say('Chapters already look right. Nothing changed.');
+            return;
+          }
+          // Move this device's saved spot onto the merged chapter so the book reopens where it was.
+          const remap = data.remap || {};
+          const local = Storage.getLocalProgress(id, uid);
+          if (local && local.chapterId && remap[local.chapterId]) {
+            const [newId, offset] = remap[local.chapterId];
+            Storage.saveLocalProgress(id, {
+              ...local,
+              chapterId: newId,
+              paragraphIndex: (local.paragraphIndex || 0) + (offset || 0)
+            }, uid);
+          }
+          if (window.Reader && window.Reader.chapterCache) window.Reader.chapterCache.clear();
+          await this.updateDeviceMirror();
+          say(`Done: ${data.total_before} entries joined into ${data.total_after} chapters. Your place is kept.`);
+          if (window.Reader && window.Reader.currentNovel && window.Reader.currentNovel.id === id) {
+            this.closeNovelSettingsModal();
+            window.Reader.openNovel(id, true);
+          } else {
+            this.loadLibrary(false);
+          }
+        } catch (err) {
+          say(`Request failed: ${err.message}`, true);
+        } finally {
+          rechapterBtn.disabled = false;
         }
       });
     }

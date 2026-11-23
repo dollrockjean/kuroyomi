@@ -647,3 +647,91 @@ def clean_novel_obfuscation(novel_id: str, user_id: str):
     conn.commit()
     conn.close()
     return {"success": True, "cleaned_chapters": cleaned_count, "total_chapters": len(rows)}
+
+def rechapter_novel(novel_id: str, user_id: str):
+    """Fold page-split entries of an already imported novel into real chapters.
+
+    Runs the same detection as import (chaptering.plan_merge) per volume. The
+    first entry of each group keeps its id, the rest are removed, and saved
+    reading positions on removed entries are moved to the merged chapter with
+    their paragraph index shifted. Returns a remap {old_id: [new_id, offset]}
+    so the app can move its local position too.
+    """
+    import chaptering
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM novels WHERE id = ? AND user_id = ?", (novel_id, user_id))
+        if not cur.fetchone():
+            return {"error": "Novel not found or unauthorized", "merged": 0}
+
+        cur.execute("SELECT id FROM volumes WHERE novel_id = ? ORDER BY volume_number, created_at", (novel_id,))
+        vol_ids = [r["id"] for r in cur.fetchall()]
+        cur.execute("SELECT DISTINCT volume_id FROM chapters WHERE novel_id = ?", (novel_id,))
+        for r in cur.fetchall():
+            if r["volume_id"] not in vol_ids:
+                vol_ids.append(r["volume_id"])
+
+        total_before = 0
+        remap = {}
+        removed = []
+        for vid in vol_ids:
+            cur.execute(
+                "SELECT id, title, content_html, word_count, chapter_index, global_index FROM chapters "
+                "WHERE novel_id = ? AND volume_id = ? ORDER BY global_index, chapter_index",
+                (novel_id, vid),
+            )
+            rows = [dict(r) for r in cur.fetchall()]
+            total_before += len(rows)
+            groups = chaptering.plan_merge(rows)
+            if not groups:
+                continue
+            for g in groups:
+                if len(g) < 2:
+                    continue
+                first = rows[g[0]]
+                title = chaptering._chapter_label(first) or first.get("title") or ""
+                merged, wc, offsets = chaptering.merge_group_html(rows, g, title)
+                cur.execute(
+                    "UPDATE chapters SET title = ?, content_html = ?, word_count = ? WHERE id = ?",
+                    (title, sanitize_html(merged), wc, first["id"]),
+                )
+                for k, ci in enumerate(g):
+                    remap[rows[ci]["id"]] = [first["id"], offsets[k]]
+                    if k > 0:
+                        removed.append(rows[ci]["id"])
+
+        if not removed:
+            return {"success": True, "merged": 0, "total_before": total_before,
+                    "total_after": total_before, "remap": {}}
+
+        # Move saved positions before the rows they point at are removed.
+        cur.execute("SELECT id, chapter_id, paragraph_index FROM reading_progress WHERE novel_id = ?", (novel_id,))
+        for p in cur.fetchall():
+            hit = remap.get(p["chapter_id"])
+            if hit and (hit[0] != p["chapter_id"] or hit[1]):
+                cur.execute(
+                    "UPDATE reading_progress SET chapter_id = ?, paragraph_index = ? WHERE id = ?",
+                    (hit[0], int(p["paragraph_index"] or 0) + int(hit[1]), p["id"]),
+                )
+        cur.executemany("DELETE FROM chapters WHERE id = ?", [(cid,) for cid in removed])
+
+        # Re-number so chapter_index (per volume) and global_index (whole book) have no gaps.
+        gi = 0
+        for vid in vol_ids:
+            cur.execute(
+                "SELECT id FROM chapters WHERE novel_id = ? AND volume_id = ? ORDER BY global_index, chapter_index",
+                (novel_id, vid),
+            )
+            ids = [r["id"] for r in cur.fetchall()]
+            for ci, cid in enumerate(ids, start=1):
+                gi += 1
+                cur.execute("UPDATE chapters SET chapter_index = ?, global_index = ? WHERE id = ?", (ci, gi, cid))
+            cur.execute("UPDATE volumes SET total_chapters = ? WHERE id = ?", (len(ids), vid))
+
+        cur.execute("UPDATE novels SET updated_at = ? WHERE id = ?", (time.time(), novel_id))
+        conn.commit()
+        return {"success": True, "merged": len(removed), "total_before": total_before,
+                "total_after": gi, "remap": remap}
+    finally:
+        conn.close()

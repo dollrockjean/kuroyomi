@@ -30,7 +30,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,300;0,400;0,700;1,300;1,400;1,700&family=Lora:ital,wght@0,400..700;1,400..700&family=Merriweather:ital,wght@0,300;0,400;0,700;1,300;1,400;1,700&family=Open+Sans:ital,wght@0,300..800;1,300..800&family=PT+Serif:ital,wght@0,400;0,700;1,400;1,700&family=Roboto:ital,wght@0,300;0,400;0,500;0,700;1,400;1,700&display=swap" rel="stylesheet">
 
   <!-- Styles -->
-  <link rel="stylesheet" href="/css/brutalist.css?v=52.0">
+  <link rel="stylesheet" href="/css/brutalist.css?v=53.0">
 
   <!-- Critical Quick Sheet Theme & Layout Styles (Anti-Cache Protection) -->
   <style id="quickSheetCriticalStyles">
@@ -1173,6 +1173,17 @@
             <span>Fix Dotted Words (e.g. cl.u.s.t.ered)</span>
           </button>
 
+          <!-- 3b. Fix chapter breaks (books split one page per chapter) -->
+          <button class="btn-brutal" id="novelSettingsRechapterBtn" style="justify-content: flex-start; text-align: left; padding: 12px 14px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 10px;">
+              <path d="M4 6h16"></path>
+              <path d="M4 12h10"></path>
+              <path d="M4 18h16"></path>
+              <path d="M18 9l3 3-3 3"></path>
+            </svg>
+            <span>Fix Chapter Breaks (every page shows as a chapter)</span>
+          </button>
+
           <div id="novelSettingsCleanStatus" style="display: none; font-size: 11px; padding: 8px 12px; border: 1px solid var(--border-color); background: var(--bg-surface); line-height: 1.4;"></div>
 
           <hr style="border: none; border-top: 1px solid var(--border-color); margin: 6px 0;" />
@@ -1205,11 +1216,11 @@
   <input type="file" id="novelCoverInput" accept="image/*" style="display: none;" />
 
   <!-- Application Logic Modules -->
-  <script src="/js/storage.js?v=52.0"></script>
-  <script src="/js/sync.js?v=52.0"></script>
-  <script src="/js/autoscroll.js?v=52.0"></script>
-  <script src="/js/tts.js?v=52.0"></script>
-  <script src="/js/reader.js?v=52.0"></script>
-  <script src="/js/app.js?v=52.0"></script>
+  <script src="/js/storage.js?v=53.0"></script>
+  <script src="/js/sync.js?v=53.0"></script>
+  <script src="/js/autoscroll.js?v=53.0"></script>
+  <script src="/js/tts.js?v=53.0"></script>
+  <script src="/js/reader.js?v=53.0"></script>
+  <script src="/js/app.js?v=53.0"></script>
 </body>
 </html>
