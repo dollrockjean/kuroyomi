@@ -366,18 +366,18 @@ class TestUIImprovements(unittest.TestCase):
         with open(sw_path, "r", encoding="utf-8") as f:
             sw_js = f.read()
 
-        self.assertIn("byob-v54", sw_js)
-        self.assertIn("v=54.0", sw_js)
+        self.assertIn("byob-v55", sw_js)
+        self.assertIn("v=55.0", sw_js)
 
         index_path = os.path.join(server.PUBLIC_DIR, "index.html")
         with open(index_path, "r", encoding="utf-8") as f:
             index_html = f.read()
 
-        self.assertIn("brutalist.css?v=54.0", index_html)
-        self.assertIn("app.js?v=54.0", index_html)
-        self.assertIn("reader.js?v=54.0", index_html)
-        self.assertIn("tts.js?v=54.0", index_html)
-        self.assertIn("sync.js?v=54.0", index_html)
+        self.assertIn("brutalist.css?v=55.0", index_html)
+        self.assertIn("app.js?v=55.0", index_html)
+        self.assertIn("reader.js?v=55.0", index_html)
+        self.assertIn("tts.js?v=55.0", index_html)
+        self.assertIn("sync.js?v=55.0", index_html)
 
     def test_user_paragraph_normalization_and_synthesis(self):
         """Verify complex RPG paragraph with evolution arrows, ratios, and double colons is normalized and synthesized cleanly."""

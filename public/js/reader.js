@@ -968,6 +968,8 @@ const Reader = {
 
   async loadNextChapter(isTtsAdvance = false) {
     if (this.currentChapter && this.currentChapter.next_chapter) {
+      // Moving on to the next chapter counts the current one as finished (reading stats, device only)
+      if (window.ReadingStats) window.ReadingStats.chapterFinished();
       return await this.loadChapter(this.currentChapter.next_chapter.id, false, isTtsAdvance);
     }
     return null;
