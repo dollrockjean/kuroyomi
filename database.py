@@ -168,7 +168,8 @@ def init_db():
     # Safe migrations for existing databases
     for col, col_type, default_val in [
         ("library_view_mode", "TEXT", "'tile'"),
-        ("library_sort_by", "TEXT", "'last_read'")
+        ("library_sort_by", "TEXT", "'last_read'"),
+        ("extra_json", "TEXT", "'{}'")
     ]:
         try:
             cursor.execute(f"ALTER TABLE user_settings ADD COLUMN {col} {col_type} DEFAULT {default_val}")
@@ -232,8 +233,8 @@ def get_or_create_user(sync_key: str, display_name: str = None, requested_user_i
         (det_user_id, final_sync_key, display_name or f"Reader_{final_sync_key[:6]}", now, now)
     )
     cur.execute(
-        "INSERT OR IGNORE INTO user_settings (user_id, updated_at) VALUES (?, ?)",
-        (det_user_id, now)
+        "INSERT OR IGNORE INTO user_settings (user_id, updated_at) VALUES (?, 0)",
+        (det_user_id,)
     )
     conn.commit()
     conn.close()
@@ -261,8 +262,8 @@ def ensure_user_exists(user_id: str, sync_key: str = None):
         """, (user_id, key, "Reader", 1, now, now))
         cur.execute("""
             INSERT OR IGNORE INTO user_settings (user_id, updated_at)
-            VALUES (?, ?)
-        """, (user_id, now))
+            VALUES (?, 0)
+        """, (user_id,))
         conn.commit()
     conn.close()
 
@@ -349,12 +350,15 @@ def unlink_device(user_id: str, device_token: str):
     conn.commit()
     conn.close()
 
-def export_backup_data(user_id: str):
+def export_backup_data(user_id: str, novel_id: str = None):
     conn = get_db()
     cur = conn.cursor()
 
     novels = []
-    if user_id:
+    if user_id and novel_id:
+        cur.execute("SELECT * FROM novels WHERE user_id = ? AND id = ?", (user_id, novel_id))
+        novels = [dict(r) for r in cur.fetchall()]
+    elif user_id:
         cur.execute("SELECT * FROM novels WHERE user_id = ?", (user_id,))
         novels = [dict(r) for r in cur.fetchall()]
 
@@ -552,8 +556,8 @@ def import_backup_data(data: dict, user_id: str, sync_key: str = None):
 
     if settings:
         cur.execute("""
-            INSERT OR REPLACE INTO user_settings (user_id, theme, font_family, font_size, line_height, content_width, auto_scroll_speed, tts_voice, tts_rate, tts_pitch, library_view_mode, library_sort_by, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO user_settings (user_id, theme, font_family, font_size, line_height, content_width, auto_scroll_speed, tts_voice, tts_rate, tts_pitch, library_view_mode, library_sort_by, extra_json, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             user_id,
             settings.get("theme", "monochrome-dark"),
@@ -567,6 +571,7 @@ def import_backup_data(data: dict, user_id: str, sync_key: str = None):
             settings.get("tts_pitch", 0.0),
             settings.get("library_view_mode", "tile"),
             settings.get("library_sort_by", "last_read"),
+            settings.get("extra_json") if isinstance(settings.get("extra_json"), str) else "{}",
             now
         ))
 
@@ -580,6 +585,24 @@ def import_backup_data(data: dict, user_id: str, sync_key: str = None):
 
 COVER_DATA_RE = re.compile(r"^data:image/(?:png|jpe?g|gif|webp|avif|bmp|svg\+xml);base64,[A-Za-z0-9+/=]+$")
 MAX_COVER_BYTES = 6 * 1024 * 1024
+
+def sync_state(user_id: str):
+    """Small summary of an account (no chapter text): lets devices and the keeper see what changed cheaply."""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT n.id, n.title, n.author, n.updated_at, n.created_at,
+               (SELECT COUNT(*) FROM chapters c WHERE c.novel_id = n.id) AS chapter_count,
+               (n.cover_data IS NOT NULL AND n.cover_data != '') AS has_cover
+        FROM novels n WHERE n.user_id = ?
+    """, (user_id,))
+    novels = [dict(r) for r in cur.fetchall()]
+    cur.execute("SELECT * FROM reading_progress WHERE user_id = ?", (user_id,))
+    progress = [dict(r) for r in cur.fetchall()]
+    cur.execute("SELECT * FROM user_settings WHERE user_id = ?", (user_id,))
+    row = cur.fetchone()
+    conn.close()
+    return {"novels": novels, "progress": progress, "settings": dict(row) if row else {}}
 
 def is_valid_cover_data(cover_data) -> bool:
     return isinstance(cover_data, str) and len(cover_data) <= MAX_COVER_BYTES and bool(COVER_DATA_RE.match(cover_data))

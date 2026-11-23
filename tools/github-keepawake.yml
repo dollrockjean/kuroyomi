@@ -1,0 +1,25 @@
+# Copy this file to .github/workflows/keepawake.yml (GitHub web: Add file > Create new file).
+# Claude could not push it: the git login on the Mac has no 'workflow' permission.
+name: Keep BYoB awake
+
+# Render's free web service sleeps after 15 minutes without a request, and waking it takes about a minute.
+# One service running all month uses about 744 of the 750 free hours, so pinging it 24/7 stays free.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping /health
+        run: |
+          for i in 1 2 3; do
+            code=$(curl -s -o /tmp/h.json -w "%{http_code}" -m 90 https://byob-webnovel-reader.onrender.com/health) || code=000
+            echo "try $i: HTTP $code $(cat /tmp/h.json 2>/dev/null)"
+            [ "$code" = "200" ] && exit 0
+            sleep 20
+          done
+          exit 1
