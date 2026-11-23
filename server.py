@@ -80,8 +80,11 @@ def normalize_text_for_narration(text: str) -> str:
     clean = re.sub(r"[\[【《〔「『{](.*?)[\]】》〕」』}]", r" \1 ", clean)
     # 7. Convert rank ratios like (15/15) or (5/5) into natural '15 of 15'
     clean = re.sub(r"\((\d+)\s*/\s*(\d+)\)", r"(\1 of \2)", clean)
-    # 8. Normalize long ellipses (.... or ……) into a natural breath pause
-    clean = re.sub(r"\.{3,}|…+", ", ... ", clean)
+    # 8. Ellipses become one short breath pause. A comma or a run of dots left floating between
+    # spaces is spoken out loud as the word "comma" (or "dot dot dot"), so the pause is attached to
+    # the word before it, and an ellipsis with no word before it is dropped.
+    clean = re.sub(r"(\w)\s*(?:\.{3,}|…+)\s*", r"\1, ", clean)
+    clean = re.sub(r"\s*(?:\.{3,}|…+)\s*", " ", clean)
     # 9. Convert em-dashes into spaced em-dashes for natural dialogue beats
     clean = re.sub(r"[\u2013\u2014]+|--+", " — ", clean)
     # 10. Remove leftover decorative symbols hugging words (*Herald*, |Herald|, ~Herald~, _Herald_, stray < >)
@@ -91,6 +94,13 @@ def normalize_text_for_narration(text: str) -> str:
     clean = re.sub(r"\s+", " ", clean).strip()
     # 12. Remove stray spaces left before punctuation by tag/symbol removal ("now ." -> "now.")
     clean = re.sub(r"\s+([,!?;:]|\.(?!\.))", r"\1", clean)
+    # 13. Nothing may be left standing on its own: a lone comma, semicolon or colon between spaces
+    # or at either end is read aloud by name.
+    clean = re.sub(r"(?:(?<=\s)|^)[,;:]+(?=\s|$)", " ", clean)
+    clean = re.sub(r"^[\s,;:.]+", "", clean)
+    # A paragraph that now ends on the pause an ellipsis left should just stop.
+    clean = re.sub(r"[,;:]+$", ".", clean)
+    clean = re.sub(r"\s+", " ", clean).strip()
     return clean
 
 def normalize_rate(rate_str):

@@ -143,7 +143,11 @@ const TTSEngine = {
     clean = clean.replace(/::+/g, ': ');
     clean = clean.replace(/[\[【《〔「『{](.*?)[\]】》〕」』}]/g, ' $1 ');
     clean = clean.replace(/\((\d+)\s*\/\s*(\d+)\)/g, '($1 of $2)');
-    clean = clean.replace(/\.{3,}|…+/g, ', ... ');
+    // Ellipses become one short breath pause. A comma or a run of dots left standing between
+    // spaces is read out loud as the word "comma" (or "dot dot dot"), so the pause is attached to
+    // the word before it, and an ellipsis with nothing before it is dropped.
+    clean = clean.replace(/(\w)\s*(?:\.{3,}|…+)\s*/g, '$1, ');
+    clean = clean.replace(/\s*(?:\.{3,}|…+)\s*/g, ' ');
     clean = clean.replace(/[\u2013\u2014]+|--+/g, ' — ');
 
     // Remove any leftover decorative symbols & stray angle brackets so speech synthesis never drops bracketed words
@@ -152,6 +156,12 @@ const TTSEngine = {
     // Collapse whitespace and fix spacing before punctuation
     clean = clean.replace(/\s+/g, ' ').trim();
     clean = clean.replace(/\s+([,!?;:]|\.(?!\.))/g, '$1');
+    // Nothing may be left standing on its own: a lone comma, semicolon or colon is read by name.
+    clean = clean.replace(/(?:(?<=\s)|^)[,;:]+(?=\s|$)/g, ' ');
+    clean = clean.replace(/^[\s,;:.]+/, '');
+    // A paragraph that now ends on the pause an ellipsis left should just stop.
+    clean = clean.replace(/[,;:]+$/, '.');
+    clean = clean.replace(/\s+/g, ' ').trim();
     return clean;
   },
 
