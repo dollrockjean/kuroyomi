@@ -250,7 +250,7 @@
               <circle cx="11" cy="11" r="8"></circle>
               <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
             </svg>
-            <input type="text" id="librarySearchInput" class="library-search-input" placeholder="Search novels..." autocomplete="off" autocorrect="off" spellcheck="false" />
+            <input type="text" id="librarySearchInput" class="library-search-input" placeholder="Search your books" autocomplete="off" autocorrect="off" spellcheck="false" />
             <button type="button" id="librarySearchClearBtn" class="library-search-clear" style="display: none;" title="Clear search" aria-label="Clear search">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
             </button>
@@ -970,7 +970,7 @@
             Read from anywhere, even when your Mac is closed or sleeping:
           </p>
           <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 10px;">
-            <input type="text" id="cloudServerUrlInput" class="form-input" style="font-size: 11px; font-family: monospace;" value="https://byob-webnovel-reader.onrender.com" readonly />
+            <div id="cloudServerUrlInput" class="url-wrap-field">https://byob-webnovel-reader.onrender.com</div>
             <a href="https://byob-webnovel-reader.onrender.com" target="_blank" class="btn-brutal" style="white-space: nowrap; font-size: 11px; padding: 6px 10px; text-decoration: none; display: inline-flex; align-items: center;">Open Cloud</a>
           </div>
           <button class="btn-brutal btn-brutal-accent" id="pushToCloudBtn" style="width: 100%; font-size: 12px; padding: 10px; font-weight: 700;">
@@ -1016,7 +1016,7 @@
             Paste this URL into cron-job.org to keep your cloud server awake 24/7 with zero boot screens:
           </p>
           <div style="display: flex; gap: 8px; align-items: center;">
-            <input type="text" id="keepaliveUrlInput" class="form-input" style="font-size: 11px; font-family: monospace;" readonly />
+            <div id="keepaliveUrlInput" class="url-wrap-field"></div>
             <button class="btn-brutal" id="copyKeepaliveUrlBtn" style="white-space: nowrap; font-size: 11px; padding: 6px 10px;">Copy URL</button>
           </div>
         </div>

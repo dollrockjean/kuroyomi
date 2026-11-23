@@ -1706,7 +1706,7 @@ const App = {
 
     const keepaliveInput = document.getElementById('keepaliveUrlInput');
     if (keepaliveInput) {
-      keepaliveInput.value = `${window.location.origin}/api/health`;
+      keepaliveInput.textContent = `${window.location.origin}/api/health`;
     }
   },
 
