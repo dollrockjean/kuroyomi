@@ -201,6 +201,11 @@ class Engine:
             log("warm-up done")
         except Exception as exc:  # noqa: BLE001
             log("warm-up failed: %s" % exc)
+        # The warm-up pays for compiling the kernels, so counting it makes the speed the app shows
+        # look terrible (0.5x) until enough real paragraphs even it out. Start the count clean.
+        self.renders = 0
+        self.audio_seconds = 0.0
+        self.compute_seconds = 0.0
 
     def pcm(self, text, voice):
         """int16 mono samples for one piece of text."""
