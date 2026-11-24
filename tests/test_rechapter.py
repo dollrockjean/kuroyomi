@@ -68,6 +68,34 @@ class RechapterTest(unittest.TestCase):
         conn.close()
         self.assertEqual(res['remap']['c5'], ['c4', 2])
 
+    def test_running_header_with_a_page_marker_is_dropped(self):
+        """A scraped book repeats the chapter heading on every page, often with its own marker
+        ("Chapter 3: Julien D. Evenus [2]"). Only the first copy may survive the merge, or the
+        reader shows the chapter title twice, stacked."""
+        import chaptering
+        pages = [
+            {'content_html': '<h2>Chapter 3: Julien D. Evenus</h2>'},
+            {'content_html': '<h2>Chapter 3: Julien D. Evenus [2]</h2><p>The hall held its breath.</p>'},
+            {'content_html': '<h2>Chapter 3: Julien D. Evenus (part 3)</h2><p>Snow fell.</p>'},
+        ]
+        html, _wc, _offsets = chaptering.merge_group_html(
+            pages, [0, 1, 2], 'Chapter 3: Julien D. Evenus')
+        self.assertEqual(html.count('<h2'), 1)
+        self.assertIn('Chapter 3: Julien D. Evenus<', html)
+        self.assertIn('The hall held its breath.', html)
+        self.assertIn('Snow fell.', html)
+
+    def test_distinct_headings_are_kept(self):
+        """The page-marker rule must not eat real headings that merely share a chapter."""
+        import chaptering
+        pages = [
+            {'content_html': '<h2>Chapter 4: Two Roads</h2><p>First.</p>'},
+            {'content_html': '<h2>An Interlude at Dusk</h2><p>Second.</p>'},
+        ]
+        html, _wc, _offsets = chaptering.merge_group_html(pages, [0, 1], 'Chapter 4: Two Roads')
+        self.assertEqual(html.count('<h2'), 2)
+        self.assertIn('An Interlude at Dusk', html)
+
     def test_second_run_is_noop_and_wrong_user_denied(self):
         self.db.rechapter_novel('n1', 'u1')
         res = self.db.rechapter_novel('n1', 'u1')

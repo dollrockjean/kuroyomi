@@ -39,6 +39,22 @@ def _norm(title):
     return re.sub(r'[^a-z0-9]', '', t)
 
 
+# A page or part marker a converter tacked onto a running header: "[2]", "(part 3)", " - page 4".
+_PART_SUFFIX_RE = re.compile(
+    r'(?:[\[\(\{]\s*(?:pt\.?|part|page|p\.?)?\s*\d+\s*[\]\)\}]'
+    r'|[\s\-–—_:,.]+(?:pt\.?|part|page)\s*\d+)\s*$',
+    re.I,
+)
+
+
+def _norm_head(title):
+    """_norm, but blind to a trailing page/part marker, so "Julien D. Evenus" and
+    "Julien D. Evenus [2]" count as the same running header."""
+    t = re.sub(r'<[^>]+>', '', title or '')
+    t = _PART_SUFFIX_RE.sub('', _html.unescape(t).strip())
+    return re.sub(r'[^a-z0-9]', '', t.lower())
+
+
 def _first_heading(content_html):
     m = re.search(r'<h[1-6][^>]*>(.*?)</h[1-6]>', content_html or '', re.I | re.S)
     if m:
@@ -115,9 +131,10 @@ def merge_group_html(chapters, idxs, title):
     be moved to the merged chapter. Repeated running-header headings are dropped
     and a sentence cut by a page break is joined back together.
     """
-    head_norm = _norm(title)
+    head_norm = _norm_head(title)
     out = []  # list of [tag, attrs, inner]
     pid_offsets = []
+    seen_head = False
     for k, ci in enumerate(idxs):
         ch = chapters[ci]
         blocks = _blocks(ch.get('content_html'))
@@ -128,8 +145,14 @@ def merge_group_html(chapters, idxs, title):
         for tag, attrs, inner in blocks:
             plain = _plain(inner)
             is_heading = tag.lower().startswith('h')
-            if k > 0 and is_heading and plain and (_norm(plain) == head_norm or _PAGE_RE.search(plain)):
-                continue  # running header or page label on a later page
+            # Every page of a merged chapter repeats the chapter heading, often with its own page
+            # marker ("... [2]"). Keep the first, drop the rest, whichever page they came from.
+            if is_heading and plain and _norm_head(plain) == head_norm:
+                if seen_head:
+                    continue
+                seen_head = True
+            if k > 0 and is_heading and plain and _PAGE_RE.search(plain):
+                continue  # page label on a later page
             if k > 0 and not is_heading and _PAGE_RE.search(plain):
                 continue  # bare page number line
             if (k > 0 and first_text and not is_heading and out and plain

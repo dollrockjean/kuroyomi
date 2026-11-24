@@ -589,6 +589,13 @@ body {
   padding: 24px 18px;
 }
 
+/* Reading: the fixed top bar sets the spacing at the top, so the page's own vertical padding
+   would only be dead space under it. Side padding stays, it is the reading margin. */
+body.reading-mode .main-content {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
 /* Resume Hero Banner */
 .resume-hero {
   border: 1px solid var(--border-color);
@@ -1079,6 +1086,20 @@ body {
   width: 100%;
 }
 
+/* Solid strip under the status bar / Dynamic Island.
+   Sits below every header (so a visible header still paints it) but above the page text, so when a
+   header hides, or the page is scrolled, the inset stays a flat theme colour instead of blurred text. */
+.safe-area-scrim {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--safe-top);
+  background: var(--bg-primary);
+  z-index: 140;
+  pointer-events: none;
+}
+
 /* Auto-Hiding Top Bar (Lowered on Mobile to avoid iPhone status bar/notch overlap) */
 .reader-top-bar {
   position: fixed;
@@ -1142,11 +1163,13 @@ body {
   background: var(--bg-surface);
 }
 
-/* Reading Body (Times New Roman Main Font & Configurable Edge-to-Edge Margins) */
+/* Reading Body (Times New Roman Main Font & Configurable Edge-to-Edge Margins)
+   `body` already pads the top and bottom insets, so the wrapper must not count them again:
+   it only clears the fixed top bar (--reader-bar-h, measured in reader.js) and the floating bar. */
 .reader-body-wrapper {
   width: 100%;
   max-width: var(--reader-width);
-  padding: calc(85px + var(--safe-top)) var(--reader-padding-x, 6px) calc(100px + var(--safe-bottom)) var(--reader-padding-x, 6px);
+  padding: calc(var(--reader-bar-h, 122px) - var(--safe-top) + 10px) var(--reader-padding-x, 6px) 100px var(--reader-padding-x, 6px);
   font-family: var(--reader-font);
   font-size: var(--reader-font-size);
   line-height: var(--reader-line-height);
@@ -1163,7 +1186,8 @@ body {
   border-radius: var(--radius-sm);
   padding: 12px;
   text-align: center;
-  margin: 44px 0 28px 0;
+  /* Always the first block of a chapter, so no top margin: the wrapper already spaces it off the bar. */
+  margin: 0 0 24px 0;
   font-family: var(--font-sans);
   font-size: 12px;
   font-weight: 600;
@@ -3560,11 +3584,11 @@ dfn .bionic-fixation,
 
   /* Mobile Chapter Top: Eliminate blank gaps above text & volume banner */
   .reader-body-wrapper {
-    padding: calc(48px + var(--safe-top)) var(--reader-padding-x, 6px) calc(90px + var(--safe-bottom)) var(--reader-padding-x, 6px) !important;
+    padding: calc(var(--reader-bar-h, 122px) - var(--safe-top) + 10px) var(--reader-padding-x, 6px) 90px var(--reader-padding-x, 6px) !important;
   }
 
   .chapter-separator-banner {
-    margin: 6px 0 12px 0 !important;
+    margin: 0 0 12px 0 !important;
     padding: 8px 10px !important;
     font-size: 11.5px !important;
   }
