@@ -42,6 +42,7 @@ const Reader = {
     }
     this.bindScroll();
     this.bindCenterScreenTap();
+    this.trackTopBarHeight();
     this.initOverscrollNavigation();
     this.bindDesktopHover();
     this.bindKeyboardShortcuts();
@@ -405,6 +406,24 @@ const Reader = {
         }, 220);
       }
     }, { passive: true });
+  },
+
+  // The reading column clears the fixed top bar through --reader-bar-h. Measuring beats a magic
+  // number: the bar grows with the status-bar inset, the font size and the buttons inside it.
+  trackTopBarHeight() {
+    const topBar = document.getElementById('readerTopBar');
+    if (!topBar) return;
+    const apply = () => {
+      // offsetHeight ignores the hide transform, so the value survives the bar auto-hiding.
+      const h = topBar.offsetHeight;
+      if (h > 0) document.documentElement.style.setProperty('--reader-bar-h', `${h}px`);
+    };
+    apply();
+    if (typeof ResizeObserver !== 'undefined') {
+      new ResizeObserver(apply).observe(topBar);
+    }
+    window.addEventListener('orientationchange', () => setTimeout(apply, 250));
+    window.addEventListener('resize', apply, { passive: true });
   },
 
   toggleControls() {
@@ -1153,6 +1172,28 @@ const Reader = {
     }
   },
 
+  // "Chapter 3: Julien D. Evenus [2]" and "Chapter 3: Julien D. Evenus" are the same heading as far
+  // as the top of a chapter is concerned: scrapers tack a page or part marker onto a running header.
+  normalizeHeadingText(text) {
+    return (text || '')
+      .toLowerCase()
+      .replace(/[\[\(\{]\s*(?:pt\.?|part|page|p\.?)?\s*\d+\s*[\]\)\}]\s*$/, '')
+      .replace(/[\s\-\u2013\u2014_:,.]+(?:pt\.?|part|page)\s*\d+\s*$/, '')
+      .replace(/[^a-z0-9]/g, '');
+  },
+
+  // True when two heading-ish strings name the same chapter. Short strings must match exactly,
+  // so a heading like "I" never swallows a title that merely starts with it.
+  headingMatchesTitle(headingText, titleText) {
+    const a = this.normalizeHeadingText(headingText);
+    const b = this.normalizeHeadingText(titleText);
+    if (!a || !b) return false;
+    if (a === b) return true;
+    const shorter = a.length < b.length ? a : b;
+    const longer = a.length < b.length ? b : a;
+    return shorter.length >= 8 && longer.includes(shorter);
+  },
+
   buildChapterHtml(ch) {
     let cleanContentHtml = ch.content_html || '';
     cleanContentHtml = cleanContentHtml
@@ -1160,18 +1201,22 @@ const Reader = {
       .replace(/\s+style=(["\'])[^"\']*\1/gi, '')
       .replace(/([^\s>])\s{2,}([^\s<])/g, '$1 $2');
 
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = cleanContentHtml.slice(0, 800);
-    const firstHeading = tempDiv.querySelector('.reader-heading, h1, h2, h3, .reader-paragraph');
-    const firstText = firstHeading ? firstHeading.textContent.trim().toLowerCase() : '';
-    const cleanTitle = (ch.title || '').trim().toLowerCase();
+    // Parse the whole chapter, not a 800-character slice: a book can carry the running header twice
+    // (one file per page), and the old check only ever looked at the very first block.
+    const contentDiv = document.createElement('div');
+    contentDiv.innerHTML = cleanContentHtml;
 
-    const titleAlreadyInContent = firstText && (
-      firstText === cleanTitle ||
-      firstText.includes(cleanTitle) ||
-      cleanTitle.includes(firstText) ||
-      firstText.replace(/[^a-z0-9]/g, '') === cleanTitle.replace(/[^a-z0-9]/g, '')
-    );
+    const blocks = Array.from(contentDiv.children).slice(0, 6);
+    let titleAlreadyInContent = false;
+    for (const el of blocks) {
+      const isHeading = /^H[1-6]$/.test(el.tagName) || el.classList.contains('reader-heading');
+      if (!this.headingMatchesTitle(el.textContent, ch.title)) continue;
+      if (!titleAlreadyInContent) {
+        titleAlreadyInContent = true;   // the first one stays and becomes the chapter's title
+      } else if (isHeading) {
+        el.remove();                    // any repeat of it is a running header, not content
+      }
+    }
 
     const headingHtml = titleAlreadyInContent ? '' : `<h1 class="reader-heading">${this.esc(ch.title)}</h1>`;
 
@@ -1180,7 +1225,7 @@ const Reader = {
         ${this.esc(ch.volume_title || ch.novel_title)}
       </div>
       ${headingHtml}
-      ${cleanContentHtml}
+      ${contentDiv.innerHTML}
     `;
   },
 

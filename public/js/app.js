@@ -3206,6 +3206,8 @@ const App = {
 
   switchView(view, resetScroll = true) {
     this.currentView = view;
+    // Lets the CSS drop the library's page padding while reading; the fixed top bar sets that spacing.
+    document.body.classList.toggle('reading-mode', view === 'reader');
     const appHeader = document.querySelector('.app-header');
     const libView = document.getElementById('libraryView');
     const readerView = document.getElementById('readerView');
