@@ -27,3 +27,4 @@ __pycache__/
 env/
 venv/
 .shots/
+tools/shots/

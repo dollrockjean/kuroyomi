@@ -56,8 +56,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,300;0,400;0,700;1,300;1,400;1,700&family=Lora:ital,wght@0,400..700;1,400..700&family=Merriweather:ital,wght@0,300;0,400;0,700;1,300;1,400;1,700&family=Open+Sans:ital,wght@0,300..800;1,300..800&family=PT+Serif:ital,wght@0,400;0,700;1,400;1,700&family=Roboto:ital,wght@0,300;0,400;0,500;0,700;1,400;1,700&display=swap" rel="stylesheet">
 
   <!-- Styles -->
-  <link rel="stylesheet" href="/css/brutalist.css?v=55.0">
-  <link rel="stylesheet" href="/css/refresh.css?v=55.0">
+  <link rel="stylesheet" href="/css/brutalist.css?v=56.0">
+  <link rel="stylesheet" href="/css/refresh.css?v=56.0">
 
   <!-- Critical Quick Sheet Theme & Layout Styles (Anti-Cache Protection) -->
   <style id="quickSheetCriticalStyles">
@@ -217,6 +217,10 @@
   </style>
 </head>
 <body style="background-color: #141518; color: #f0f0f0;">
+
+  <!-- Solid strip behind the status bar / Dynamic Island. Without it, text scrolls into that
+       area whenever a header hides and Safari smears it with its own glass blur. -->
+  <div id="safeAreaScrim" class="safe-area-scrim" aria-hidden="true"></div>
 
   <!-- Top App Header -->
   <header class="app-header">
@@ -1340,11 +1344,11 @@
   <input type="file" id="novelCoverInput" accept="image/*" style="display: none;" />
 
   <!-- Application Logic Modules -->
-  <script src="/js/storage.js?v=55.0"></script>
-  <script src="/js/sync.js?v=55.0"></script>
-  <script src="/js/autoscroll.js?v=55.0"></script>
-  <script src="/js/tts.js?v=55.0"></script>
-  <script src="/js/reader.js?v=55.0"></script>
-  <script src="/js/app.js?v=55.0"></script>
+  <script src="/js/storage.js?v=56.0"></script>
+  <script src="/js/sync.js?v=56.0"></script>
+  <script src="/js/autoscroll.js?v=56.0"></script>
+  <script src="/js/tts.js?v=56.0"></script>
+  <script src="/js/reader.js?v=56.0"></script>
+  <script src="/js/app.js?v=56.0"></script>
 </body>
 </html>
