@@ -10,6 +10,7 @@ app can go through the BYoB server instead of dropping to Edge. Found live on 20
 import io
 import json
 import os
+import re
 import sys
 import unittest
 from email.message import Message
@@ -73,34 +74,24 @@ class KokoroEngineTests(unittest.TestCase):
             except OSError:
                 pass
 
-    def test_sync_key_alone_earns_the_direct_address(self):
-        """What the phone sends after a wipe: a sync key, and a device token the server lost."""
-        k = ask_engines(self.user_id, sync_key=SYNC_KEY, device_token="dev_the_server_forgot")
-        self.assertTrue(k["available"])
-        self.assertTrue(k["direct"])
-        self.assertEqual(k["url"], TUNNEL)
-        self.assertEqual(k["token"], "secret-pc-token")
-
-    def test_known_device_earns_the_direct_address(self):
+    def test_nobody_is_given_the_address_or_the_key(self):
+        """Not the account owner, not a linked device, not a stranger: the address stays here."""
         database.register_device(self.user_id, "dev_known", "iPhone", "unittest", True)
-        k = ask_engines(self.user_id, device_token="dev_known")
-        self.assertTrue(k["direct"])
-        self.assertEqual(k["url"], TUNNEL)
+        for who in (dict(sync_key=SYNC_KEY), dict(device_token="dev_known"),
+                    dict(sync_key=SYNC_KEY, device_token="dev_known"),
+                    dict(device_token="dev_not_linked"), dict()):
+            k = ask_engines(self.user_id, **who)
+            self.assertTrue(k["available"], who)
+            self.assertFalse(k["direct"], who)
+            self.assertIsNone(k["url"], who)
+            self.assertIsNone(k["token"], who)
 
-    def test_a_stranger_sees_kokoro_but_not_the_address(self):
-        """Available so the app can use the server relay; no address, because it proved nothing."""
-        k = ask_engines(self.user_id, device_token="dev_not_linked")
+    def test_the_app_still_learns_the_pc_is_up(self):
+        k = ask_engines(self.user_id)
         self.assertTrue(k["available"])
-        self.assertFalse(k["direct"])
-        self.assertIsNone(k["url"])
-        self.assertIsNone(k["token"])
         self.assertEqual(k["device"], "cuda")
-
-    def test_a_wrong_sync_key_proves_nothing(self):
-        k = ask_engines(self.user_id, sync_key="READER-SOMEONE-ELSE")
-        self.assertTrue(k["available"])
-        self.assertFalse(k["direct"])
-        self.assertIsNone(k["url"])
+        self.assertEqual(k["device_name"], "BYoB Kokoro (PC)")
+        self.assertEqual(k["realtime_factor"], 18.0)
 
     def test_the_pc_going_quiet_marks_kokoro_unavailable(self):
         server.kokoro_set(self.user_id, None)
@@ -116,6 +107,61 @@ class KokoroEngineTests(unittest.TestCase):
         self.assertFalse(k["available"])
 
 
+class AnnouncingTests(unittest.TestCase):
+    """Who may tell this server where the PC is."""
+
+    def setUp(self):
+        self.db = os.path.join(os.path.dirname(__file__), "kokoro_ann.db")
+        if os.path.exists(self.db):
+            os.remove(self.db)
+        database.DB_PATH = self.db
+        database.init_db()
+        self.user_id = database.get_or_create_user(SYNC_KEY)
+        self.old_key = server.KOKORO_KEY
+
+    def tearDown(self):
+        server.KOKORO_KEY = self.old_key
+        server.kokoro_set(self.user_id, None)
+        if os.path.exists(self.db):
+            try:
+                os.remove(self.db)
+            except OSError:
+                pass
+
+    def announce(self, key=None, sync_key=None):
+        body = dict(user_id=self.user_id, url=TUNNEL, token="pc-token", device="cuda")
+        if sync_key:
+            body["sync_key"] = sync_key
+        h = handler_for("/api/tts/engine", "POST", json.dumps(body).encode("utf-8"),
+                        headers={"X-Kokoro-Key": key} if key else None)
+        h.do_POST()
+        return h.sent_status, json.loads(h.wfile.getvalue().decode("utf-8"))
+
+    def test_the_key_lets_the_pc_announce(self):
+        server.KOKORO_KEY = "shared-key"
+        status, res = self.announce(key="shared-key")
+        self.assertTrue(res.get("registered"))
+        self.assertEqual(server.kokoro_get(self.user_id)["url"], TUNNEL)
+
+    def test_no_key_is_refused_with_401(self):
+        server.KOKORO_KEY = "shared-key"
+        status, res = self.announce()
+        self.assertEqual(status, 401)
+        self.assertIsNone(server.kokoro_get(self.user_id))
+
+    def test_a_wrong_key_is_refused_with_401(self):
+        server.KOKORO_KEY = "shared-key"
+        status, _ = self.announce(key="not-the-key")
+        self.assertEqual(status, 401)
+
+    def test_without_a_key_set_it_falls_back_to_owning_the_account(self):
+        server.KOKORO_KEY = ""
+        status, _ = self.announce()
+        self.assertEqual(status, 403)
+        status, res = self.announce(sync_key=SYNC_KEY)
+        self.assertTrue(res.get("registered"))
+
+
 class PlayerContractTests(unittest.TestCase):
     """The app's side of the same deal, checked against the file the phone actually loads."""
 
@@ -125,18 +171,71 @@ class PlayerContractTests(unittest.TestCase):
         with open(p, encoding="utf-8") as fh:
             cls.js = fh.read()
 
-    def test_the_probe_sends_the_sync_key(self):
-        self.assertIn("sync_key=${encodeURIComponent(syncKey)}", self.js)
+    def test_the_player_never_holds_the_address_or_the_key(self):
+        for forbidden in ("this.kokoro.url", "this.kokoro.token", "X-BYoB-Token",
+                          "trycloudflare", "sync_key="):
+            self.assertNotIn(forbidden, self.js, forbidden)
 
-    def test_kokoro_without_an_address_is_still_usable(self):
-        self.assertIn("relay: !url", self.js)
-        self.assertIn("(this.kokoro.url || this.kokoro.relay)", self.js)
-
-    def test_the_relay_request_asks_for_kokoro(self):
+    def test_every_kokoro_request_goes_through_the_byob_server(self):
         self.assertIn("/api/tts/speak?engine=kokoro", self.js)
+        self.assertIn("'/api/tts/prefetch'", self.js)
 
-    def test_the_direct_path_still_needs_an_address(self):
-        self.assertIn("if (engine === 'kokoro' && this.kokoro.url)", self.js)
+    def test_kokoro_is_usable_on_availability_alone(self):
+        self.assertIn("return !!(this.kokoro && Date.now() > this._kokoroColdUntil)", self.js)
+
+
+class ServerFileContractTests(unittest.TestCase):
+    """What the PC's voice server exposes, read from the file that runs on the PC."""
+
+    @classmethod
+    def setUpClass(cls):
+        p = os.path.join(os.path.dirname(__file__), "..", "tools", "kokoro_server.py")
+        with open(p, encoding="utf-8") as fh:
+            cls.py = fh.read()
+
+    def test_it_is_bound_to_loopback_only(self):
+        self.assertIn('HOST = "127.0.0.1"', self.py)
+        self.assertIn("ThreadingHTTPServer((HOST, args.port)", self.py)
+        self.assertNotIn('ap.add_argument("--host"', self.py)
+
+    def test_the_key_comes_from_the_header_only(self):
+        self.assertIn('self.headers.get("X-BYoB-Token") or ""', self.py)
+        self.assertNotIn('query.get("token"', self.py)
+        self.assertIn("hmac.compare_digest", self.py)
+
+    def test_only_the_speech_routes_exist(self):
+        routes = set(re.findall(r'path (?:==|!=|in|not in) \(?((?:"/[a-z]*",? ?)+)\)?', self.py))
+        found = set(re.findall(r'"(/[a-z]*)"', " ".join(routes)))
+        self.assertEqual(found, {"/", "/health", "/voices", "/tts", "/prefetch"})
+
+    def test_every_route_is_guarded_and_limited(self):
+        self.assertIn("if not self.guard(", self.py)
+        self.assertIn('self.send_json({"error": "a key is required"}, status=401)', self.py)
+        self.assertIn('self.send_json({"error": "too many requests"}, status=429)', self.py)
+
+    def test_there_is_no_file_shell_or_admin_route(self):
+        for forbidden in ("subprocess", "os.system", "SimpleHTTPRequestHandler", "eval(", "exec(",
+                          "translate_path", "shutil.rmtree", "os.remove(self.path"):
+            self.assertNotIn(forbidden, self.py, forbidden)
+
+
+class RateLimitTests(unittest.TestCase):
+    def test_the_ceiling_closes_and_reopens(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "kokoro_server_rl",
+            os.path.join(os.path.dirname(__file__), "..", "tools", "kokoro_server.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        rl = mod.RateLimit()
+        rl.PER_MINUTE = dict(rl.PER_MINUTE, **{"/tts": 3})
+        self.assertTrue(all(rl.allow("/tts") for _ in range(3)))
+        self.assertFalse(rl.allow("/tts"))
+        self.assertEqual(rl.rejected, 1)
+        self.assertTrue(rl.allow("/voices"))      # a different route has its own ceiling
+        rl.hits["/tts"].clear()                   # what the minute passing looks like
+        self.assertTrue(rl.allow("/tts"))
 
 
 if __name__ == "__main__":

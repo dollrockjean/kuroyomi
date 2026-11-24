@@ -121,8 +121,10 @@ class Supervisor:
     # --- local server ----------------------------------------------------
     def server_health(self, timeout=4):
         try:
-            with urllib.request.urlopen(
-                    "http://127.0.0.1:%d/health" % self.port, timeout=timeout) as r:
+            req = urllib.request.Request(
+                "http://127.0.0.1:%d/health" % self.port,
+                headers={"X-BYoB-Token": self.token})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
                 return json.loads(r.read().decode("utf-8"))
         except Exception:  # noqa: BLE001
             return None
@@ -198,7 +200,8 @@ class Supervisor:
             return None
         try:
             req = urllib.request.Request(self.tunnel_url + "/health",
-                                         headers={"User-Agent": "BYoB-Kokoro-Supervisor/1"})
+                                         headers={"User-Agent": "BYoB-Kokoro-Supervisor/1",
+                                                  "X-BYoB-Token": self.token})
             t0 = time.time()
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 data = json.loads(r.read().decode("utf-8"))
@@ -220,6 +223,9 @@ class Supervisor:
         body = {
             "user_id": self.cfg["user_id"],
             "url": self.tunnel_url,
+            # Only so a server that has no KOKORO_KEY of its own can still reach this PC. A server
+            # that does have the key ignores this and checks the header below instead, which is what
+            # stops a stranger pointing the app at their own machine.
             "token": self.token,
             "device": health.get("device"),
             "version": health.get("version"),
@@ -232,6 +238,7 @@ class Supervisor:
                 base + "/api/tts/engine", data=json.dumps(body).encode("utf-8"),
                 headers={"Content-Type": "application/json",
                          "User-Agent": "BYoB-Kokoro-Supervisor/1",
+                         "X-Kokoro-Key": self.token,
                          "X-Device-Token": self.cfg.get("device_token", "")})
             with urllib.request.urlopen(req, timeout=30) as r:
                 r.read()
@@ -253,6 +260,7 @@ class Supervisor:
                 base + "/api/tts/engine",
                 data=json.dumps({"user_id": self.cfg["user_id"], "url": ""}).encode("utf-8"),
                 headers={"Content-Type": "application/json",
+                         "X-Kokoro-Key": self.token,
                          "X-Device-Token": self.cfg.get("device_token", "")})
             with urllib.request.urlopen(req, timeout=15) as r:
                 r.read()

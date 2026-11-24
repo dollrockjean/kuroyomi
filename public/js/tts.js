@@ -41,15 +41,14 @@ const TTSEngine = {
   engineMode: 'edge',               // 'auto' | 'kokoro' | 'edge' (Edge by default until Kokoro is measured; a saved choice wins)
   engineActive: 'edge',
   kokoroVoice: '',                  // '' = use the match for the chosen Edge voice
-  kokoro: null,                     // { url, token, device, deviceName, rtf } while the PC is up
+  kokoro: null,                     // { device, deviceName, rtf } while the PC is up; never its address
   kokoroVoices: [],
   _enginePromise: null,
   _engineCheckedAt: 0,
   _kokoroColdUntil: 0,              // after a failure, stop trying for a few seconds
   _kokoroPrefetched: new Set(),
   ENGINE_PROBE_MS: 30000,           // re-ask the server at most this often
-  KOKORO_FIRST_TIMEOUT_MS: 4500,    // a paragraph the PC has not rendered yet
-  KOKORO_RELAY_TIMEOUT_MS: 12000,   // the same paragraph through the BYoB server: two hops, no prefetch
+  KOKORO_RELAY_TIMEOUT_MS: 12000,   // a paragraph the PC has not rendered yet, over two hops
   KOKORO_COLD_MS: 20000,            // how long to stay on Edge after the PC failed
   
   paragraphs: [],
@@ -1185,8 +1184,7 @@ const TTSEngine = {
   },
 
   kokoroUsable() {
-    return !!(this.kokoro && (this.kokoro.url || this.kokoro.relay)
-      && Date.now() > this._kokoroColdUntil);
+    return !!(this.kokoro && Date.now() > this._kokoroColdUntil);
   },
 
   engineForNextFetch() {
@@ -1210,17 +1208,10 @@ const TTSEngine = {
           || (typeof Storage !== 'undefined' && Storage.getUserId && Storage.getUserId()) || '';
         const token = (typeof Storage !== 'undefined' && Storage.getDeviceToken
           && Storage.getDeviceToken()) || '';
-        // The server only hands the PC's address to a device that proves it owns the account. The
-        // device token alone is not enough: Render's free plan keeps no disk, so every restart wipes
-        // the device list and the phone looks like a stranger until the page is reloaded. The sync
-        // key is checked against the account itself, which survives a wipe, so send both (2026-11-24).
-        let syncKey = (typeof Storage !== 'undefined' && Storage.getSyncKey && Storage.getSyncKey()) || '';
-        if (syncKey === 'OFFLINE' || syncKey === 'DEFAULT_READER') syncKey = '';
         if (!userId) { this.kokoro = null; return null; }
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 6000);
-        const res = await fetch(`/api/tts/engines?user_id=${encodeURIComponent(userId)}`
-            + (syncKey ? `&sync_key=${encodeURIComponent(syncKey)}` : ''), {
+        const res = await fetch(`/api/tts/engines?user_id=${encodeURIComponent(userId)}`, {
           signal: controller.signal,
           headers: token ? { 'X-Device-Token': token } : {}
         });
@@ -1229,19 +1220,16 @@ const TTSEngine = {
         const data = await res.json();
         const k = data && data.engines && data.engines.kokoro;
         if (k && k.available) {
-          // With an address the phone talks to the PC directly, which is the fast path. Without one
-          // the PC is still up, so go through the BYoB server instead of giving up on Kokoro.
-          const url = k.url ? String(k.url).replace(/\/$/, '') : '';
-          const changed = !this.kokoro || this.kokoro.url !== url;
+          // All this side needs to know is that the PC is up. Where it is and the key that opens it
+          // stay on the BYoB server, which fetches the audio for us (2026-11-24): a browser is the
+          // last place to keep either, and a stranger with the link could have used the graphics card.
+          const wasDown = !this.kokoro;
           this.kokoro = {
-            url: url,
-            relay: !url,
-            token: k.token || '',
             device: k.device || '',
             deviceName: k.device_name || 'PC',
             rtf: k.realtime_factor || 0
           };
-          if (changed) this._kokoroPrefetched.clear();
+          if (wasDown) this._kokoroPrefetched.clear();
         } else {
           this.kokoro = null;
         }
@@ -1258,9 +1246,7 @@ const TTSEngine = {
   // what removes the gaps on a slow cellular link: by the time the app asks, the audio is ready and
   // the request is only a download.
   kokoroPrefetch(texts) {
-    // Only the direct path can ask the PC to render ahead; through the server each paragraph is
-    // fetched when it is needed.
-    if (!this.kokoroUsable() || !this.kokoro.url || !texts || !texts.length) return;
+    if (!this.kokoroUsable() || !texts || !texts.length) return;
     const voice = this.kokoroVoiceFor(this.selectedVoice);
     const fresh = [];
     for (const t of texts) {
@@ -1273,12 +1259,14 @@ const TTSEngine = {
     }
     if (!fresh.length) return;
     if (this._kokoroPrefetched.size > 3000) this._kokoroPrefetched.clear();
-    const url = this.kokoro.url + '/prefetch';
+    const userId = (window.SyncService && window.SyncService.currentUserId)
+      || (typeof Storage !== 'undefined' && Storage.getUserId && Storage.getUserId()) || '';
+    if (!userId) return;
     try {
-      fetch(url, {
+      fetch('/api/tts/prefetch', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-BYoB-Token': this.kokoro.token },
-        body: JSON.stringify({ texts: fresh.slice(0, 60), voice: voice }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, texts: fresh.slice(0, 60), voice: voice }),
         keepalive: true
       }).catch(() => {});
     } catch (e) {}
@@ -1287,11 +1275,10 @@ const TTSEngine = {
   engineStatusText() {
     if (this.engineMode === 'edge') return 'Edge voices';
     const live = this.kokoroUsable();
-    const via = (live && this.kokoro && this.kokoro.relay) ? ' (through the server)' : '';
     if (this.engineMode === 'kokoro') {
-      return live ? 'Your PC is speaking' + via : 'PC not reachable, using Edge';
+      return live ? 'Your PC is speaking' : 'PC not reachable, using Edge';
     }
-    return live ? 'Auto: your PC is speaking' + via : 'Auto: using Edge (PC not reachable)';
+    return live ? 'Auto: your PC is speaking' : 'Auto: using Edge (PC not reachable)';
   },
 
   // Keeps every engine control in the app showing the same truth: the chosen mode, whether the PC is
@@ -1314,8 +1301,7 @@ const TTSEngine = {
       if (live && this.kokoro) {
         const dev = this.kokoro.device === 'cuda' ? 'graphics card' : 'processor';
         el.textContent = `${this.kokoro.deviceName} on its ${dev}`
-          + (this.kokoro.rtf > 1 ? `, ${this.kokoro.rtf}x faster than real time` : '')
-          + (this.kokoro.relay ? ', reached through the BYoB server' : '');
+          + (this.kokoro.rtf > 1 ? `, ${this.kokoro.rtf}x faster than real time` : '');
       } else {
         el.textContent = 'Kokoro runs on your PC. It starts by itself when the PC is on.';
       }
@@ -1374,10 +1360,9 @@ const TTSEngine = {
     };
 
     const fetchPromise = (async () => {
-      // 1b. The PC through the BYoB server, when the phone has no address of its own. Slower (two
-      // hops) but it keeps the narrator voice instead of dropping to Edge, and the server falls back
-      // to Edge by itself if the PC stops answering, so this request always returns audio.
-      if (engine === 'kokoro' && !this.kokoro.url) {
+      // 1. The PC, through the BYoB server. The server knows where the PC is and holds its key, and
+      // falls back to Edge by itself if the PC stops answering, so this request always returns audio.
+      if (engine === 'kokoro') {
         const userId = (window.SyncService && window.SyncService.currentUserId)
           || (typeof Storage !== 'undefined' && Storage.getUserId && Storage.getUserId()) || '';
         const rUrl = `/api/tts/speak?engine=kokoro&user_id=${encodeURIComponent(userId)}`
@@ -1401,31 +1386,6 @@ const TTSEngine = {
         } catch (err) {
           clearTimeout(timer);
           this.markKokoroDown(err && err.name === 'AbortError' ? 'server too slow' : (err.message || 'error'));
-          // fall through to Edge below, under Edge's own cache key
-        }
-      }
-
-      // 1. The PC, when it is up. One short timeout, then Edge: never leave him in silence.
-      if (engine === 'kokoro' && this.kokoro.url) {
-        const kUrl = `${this.kokoro.url}/tts?text=${encodeURIComponent(cleanSpeechText)}`
-          + `&voice=${encodeURIComponent(this.kokoroVoiceFor(voiceId || this.selectedVoice))}`
-          + `&token=${encodeURIComponent(this.kokoro.token)}`;
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), this.KOKORO_FIRST_TIMEOUT_MS);
-        try {
-          const res = await fetch(kUrl, { signal: controller.signal });
-          clearTimeout(timer);
-          if (!res.ok) throw new Error('PC voice status ' + res.status);
-          const blob = await res.blob();
-          if (!blob || blob.size < 200) throw new Error('PC voice sent nothing');
-          const blobUrl = await storeBlob(blob, cacheKey);
-          this.engineActive = 'kokoro';
-          this.pendingFetches.delete(cacheKey);
-          this.updateEngineUI();
-          return blobUrl;
-        } catch (err) {
-          clearTimeout(timer);
-          this.markKokoroDown(err && err.name === 'AbortError' ? 'too slow' : (err.message || 'error'));
           // fall through to Edge below, under Edge's own cache key
         }
       }

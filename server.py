@@ -15,6 +15,7 @@ APP_VERSION = "v55"
 import urllib.parse
 import mimetypes
 import hashlib
+import hmac
 import tempfile
 import asyncio
 import sys
@@ -197,7 +198,14 @@ RATE_LIMITS = {"register": 30, "upload": 20, "restore": 10, "tts": 300, "engine"
 # Nothing is stored on disk: Render wipes it anyway, and the PC re-announces within a minute.
 # An announcement older than KOKORO_STALE_SECONDS counts as gone, which is what makes the app drop
 # back to Edge by itself when the PC sleeps, loses its connection or is switched off.
+#
+# The PC's voice server needs a shared key on every request. This server holds it in the KOKORO_KEY
+# environment variable (set on Render, not in this repo and never sent to the browser) and adds it to
+# each call. The key also proves who may announce a PC: without it, anyone who knew an account id
+# could point the app at a machine of their own. Until KOKORO_KEY is set, this falls back to the key
+# the PC sends with its announcement, which keeps the voice working but cannot check the announcer.
 KOKORO_STALE_SECONDS = 150
+KOKORO_KEY = (os.environ.get("KOKORO_KEY") or "").strip()
 _KOKORO_ENGINES = {}
 _KOKORO_LOCK = threading.Lock()
 
@@ -228,13 +236,18 @@ def kokoro_get(user_id):
     return info
 
 
+def kokoro_request_key(info):
+    """The key to present to the PC: this server's own if it has one, else the announced fallback."""
+    return KOKORO_KEY or (info or {}).get("token", "")
+
+
 def fetch_kokoro_audio(info, text, voice, timeout=20):
     """Ask the PC for one paragraph as MP3. Returns the bytes, or None so the caller uses Edge."""
     import urllib.request as _ur
     url = (info["url"].rstrip("/") + "/tts?" + urllib.parse.urlencode(
         {"text": text, "voice": voice}))
     req = _ur.Request(url, headers={
-        "X-BYoB-Token": info.get("token", ""),
+        "X-BYoB-Token": kokoro_request_key(info),
         "User-Agent": "BYoB-Server/1",
     })
     try:
@@ -245,6 +258,24 @@ def fetch_kokoro_audio(info, text, voice, timeout=20):
         return data if data[:1] else None
     except Exception as exc:  # noqa: BLE001 - any failure means fall back to Edge
         print(f"[TTS] PC voice unreachable ({type(exc).__name__}): {exc}")
+        return None
+
+
+def kokoro_prefetch(info, texts, voice, timeout=15):
+    """Tell the PC which paragraphs are coming so it renders them before they are asked for. This is
+    what keeps a chapter gapless on a slow link now that the phone never talks to the PC itself."""
+    import urllib.request as _ur
+    body = json.dumps({"texts": texts, "voice": voice}).encode("utf-8")
+    req = _ur.Request(info["url"].rstrip("/") + "/prefetch", data=body, headers={
+        "Content-Type": "application/json",
+        "X-BYoB-Token": kokoro_request_key(info),
+        "User-Agent": "BYoB-Server/1",
+    })
+    try:
+        with _ur.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001 - prefetching is an optimisation, never an error
+        print(f"[TTS] PC prefetch failed ({type(exc).__name__}): {exc}")
         return None
 
 _TTS_CACHE_MAX_BYTES = 400 * 1024 * 1024
@@ -932,15 +963,16 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 },
             }
             if info:
-                # The address and token let the app talk to the PC directly, which is the fast path.
-                # Only hand them to a device that proves it belongs to the account; anyone else still
-                # sees that Kokoro is up and can use it through this server.
-                trusted = self.is_authorized(query.get("user_id", [""])[0],
-                                             query.get("sync_key", [""])[0] or None)
+                # The PC's address and key never leave this server (2026-11-24). They used to be
+                # handed to a device that could prove it owned the account, which put both into the
+                # phone's JavaScript, its URLs and anything watching them. The app asks this server
+                # for the audio instead, and this server is the only thing that knows where the PC is.
+                # The two fields stay, always empty, so an app still running the old code reads them
+                # as "no direct path" rather than breaking.
                 engines["kokoro"].update({
-                    "url": info.get("url") if trusted else None,
-                    "token": info.get("token") if trusted else None,
-                    "direct": bool(trusted),
+                    "url": None,
+                    "token": None,
+                    "direct": False,
                     "device": info.get("device"),
                     "device_name": info.get("device_name"),
                     "version": info.get("version"),
@@ -1034,6 +1066,8 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 return
             if path == "/api/tts/engine" and self.rate_limited("engine"):
                 return
+            if path == "/api/tts/prefetch" and self.rate_limited("tts"):
+                return
             if path in ("/api/restore", "/api/devices/unlink", "/api/novels/cover", "/api/novels/clean-text", "/api/novels/rechapter") or path.startswith("/api/novels/delete"):
                 if not self.is_authorized(body.get("user_id"), body.get("sync_key")):
                     self.deny()
@@ -1050,15 +1084,21 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         cur = conn.cursor()
 
         # 0. The PC says where its Kokoro voice can be reached (or that it is going away).
-        # Only a registered device of the account may do this, so a stranger cannot point the app at
-        # their own machine. An empty url withdraws it and the app falls back to Edge immediately.
+        # It has to present the shared key, so a stranger cannot point the app at a machine of their
+        # own; without a key set here, it still has to be a registered device of the account.
+        # An empty url withdraws it and the app falls back to Edge immediately.
         if path == "/api/tts/engine":
             user_id = (body.get("user_id") or "").strip()
             conn.close()
             if not user_id:
                 self.send_json({"error": "user_id required"}, status=400)
                 return
-            if not self.is_authorized(user_id, body.get("sync_key")):
+            if KOKORO_KEY:
+                given = (self.headers.get("X-Kokoro-Key") or "").strip()
+                if not hmac.compare_digest(given.encode("utf-8"), KOKORO_KEY.encode("utf-8")):
+                    self.send_json({"error": "a key is required"}, status=401)
+                    return
+            elif not self.is_authorized(user_id, body.get("sync_key")):
                 self.send_json({"error": "not authorized for this account"}, status=403)
                 return
             url = (body.get("url") or "").strip()
@@ -1079,6 +1119,25 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             })
             self.send_json({"ok": True, "registered": True,
                             "stale_after_seconds": KOKORO_STALE_SECONDS})
+            return
+
+        # 0b. The app says which paragraphs are coming so the PC can render them ahead. It goes
+        # through here because only this server knows where the PC is and holds its key.
+        if path == "/api/tts/prefetch":
+            conn.close()
+            info = kokoro_get((body.get("user_id") or "").strip())
+            if not info:
+                self.send_json({"ok": False, "reason": "no PC voice right now"})
+                return
+            texts = [t.strip() for t in (body.get("texts") or [])
+                     if isinstance(t, str) and t.strip()]
+            texts = [t[:6000] for t in texts[:60]]
+            if not texts:
+                self.send_json({"ok": True, "queued": 0})
+                return
+            res = kokoro_prefetch(info, texts, body.get("voice") or "")
+            self.send_json({"ok": bool(res), "queued": (res or {}).get("queued", 0),
+                            "pending": (res or {}).get("pending", 0)})
             return
 
         # 1. Register Device / Sync Profile (High-Entropy Cryptographic Keys)

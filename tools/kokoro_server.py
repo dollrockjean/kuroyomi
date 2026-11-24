@@ -10,6 +10,13 @@ What it does
   POST /prefetch {"texts": [...]}   -> renders those paragraphs into the cache in the background, returns at once
   GET  /voices                      -> the narrator voices worth offering
 
+Nothing else exists: there is no route that reads a file, runs a command or changes a setting, and
+every one of the four needs the shared key in an X-BYoB-Token header or answers 401. The key is in
+the supervisor's config file on this PC and in the BYoB server's environment, never in the app's
+JavaScript and never in the repo. The socket is bound to 127.0.0.1, so the Cloudflare tunnel is the
+only way in, and each route has a per-minute ceiling (429 over it) so a leaked key cannot turn the
+graphics card into someone else's speech service.
+
 Speed comes from three things: the model stays loaded, finished MP3s are cached on disk, and the app
 prefetches the next paragraphs so almost every request is a cache hit and costs only the download.
 
@@ -17,7 +24,9 @@ Standard library plus kokoro-onnx, onnxruntime-gpu, lameenc, numpy. No network c
 Run: python kokoro_server.py [--port 8766] [--models DIR] [--cpu] [--token SECRET]
 """
 import argparse
+import collections
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -28,8 +37,9 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-SERVER_VERSION = "kokoro-1.0"
+SERVER_VERSION = "kokoro-1.1"
 DEFAULT_PORT = 8766
+HOST = "127.0.0.1"  # not configurable on purpose: the tunnel is the only way in
 HOME = os.path.expanduser("~")
 DEFAULT_DATA = os.path.join(HOME, "BYoB Backups", "kokoro")
 MAX_TEXT = 6000
@@ -400,6 +410,33 @@ class Renderer:
             return len(self.prefetch_queue)
 
 
+class RateLimit:
+    """A ceiling per route per minute. Everything arrives through the tunnel from 127.0.0.1, so there
+    is no useful per-caller address to count: one ceiling for the route is the honest limit. Normal
+    reading is one request per paragraph, a few a minute, so these are far above real use."""
+
+    PER_MINUTE = {"/tts": 300, "/prefetch": 30, "/health": 120, "/voices": 60}
+    DEFAULT = 60
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.hits = collections.defaultdict(collections.deque)
+        self.rejected = 0
+
+    def allow(self, route):
+        cap = self.PER_MINUTE.get(route, self.DEFAULT)
+        now = time.time()
+        with self.lock:
+            q = self.hits[route]
+            while q and now - q[0] > 60:
+                q.popleft()
+            if len(q) >= cap:
+                self.rejected += 1
+                return False
+            q.append(now)
+            return True
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "BYoB-Kokoro/1.0"
     protocol_version = "HTTP/1.1"
@@ -407,6 +444,9 @@ class Handler(BaseHTTPRequestHandler):
     cache = None
     renderer = None
     token = ""
+    limiter = RateLimit()
+    allow_origin = ""
+    refused = 0
     started_at = time.time()
 
     def log_message(self, fmt, *args):  # quieter: one line per real render, not per request
@@ -414,7 +454,11 @@ class Handler(BaseHTTPRequestHandler):
 
     # --- helpers ---------------------------------------------------------
     def cors(self):
-        self.send_header("Access-Control-Allow-Origin", "*")
+        # Off unless asked for: the app reaches this server through the BYoB server, never from the
+        # browser, so no web page has any business calling it.
+        if not self.allow_origin:
+            return
+        self.send_header("Access-Control-Allow-Origin", self.allow_origin)
         self.send_header("Access-Control-Allow-Headers", "Content-Type, X-BYoB-Token, Range")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Expose-Headers",
@@ -433,11 +477,25 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
 
-    def token_ok(self, query):
+    def token_ok(self):
+        """The shared key, from the header only. It used to be allowed as a ?token= query parameter
+        too, which wrote the key into every tunnel and proxy log: header only now (2026-11-24)."""
         if not self.token:
             return True
-        given = self.headers.get("X-BYoB-Token") or (query.get("token", [""])[0] if query else "")
-        return given == self.token
+        given = self.headers.get("X-BYoB-Token") or ""
+        return hmac.compare_digest(given.encode("utf-8"), self.token.encode("utf-8"))
+
+    def guard(self, route):
+        """Key first, then the ceiling. Returns True when the request may go ahead."""
+        if not self.token_ok():
+            Handler.refused += 1
+            self.send_json({"error": "a key is required"}, status=401)
+            return False
+        if not self.limiter.allow(route):
+            log("rate limit hit on %s" % route)
+            self.send_json({"error": "too many requests"}, status=429)
+            return False
+        return True
 
     # --- routes ----------------------------------------------------------
     def do_OPTIONS(self):
@@ -450,6 +508,16 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         query = urllib.parse.parse_qs(parsed.query)
+
+        if path not in ("/health", "/", "/voices", "/tts"):
+            if not self.token_ok():
+                Handler.refused += 1
+                self.send_json({"error": "a key is required"}, status=401)
+                return
+            self.send_json({"error": "not found"}, status=404)
+            return
+        if not self.guard("/health" if path == "/" else path):
+            return
 
         if path in ("/health", "/"):
             self.send_json({
@@ -467,6 +535,9 @@ class Handler(BaseHTTPRequestHandler):
                 "prefetch_pending": self.renderer.pending(),
                 "uptime_seconds": round(time.time() - self.started_at, 1),
                 "needs_token": bool(self.token),
+                "refused_no_key": Handler.refused,
+                "refused_too_many": self.limiter.rejected,
+                "bound_to": HOST,
             })
             return
 
@@ -476,9 +547,6 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/tts":
-            if not self.token_ok(query):
-                self.send_json({"error": "bad token"}, status=403)
-                return
             text = (query.get("text", [""])[0] or "").strip()
             voice = query.get("voice", [DEFAULT_VOICE])[0]
             if not text:
@@ -556,10 +624,13 @@ class Handler(BaseHTTPRequestHandler):
         raw = self.rfile.read(min(length, 2 * 1024 * 1024)) if length else b""
 
         if path != "/prefetch":
+            if not self.token_ok():
+                Handler.refused += 1
+                self.send_json({"error": "a key is required"}, status=401)
+                return
             self.send_json({"error": "not found"}, status=404)
             return
-        if not self.token_ok(query):
-            self.send_json({"error": "bad token"}, status=403)
+        if not self.guard("/prefetch"):
             return
         try:
             body = json.loads(raw.decode("utf-8") or "{}")
@@ -580,11 +651,12 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=int(os.environ.get("KOKORO_PORT", DEFAULT_PORT)))
-    ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--data", default=os.environ.get("KOKORO_DATA", DEFAULT_DATA))
     ap.add_argument("--models", default=None)
     ap.add_argument("--cpu", action="store_true", help="skip the graphics card")
     ap.add_argument("--token", default=os.environ.get("KOKORO_TOKEN", ""))
+    ap.add_argument("--allow-origin", default="",
+                    help="a web page allowed to call this directly; off by default")
     args = ap.parse_args()
 
     models = args.models or os.path.join(args.data, "models")
@@ -597,13 +669,18 @@ def main():
     Handler.cache = cache
     Handler.renderer = Renderer(engine, cache)
     Handler.token = args.token
+    Handler.allow_origin = args.allow_origin
     Handler.started_at = time.time()
 
-    httpd = ThreadingHTTPServer((args.host, args.port), Handler)
+    # Always the loopback address, never a choice: the Cloudflare tunnel runs on this PC and is the
+    # only thing meant to reach the model, so nothing on the home network can find it either.
+    httpd = ThreadingHTTPServer((HOST, args.port), Handler)
     httpd.daemon_threads = True
-    log("listening on http://%s:%d  device=%s  cache=%.0f MB  token=%s"
-        % (args.host, args.port, engine.device, cache.size_bytes() / 1e6,
-           "yes" if args.token else "no"))
+    if not args.token:
+        log("WARNING: no key given, so anything that can reach this port can use the graphics card")
+    log("listening on http://%s:%d  device=%s  cache=%.0f MB  key=%s"
+        % (HOST, args.port, engine.device, cache.size_bytes() / 1e6,
+           "required" if args.token else "NOT REQUIRED"))
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
