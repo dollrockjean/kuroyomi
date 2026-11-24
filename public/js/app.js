@@ -302,15 +302,30 @@ const App = {
               };
             }
           };
+          // A home-screen app can run for days without ever loading a page, so ask on purpose:
+          // once now, and again each time he brings it back to the front.
+          reg.update().catch(() => {});
+          document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') reg.update().catch(() => {});
+          });
         }).catch((err) => {
           console.warn('[SW] ServiceWorker registration failed:', err);
         });
 
         let refreshing = false;
-        navigator.serviceWorker.addEventListener('controllerchange', () => {
-          if (!refreshing) {
-            refreshing = true;
-            App.reloadForUpdate();
+        const reloadOnce = () => {
+          if (refreshing) return;
+          refreshing = true;
+          App.reloadForUpdate();
+        };
+        navigator.serviceWorker.addEventListener('controllerchange', reloadOnce);
+        // The worker serves scripts from its cache first, so the app can be running code the server
+        // has already replaced. When the worker finds a changed file it says so, and we reload into
+        // it rather than leaving him with an old reader (2026-11-24).
+        navigator.serviceWorker.addEventListener('message', (event) => {
+          if (event.data && event.data.type === 'ASSET_UPDATED') {
+            console.log('[SW] Newer app file arrived, reloading:', event.data.url);
+            reloadOnce();
           }
         });
       }

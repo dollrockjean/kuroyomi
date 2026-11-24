@@ -361,23 +361,63 @@ class TestUIImprovements(unittest.TestCase):
         self.assertIn("record.extraMeta", sync_js)
 
     def test_service_worker_and_asset_version_bump(self):
-        """Verify service worker cache name and asset version query strings match current version."""
+        """The page and the service worker must ask for the same stamped assets, one stamp, one place.
+
+        A mismatch is the bug of 2026-11-24: the worker keeps serving its own cached copy while the
+        page asks for a different address, and the installed phone app runs code the server replaced.
+        """
         sw_path = os.path.join(server.PUBLIC_DIR, "sw.js")
         with open(sw_path, "r", encoding="utf-8") as f:
             sw_js = f.read()
 
-        self.assertIn("byob-v55", sw_js)
-        self.assertIn("v=55.0", sw_js)
+        stamp_match = re.search(r"const ASSET_VERSION = '([0-9.]+)'", sw_js)
+        self.assertIsNotNone(stamp_match, "sw.js must declare ASSET_VERSION in one place")
+        stamp = stamp_match.group(1)
+
+        self.assertIn("const CACHE_NAME = 'byob-v' + ASSET_VERSION", sw_js,
+                      "the cache name must follow ASSET_VERSION so a bump empties the old cache")
+        for asset in ("css/brutalist.css", "css/refresh.css", "js/app.js", "js/reader.js",
+                      "js/tts.js", "js/storage.js", "js/sync.js", "js/autoscroll.js"):
+            self.assertIn("'/%s?v=' + ASSET_VERSION" % asset, sw_js,
+                          "%s must be pre-cached under the shared stamp" % asset)
 
         index_path = os.path.join(server.PUBLIC_DIR, "index.html")
         with open(index_path, "r", encoding="utf-8") as f:
             index_html = f.read()
 
-        self.assertIn("brutalist.css?v=55.0", index_html)
-        self.assertIn("app.js?v=55.0", index_html)
-        self.assertIn("reader.js?v=55.0", index_html)
-        self.assertIn("tts.js?v=55.0", index_html)
-        self.assertIn("sync.js?v=55.0", index_html)
+        page_stamps = set(re.findall(r'/(?:js|css)/[a-z]+\.(?:js|css)\?v=([0-9.]+)', index_html))
+        self.assertEqual(
+            page_stamps, {stamp},
+            "index.html asks for %s but sw.js caches %s: bump both together or the installed app "
+            "keeps running the old file" % (sorted(page_stamps), stamp))
+        for asset in ("brutalist.css", "app.js", "reader.js", "tts.js", "sync.js"):
+            self.assertIn("%s?v=%s" % (asset, stamp), index_html)
+
+    def test_service_worker_heals_a_changed_asset_without_a_version_bump(self):
+        """A changed script must reach the phone even if nobody bumped ASSET_VERSION.
+
+        The host sends /js/ with a day-long browser cache and the worker serves it cache-first, so a
+        plain background re-fetch is answered by the stale copy. It must go to the network, and the
+        running page must be told when the bytes actually changed.
+        """
+        sw_path = os.path.join(server.PUBLIC_DIR, "sw.js")
+        with open(sw_path, "r", encoding="utf-8") as f:
+            sw_js = f.read()
+
+        self.assertIn("cache: 'reload'", sw_js,
+                      "the background re-check must bypass the browser cache")
+        self.assertIn("ASSET_UPDATED", sw_js,
+                      "the worker must tell open pages when a cached asset really changed")
+        self.assertIn("if (oldText === newText) return;", sw_js,
+                      "an unchanged file must not trigger a reload loop")
+
+        app_path = os.path.join(server.PUBLIC_DIR, "js", "app.js")
+        with open(app_path, "r", encoding="utf-8") as f:
+            app_js = f.read()
+
+        self.assertIn("ASSET_UPDATED", app_js, "the app must listen for the worker's notice")
+        self.assertIn("reg.update()", app_js,
+                      "a home-screen app never navigates, so it must ask for updates itself")
 
     def test_user_paragraph_normalization_and_synthesis(self):
         """Verify complex RPG paragraph with evolution arrows, ratios, and double colons is normalized and synthesized cleanly."""

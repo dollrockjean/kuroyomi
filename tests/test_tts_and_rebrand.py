@@ -47,8 +47,10 @@ class TestTTSAndRebrand(unittest.TestCase):
         with open(sw_path, "r", encoding="utf-8") as f:
             sw_content = f.read()
 
-        self.assertTrue(re.search(r"CACHE_NAME = 'byob-v\d+'", sw_content) is not None)
-        self.assertTrue(re.search(r"v=\d+\.0", sw_content) is not None)
+        # The cache name follows ASSET_VERSION ('byob-v' + ASSET_VERSION), so a bump empties the old one
+        self.assertTrue(re.search(r"const ASSET_VERSION = '[\d.]+'", sw_content) is not None)
+        self.assertTrue(re.search(r"CACHE_NAME = 'byob-v' \+ ASSET_VERSION", sw_content) is not None)
+        self.assertTrue(re.search(r"'/js/tts\.js\?v=' \+ ASSET_VERSION", sw_content) is not None)
 
     def test_tts_js_engine_configuration(self):
         tts_path = os.path.join(server.PUBLIC_DIR, "js", "tts.js")

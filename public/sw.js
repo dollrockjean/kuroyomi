@@ -1,18 +1,26 @@
 // BYoB Service Worker v55
 // High-performance offline caching with instant WebKit/Safari PWA launch
-const CACHE_NAME = 'byob-v55';
+//
+// ASSET_VERSION is the address every cached stylesheet and script is asked for by, here and in
+// index.html. Keep the two the same. Bump it whenever one of those files changes: the installed
+// app serves /css/ and /js/ from this cache before the network, so a changed file living at an
+// unchanged address keeps being read from the old copy. (2026-11-24: a fixed tts.js sat unused
+// on the phone for exactly this reason, and the phone kept saying the PC voice was unreachable.)
+// Forgetting the bump is no longer fatal - see the revalidate below - but it costs a reload.
+const ASSET_VERSION = '55.1';
+const CACHE_NAME = 'byob-v' + ASSET_VERSION;
 
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
-  '/css/brutalist.css?v=55.0',
-  '/css/refresh.css?v=55.0',
-  '/js/app.js?v=55.0',
-  '/js/reader.js?v=55.0',
-  '/js/tts.js?v=55.0',
-  '/js/storage.js?v=55.0',
-  '/js/sync.js?v=55.0',
-  '/js/autoscroll.js?v=55.0',
+  '/css/brutalist.css?v=' + ASSET_VERSION,
+  '/css/refresh.css?v=' + ASSET_VERSION,
+  '/js/app.js?v=' + ASSET_VERSION,
+  '/js/reader.js?v=' + ASSET_VERSION,
+  '/js/tts.js?v=' + ASSET_VERSION,
+  '/js/storage.js?v=' + ASSET_VERSION,
+  '/js/sync.js?v=' + ASSET_VERSION,
+  '/js/autoscroll.js?v=' + ASSET_VERSION,
   '/manifest.json',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
@@ -51,6 +59,27 @@ self.addEventListener('activate', (event) => {
     }).then(() => self.clients.claim())
   );
 });
+
+// Re-reads one cached stylesheet or script from the network, ignoring the browser's own cache, and
+// only disturbs the page when the bytes really changed: then the running app is told, so it reloads
+// into the new code instead of waiting for someone to notice.
+async function revalidateAsset(request, cachedClone) {
+  try {
+    const fresh = await fetch(request, { cache: 'reload' });
+    if (!fresh || fresh.status !== 200) return;
+    const copy = fresh.clone();
+    const [oldText, newText] = await Promise.all([cachedClone.text(), fresh.text()]);
+    if (oldText === newText) return;
+    const cache = await caches.open(CACHE_NAME);
+    await cache.put(request, copy);
+    const clients = await self.clients.matchAll({ type: 'window' });
+    for (const client of clients) {
+      client.postMessage({ type: 'ASSET_UPDATED', url: request.url });
+    }
+  } catch (err) {
+    // Offline or a dead zone: keep the cached copy, try again next launch.
+  }
+}
 
 // Fetch routing
 self.addEventListener('fetch', (event) => {
@@ -109,12 +138,13 @@ self.addEventListener('fetch', (event) => {
         if (cachedResponse) {
           // Serve from cache immediately
           if (navigator.onLine) {
-            // Background revalidate if online
-            fetch(request).then((networkResponse) => {
-              if (networkResponse && networkResponse.status === 200) {
-                caches.open(CACHE_NAME).then((cache) => cache.put(request, networkResponse));
-              }
-            }).catch(() => {});
+            // Background revalidate if online. `cache: 'reload'` is what makes this worth doing:
+            // the host sends these files with a day-long browser cache, so a plain fetch here is
+            // answered by that cache with the very copy we already have, and a new file under the
+            // same address could not arrive for 24 hours no matter how often the app was restarted.
+            // Going straight to the network means a missed ASSET_VERSION bump costs one reload
+            // instead of a day of the old app (2026-11-24).
+            revalidateAsset(request, cachedResponse.clone());
           }
           return cachedResponse;
         }
