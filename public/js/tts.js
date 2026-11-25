@@ -1111,32 +1111,66 @@ const TTSEngine = {
     window.addEventListener('resize', () => this.applySavedCornerPosition());
   },
 
-  populateVoiceSelect() {
-    const s1 = document.getElementById('ttsVoiceSelect');
-    const s2 = document.getElementById('audiobookModalVoiceSelect');
-    const s3 = document.getElementById('audiobookCogVoiceSelect');
-    const selects = [s1, s2, s3].filter(Boolean);
-    if (!selects.length) return;
+  // Which list the voice pickers show: Kokoro's narrators whenever Kokoro is the chosen engine (or
+  // Auto and the PC is up), Edge's voices otherwise. One picker, always the engine that will speak.
+  voicePickerEngine() {
+    if (this.engineMode === 'kokoro') return 'kokoro';
+    if (this.engineMode === 'auto' && this.kokoroUsable()) return 'kokoro';
+    return 'edge';
+  },
 
-    const saved = window.ReaderSettings?.tts_voice || this.selectedVoice;
-    this.selectedVoice = this.englishOnlyVoice(saved);
+  voicePickerList(engine) {
+    if (engine === 'kokoro') {
+      const list = (this.kokoroVoices && this.kokoroVoices.length) ? this.kokoroVoices
+        : this.KOKORO_VOICE_LIST.filter(v => v.id);
+      return list.map(v => ({ id: v.id, label: `${v.name} (${v.desc})` }));
+    }
+    return this.voices.map(v => ({ id: v.id, label: `${v.name} (${v.desc})` }));
+  },
 
-    selects.forEach(sel => {
-      sel.innerHTML = '';
-      this.voices.forEach(v => {
-        const opt = document.createElement('option');
-        opt.value = v.id;
-        opt.textContent = `${v.name} (${v.desc})`;
-        if (v.id === this.selectedVoice) {
-          opt.selected = true;
-        }
-        sel.appendChild(opt);
-      });
+  voicePickerValue(engine) {
+    return engine === 'kokoro' ? this.kokoroVoiceFor(this.selectedVoice) : this.selectedVoice;
+  },
 
+  voicePickerSelects() {
+    return ['ttsVoiceSelect', 'audiobookModalVoiceSelect', 'audiobookCogVoiceSelect']
+      .map(id => document.getElementById(id)).filter(Boolean);
+  },
+
+  // Rebuilds the pickers only when the engine (or Kokoro's list) changed, so an open dropdown is not
+  // yanked away by a routine engine check; otherwise it just moves the selection.
+  syncVoicePickers(force) {
+    const engine = this.voicePickerEngine();
+    const list = this.voicePickerList(engine);
+    const sig = engine + ':' + list.map(v => v.id).join(',');
+    const value = this.voicePickerValue(engine);
+    this.voicePickerSelects().forEach(sel => {
+      if (force || sel.dataset.voiceSig !== sig) {
+        sel.innerHTML = '';
+        list.forEach(v => {
+          const opt = document.createElement('option');
+          opt.value = v.id;
+          opt.textContent = v.label;
+          sel.appendChild(opt);
+        });
+        sel.dataset.voiceSig = sig;
+        sel.dataset.engine = engine;
+        sel.setAttribute('aria-label', engine === 'kokoro' ? 'Kokoro narrator' : 'Edge voice');
+      }
+      if (sel.value !== value) sel.value = value;
       sel.onchange = (e) => {
-        this.setVoice(e.target.value);
+        if (sel.dataset.engine === 'kokoro') this.setKokoroVoice(e.target.value);
+        else this.setVoice(e.target.value);
       };
     });
+    document.querySelectorAll('[data-voice-label]').forEach(el => {
+      el.textContent = engine === 'kokoro' ? 'Kokoro narrator (your PC)' : 'Edge voice';
+    });
+  },
+
+  populateVoiceSelect() {
+    this.selectedVoice = this.englishOnlyVoice(window.ReaderSettings?.tts_voice || this.selectedVoice);
+    this.syncVoicePickers(true);
   },
 
   // The narrators Kokoro ships. Kept here so the picker works even before the PC has answered.
@@ -1160,6 +1194,7 @@ const TTSEngine = {
   ],
 
   populateKokoroVoiceSelect() {
+    // The narrator now lives in the main voice pickers (syncVoicePickers); these ids no longer exist.
     const selects = [document.getElementById('kokoroVoiceSelect'),
                      document.getElementById('audiobookCogKokoroVoiceSelect')].filter(Boolean);
     selects.forEach(sel => {
@@ -1187,12 +1222,8 @@ const TTSEngine = {
         window.SyncService.syncSettings(window.ReaderSettings);
       }
     }
-    const s1 = document.getElementById('ttsVoiceSelect');
-    if (s1 && s1.value !== voiceId) s1.value = voiceId;
-    const s2 = document.getElementById('audiobookModalVoiceSelect');
-    if (s2 && s2.value !== voiceId) s2.value = voiceId;
-    const s3 = document.getElementById('audiobookCogVoiceSelect');
-    if (s3 && s3.value !== voiceId) s3.value = voiceId;
+    this._preloadedChapterId = null;
+    this.syncVoicePickers();
 
     if (this.isPlaying && !this.isPaused) {
       // Immediately stop existing playback so old voice stops instantly without collision
@@ -1322,16 +1353,35 @@ const TTSEngine = {
     this._engineRetries = 0;
     // Picking Edge stops the search; picking Kokoro or Auto starts it again from the quick steps.
     this.scheduleEngineRetry();
-    this.probeEngines().then(() => this.updateEngineUI());
+    this._preloadedChapterId = null;
+    const before = this.engineForNextFetch();
     this.updateEngineUI();
     this.logEvent(`voice engine set to ${mode}`);
+    this.restartCurrentParagraph();
+    this.probeEngines().then(() => {
+      // The PC answered after the switch: if that changes who speaks, switch now, not next paragraph
+      if (this.engineForNextFetch() !== before) this.restartCurrentParagraph();
+    });
   },
 
   setKokoroVoice(voiceId) {
+    if ((voiceId || '') === this.kokoroVoice) { this.syncVoicePickers(); return; }
     this.kokoroVoice = voiceId || '';
     try { localStorage.setItem('byob_kokoro_voice', this.kokoroVoice); } catch (e) {}
     this.persistEngineSetting('kokoro_voice', this.kokoroVoice);
+    this._preloadedChapterId = null;
     this.updateEngineUI();
+    this.logEvent(`Kokoro narrator set to ${this.kokoroVoice || 'match'}`);
+    if (this.engineForNextFetch() === 'kokoro') this.restartCurrentParagraph();
+  },
+
+  // A voice or engine change is heard right away: the paragraph playing starts again in the new voice
+  // (the buffered audio is keyed by engine and voice, so nothing old is replayed).
+  restartCurrentParagraph() {
+    if (!this.isPlaying || this.isPaused) return;
+    try { this.audioElement.pause(); } catch (e) {}
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+    this.speakParagraph(this.currentIndex);
   },
 
   persistEngineSetting(key, value) {
@@ -1448,6 +1498,7 @@ const TTSEngine = {
             rtf: k.realtime_factor || 0
           };
           if (wasDown) this._kokoroPrefetched.clear();
+          if (wasDown) this.syncVoicePickers();
           this.engineProbeReason = 'server says your PC is up (' + (k.device || 'unknown') + ')';
         } else {
           this.kokoro = null;
@@ -1629,13 +1680,7 @@ const TTSEngine = {
         el.textContent = 'Kokoro runs on your PC. It starts by itself when the PC is on.';
       }
     });
-    // Narrator pickers only matter when Kokoro can be used (#kokoroVoiceRow plus any [data-kokoro-row])
-    const kokoroRows = new Set(document.querySelectorAll('[data-kokoro-row]'));
-    const kokoroRow = document.getElementById('kokoroVoiceRow');
-    if (kokoroRow) kokoroRows.add(kokoroRow);
-    kokoroRows.forEach(row => {
-      row.style.display = (this.engineMode === 'edge') ? 'none' : (row.getAttribute('data-kokoro-display') || '');
-    });
+    this.syncVoicePickers();
     const pitchNote = document.getElementById('ttsPitchKokoroNote');
     if (pitchNote) pitchNote.style.display = (this.engineMode === 'edge') ? 'none' : '';
   },
@@ -1768,8 +1813,7 @@ const TTSEngine = {
   },
 
   async testVoice() {
-    const select = document.getElementById('ttsVoiceSelect');
-    const voiceId = select ? select.value : this.selectedVoice;
+    const voiceId = this.selectedVoice;
     const testBtn = document.getElementById('testVoiceBtn');
     const originalText = testBtn ? testBtn.textContent : 'Test Voice';
     
@@ -2792,10 +2836,7 @@ const TTSEngine = {
       modal.style.display = 'block';
       backdrop.style.display = 'block';
       this.updatePitchUI();
-      const cogVoice = document.getElementById('audiobookCogVoiceSelect');
-      if (cogVoice && cogVoice.value !== this.selectedVoice) {
-        cogVoice.value = this.selectedVoice;
-      }
+      this.syncVoicePickers();
       this.updateSleepModalUI();
     }
   },
