@@ -1155,7 +1155,10 @@ const Reader = {
     for (const el of div.querySelectorAll('.reader-paragraph, .reader-heading')) {
       el.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
       const text = el.textContent.trim();
-      if (text) texts.push(text);
+      // Read aloud skips a line with no words ("…"), so the chapter hand-off must too
+      const speakable = window.TTSEngine && typeof window.TTSEngine.isSpeakable === 'function'
+        ? window.TTSEngine.isSpeakable(text) : !!text;
+      if (speakable) texts.push(text);
       if (texts.length >= limit) break;
     }
     return texts;

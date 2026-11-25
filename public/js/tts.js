@@ -84,6 +84,22 @@ const TTSEngine = {
   BUFFER_CHARS_PER_SECOND: 15,      // speech at 1.0x, used when a paragraph's real length is not known yet
   AUDIO_BYTES_KEEP: 160,
   _silenceUri: null,
+  // No single line may hold playback forever, whatever the engine. A line whose audio is not moving
+  // (a fetch or a play() that never settles) gets this long; device speech gets its spoken length
+  // plus some slack, because iOS can leave speechSynthesis.speaking true with nothing coming out.
+  LINE_STALL_MS: 75000,
+  DEVICE_LINE_SLACK_MS: 10000,
+  DEVICE_SPEAK_AFTER_CANCEL_MS: 150, // iOS drops an utterance spoken in the same moment as cancel()
+  _lineIndex: -1,
+  _lineStallMs: 0,
+  _lineDeviceMs: 0,
+  _lineDeviceBudgetMs: 0,
+  _lineTickAt: 0,
+  _lineAudioTime: -1,
+  _deviceVoices: [],
+  _speechPrimed: false,
+  _primingUntil: 0,
+  _lastCancelAt: 0,
 
   // Event handlers
   _onEndedHandler: null,
@@ -180,6 +196,113 @@ const TTSEngine = {
     return clean;
   },
 
+  // True when a line has something to say. A line that is only "…", dashes, stars or other
+  // punctuation normalizes to nothing: sent to a voice it returns no audio (Edge) or an utterance
+  // that never ends (iOS device voice), and read aloud froze there (2026-11-25, build 55.6).
+  isSpeakable(text) {
+    if (!text) return false;
+    return /[\p{L}\p{N}]/u.test(this.normalizeForSpeech(text));
+  },
+
+  // Starts timing a line. Only a move to a different line resets it, so the watchdog restarting
+  // the same stuck line over and over cannot keep it alive.
+  markLineStart(index) {
+    if (index === this._lineIndex) return;
+    this._lineIndex = index;
+    this._lineStallMs = 0;
+    this._lineDeviceMs = 0;
+    this._lineTickAt = Date.now();
+    this._lineAudioTime = -1;
+  },
+
+  // Called from the watchdog tick. Returns true when the current line has been stuck past its budget.
+  lineTimedOut() {
+    const now = Date.now();
+    const step = Math.min(5000, Math.max(0, now - (this._lineTickAt || now)));
+    this._lineTickAt = now;
+    if (!this.isPlaying || this.isPaused || this._advancing || this._lineIndex !== this.currentIndex) return false;
+    if (this.isUsingDeviceVoice) {
+      this._lineDeviceMs += step;
+      return this._lineDeviceBudgetMs > 0 && this._lineDeviceMs >= this._lineDeviceBudgetMs;
+    }
+    const a = this.audioElement;
+    const t = a ? (a.currentTime || 0) : 0;
+    const moving = a && !a.paused && !a.loop && !a.ended && t !== this._lineAudioTime;
+    this._lineAudioTime = t;
+    // Waiting on a fetch (silent loop held), or an element that says it plays but never moves
+    const stuck = this.isLoading || (a && !a.paused && !a.ended && (a.loop || !moving));
+    if (stuck) this._lineStallMs += step;
+    return this._lineStallMs >= this.LINE_STALL_MS;
+  },
+
+  // Gives up on the current line and goes on to the next one
+  skipStuckLine() {
+    const index = this.currentIndex;
+    this.logEvent(`line ${index} timed out (${this.isUsingDeviceVoice ? 'device voice' : this.engineActive}), skipping it`);
+    if (this.deviceUtterance) {
+      this.deviceUtterance.onend = null;
+      this.deviceUtterance.onerror = null;
+    }
+    this.cancelDeviceSpeech();
+    this._lineIndex = -1;
+    this.isLoading = false;
+    this._lastProgressAt = Date.now();
+    this.speakParagraph(index + 1);
+  },
+
+  cancelDeviceSpeech() {
+    if (!('speechSynthesis' in window)) return;
+    try {
+      window.speechSynthesis.cancel();
+      this._lastCancelAt = Date.now();
+    } catch (e) {}
+  },
+
+  // The phone's own voices, kept up to date: iOS (and Chrome) fill the list late, through voiceschanged
+  loadDeviceVoices() {
+    if (!('speechSynthesis' in window)) return [];
+    try {
+      const list = window.speechSynthesis.getVoices() || [];
+      if (list.length) this._deviceVoices = list;
+    } catch (e) {}
+    return this._deviceVoices;
+  },
+
+  // The best English voice the phone has, or null to let the phone pick from lang alone
+  pickDeviceVoice() {
+    const voices = this.loadDeviceVoices();
+    if (!voices || !voices.length) return null;
+    const norm = (v) => (v.lang || '').replace('_', '-').toLowerCase();
+    const enUS = voices.filter(v => norm(v).startsWith('en-us'));
+    const anyEn = voices.filter(v => norm(v).startsWith('en'));
+    const pool = enUS.length ? enUS : anyEn;
+    if (!pool.length) return null;
+    // An on-device voice first: a network voice can fail silently with no connection
+    const local = pool.filter(v => v.localService !== false);
+    const pick = local.length ? local : pool;
+    const named = /Siri|Samantha|Daniel|Karen|Alex|Ava|Evan|Nathan|Zoe/;
+    return pick.find(v => named.test(v.name || '')) || pick[0];
+  },
+
+  // iOS only lets a page speak once speechSynthesis.speak() has run inside a tap. Read aloud falls
+  // back to the device voice long after the tap (after a fetch failed), so without this the phone's
+  // voice never made a sound. Speaks one silent, empty-ish utterance from the tap itself.
+  primeDeviceSpeech() {
+    if (this._speechPrimed || !('speechSynthesis' in window)) return;
+    try {
+      const synth = window.speechSynthesis;
+      const u = new SpeechSynthesisUtterance(' ');
+      u.volume = 0;
+      u.rate = 2;
+      u.lang = 'en-US';
+      this._primingUntil = Date.now() + 1500;
+      if (synth.paused) synth.resume();
+      synth.speak(u);
+      this._speechPrimed = true;
+      this.loadDeviceVoices();
+    } catch (e) {}
+  },
+
   // Reads an MP3 (what the cloud voice returns) frame by frame. Returns the bare audio frames (no ID3 tags, no
   // Xing/Info header, which would make a joined file look as long as its first part) and the exact duration, or null
   // when it is not a plain MPEG Layer III stream (that paragraph then simply plays on its own).
@@ -253,7 +376,7 @@ const TTSEngine = {
     for (let i = startIndex; i < this.paragraphs.length && parts.length < 12 && t < 300; i++) {
       const el = this.paragraphs[i];
       const text = el ? el.innerText.trim() : '';
-      if (!text) continue;
+      if (!this.isSpeakable(text)) continue;
       const info = this.audioBytes.get(this.cacheKeyFor(text));
       if (!info || (rate && info.rate !== rate)) break;
       rate = info.rate;
@@ -304,6 +427,7 @@ const TTSEngine = {
 
   enterChainParagraph(index) {
     this.currentIndex = index;
+    this.markLineStart(index);
     this._lastProgressAt = Date.now();
     const el = this.paragraphs[index];
     this.clearHighlight();
@@ -383,7 +507,7 @@ const TTSEngine = {
     this.isLoading = false;
     this.releaseAudioSession();
     if ('speechSynthesis' in window) {
-      try { window.speechSynthesis.cancel(); } catch (e) {}
+      this.cancelDeviceSpeech();
     }
     this.updateAudioUI();
     if (window.App && typeof window.App.showToast === 'function') {
@@ -405,6 +529,10 @@ const TTSEngine = {
   },
 
   checkHealth() {
+    if (this.lineTimedOut()) {
+      this.skipStuckLine();
+      return;
+    }
     if (!this.isPlaying || this.isPaused) {
       this._lastProgressAt = Date.now();
       return;
@@ -516,6 +644,7 @@ const TTSEngine = {
   // be dead (nothing actually plays), rebuild the current paragraph from scratch
   mediaPlay() {
     this.logEvent('car/lock-screen play');
+    this.primeDeviceSpeech();
     clearTimeout(this._interruptTimer);
     this._interruptTries = 0;
     if (!this.isPlaying) { this.start(); return; }
@@ -752,6 +881,27 @@ const TTSEngine = {
     };
     window.addEventListener('touchstart', primeAudio, { passive: true, once: true });
     window.addEventListener('click', primeAudio, { passive: true, once: true });
+    // touchstart does not count as a tap for speech on iOS; touchend and click do
+    const primeSpeech = () => {
+      this.primeDeviceSpeech();
+      window.removeEventListener('touchend', primeSpeech);
+      window.removeEventListener('click', primeSpeech);
+    };
+    window.addEventListener('touchend', primeSpeech, { passive: true });
+    window.addEventListener('click', primeSpeech, { passive: true });
+
+    // The phone's voice list arrives late (voiceschanged); keep it fresh for the device voice
+    if ('speechSynthesis' in window) {
+      this.loadDeviceVoices();
+      try {
+        const synth = window.speechSynthesis;
+        if (typeof synth.addEventListener === 'function') {
+          synth.addEventListener('voiceschanged', () => this.loadDeviceVoices());
+        } else {
+          synth.onvoiceschanged = () => this.loadDeviceVoices();
+        }
+      } catch (e) {}
+    }
 
     // Handle tab visibility changes: restore smooth scrolling & wake suspended audio
     document.addEventListener('visibilitychange', () => {
@@ -1047,7 +1197,7 @@ const TTSEngine = {
       // Immediately stop existing playback so old voice stops instantly without collision
       this.audioElement.pause();
       if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
+        this.cancelDeviceSpeech();
       }
       this.speakParagraph(this.currentIndex);
     }
@@ -1678,6 +1828,9 @@ const TTSEngine = {
       } catch (e) {}
     }
     this.sleepModeExpired = false;
+    // This runs inside his tap: unlock the phone's own voice now, for any fallback later
+    this.primeDeviceSpeech();
+    this._lineIndex = -1;
 
     // Always prioritize the main voice selected
     this.setDeviceVoiceMode(false);
@@ -1745,42 +1898,52 @@ const TTSEngine = {
   },
 
   speakWithDeviceVoice(text, index) {
-    if (!('speechSynthesis' in window)) {
+    const sessionId = this.playbackSessionId;
+    // Clean brackets, evolution arrows, double colons, and stat fractions for smooth device voice pronunciation
+    // Uses normalizeForSpeech to preserve words like <<Example>> or <Herald> without deleting them
+    const cleanDeviceText = this.normalizeForSpeech(text);
+    if (!this.isSpeakable(cleanDeviceText)) {
+      // An empty utterance on iOS never fires onend, and playback sat on it forever
+      this.speakParagraph(index + 1);
+      return;
+    }
+    if (!('speechSynthesis' in window) || typeof SpeechSynthesisUtterance === 'undefined') {
       console.warn('SpeechSynthesis not supported on this device.');
       setTimeout(() => this.speakParagraph(index + 1), 1000);
       return;
     }
 
-    window.speechSynthesis.cancel();
-    const sessionId = this.playbackSessionId;
-
-    // Clean brackets, evolution arrows, double colons, and stat fractions for smooth device voice pronunciation
-    // Uses normalizeForSpeech to preserve words like <<Example>> or <Herald> without deleting them
-    const cleanDeviceText = this.normalizeForSpeech(text);
+    const synth = window.speechSynthesis;
+    this.markLineStart(index);
+    this._lineDeviceMs = 0;
+    const seconds = Math.max(1, cleanDeviceText.length / this.BUFFER_CHARS_PER_SECOND) / Math.max(0.5, this.rate || 1);
+    this._lineDeviceBudgetMs = Math.round(seconds * 2500) + this.DEVICE_LINE_SLACK_MS;
+    // The audio element must let go of the audio session before the phone's voice can be heard
+    try { if (this.audioElement && !this.audioElement.paused) this.releaseAudioSession(); } catch (e) {}
+    if (synth.speaking || synth.pending) this.cancelDeviceSpeech();
 
     const utterance = new SpeechSynthesisUtterance(cleanDeviceText);
     utterance.rate = Math.min(2.0, Math.max(0.5, this.rate));
     utterance.pitch = Math.max(0.5, Math.min(1.5, 1.0 + (this.pitch / 40.0)));
+    utterance.volume = 1;
     // English, always. Without this the system picks a language from the text and reads invented
     // names and places with a French (or German, or Spanish) accent.
     utterance.lang = 'en-US';
 
-    // Choose best English system voice (e.g. Siri, Samantha, Daniel, etc.)
-    const voices = window.speechSynthesis.getVoices();
-    if (voices && voices.length > 0) {
-      const enUS = voices.filter(v => v.lang && v.lang.replace('_', '-').toLowerCase().startsWith('en-us'));
-      const anyEn = voices.filter(v => v.lang && v.lang.toLowerCase().startsWith('en'));
-      const pool = enUS.length ? enUS : anyEn;
-      const best = pool.find(v => (
-        v.name.includes('Siri') || v.name.includes('Daniel') || v.name.includes('Samantha') || v.name.includes('Karen') || v.name.includes('Google')
-      )) || pool[0] || voices[0];
-      if (best) {
-        utterance.voice = best;
-        if (best.lang) utterance.lang = best.lang;
-      }
+    // Choose best English system voice (e.g. Samantha, Daniel). The list can still be empty on iOS
+    // when the first line is spoken; then lang alone picks the phone's default English voice.
+    const best = this.pickDeviceVoice();
+    if (best) {
+      utterance.voice = best;
+      if (best.lang) utterance.lang = best.lang.replace('_', '-');
     }
 
+    utterance.onstart = () => {
+      this._lastProgressAt = Date.now();
+    };
+
     utterance.onboundary = (event) => {
+      this._lastProgressAt = Date.now();
       if (event.name === 'word' || event.charIndex !== undefined) {
         const charIdx = event.charIndex;
         if (this.currentWordList && this.currentWordList.length > 0) {
@@ -1804,18 +1967,43 @@ const TTSEngine = {
     };
 
     utterance.onerror = (e) => {
-      console.warn('Device speech synthesis error:', e);
-      if (this.playbackSessionId === sessionId && this.isPlaying && !this.isPaused) {
-        setTimeout(() => {
-          if (this.playbackSessionId === sessionId && this.isPlaying && !this.isPaused) {
-            this.speakParagraph(index + 1);
-          }
-        }, 600);
+      const why = e && e.error ? e.error : 'error';
+      console.warn('Device speech synthesis error:', why);
+      if (this.playbackSessionId !== sessionId || !this.isPlaying || this.isPaused) return;
+      // Our own cancel() reports as an error on some phones: it is not a failure of this line
+      if (why === 'canceled' || why === 'interrupted') return;
+      this.logEvent(`device voice error (${why}) at paragraph ${index}`);
+      if (why === 'not-allowed') {
+        // iOS wants a tap first. Skipping on would race silently through the whole chapter.
+        this._speechPrimed = false;
+        this.pauseWithReason('The phone needs a tap before its own voice can speak.');
+        return;
       }
+      setTimeout(() => {
+        if (this.playbackSessionId === sessionId && this.isPlaying && !this.isPaused) {
+          this.speakParagraph(index + 1);
+        }
+      }, 600);
     };
 
     this.deviceUtterance = utterance;
-    window.speechSynthesis.speak(utterance);
+    const go = () => {
+      if (this.playbackSessionId !== sessionId || !this.isPlaying || this.isPaused) return;
+      try {
+        // iOS can leave the synthesizer paused after an interruption, and then nothing speaks
+        if (synth.paused) synth.resume();
+        synth.speak(utterance);
+        this.logEvent(`device voice speaking paragraph ${index}${best ? ' (' + best.name + ')' : ''}`);
+      } catch (err) {
+        this.logEvent(`device voice speak() threw (${err && err.name}) at paragraph ${index}`);
+      }
+    };
+    const sinceCancel = Date.now() - (this._lastCancelAt || 0);
+    if (sinceCancel < this.DEVICE_SPEAK_AFTER_CANCEL_MS) {
+      setTimeout(go, this.DEVICE_SPEAK_AFTER_CANCEL_MS - sinceCancel);
+    } else {
+      go();
+    }
     this.updateAudioUI();
   },
 
@@ -1829,7 +2017,7 @@ const TTSEngine = {
           this.deviceUtterance.onend = null;
           this.deviceUtterance.onerror = null;
         }
-        window.speechSynthesis.cancel();
+        this.cancelDeviceSpeech();
       }
       this.updateAudioUI();
     }
@@ -1845,6 +2033,7 @@ const TTSEngine = {
       } catch (e) {}
     }
     this.sleepModeExpired = false;
+    this.primeDeviceSpeech();
 
     if (this.isPlaying && this.isPaused) {
       this.isPaused = false;
@@ -1913,7 +2102,7 @@ const TTSEngine = {
         this.deviceUtterance.onend = null;
         this.deviceUtterance.onerror = null;
       }
-      window.speechSynthesis.cancel();
+      this.cancelDeviceSpeech();
     }
     this.deviceUtterance = null;
     this.setDeviceVoiceMode(false);
@@ -1971,7 +2160,7 @@ const TTSEngine = {
           this.deviceUtterance.onend = null;
           this.deviceUtterance.onerror = null;
         }
-        window.speechSynthesis.cancel();
+        this.cancelDeviceSpeech();
       }
 
       this.clearHighlight();
@@ -2029,8 +2218,10 @@ const TTSEngine = {
         this.deviceUtterance.onerror = null;
       }
       const synth = window.speechSynthesis;
-      if (this.deviceUtterance || this.isUsingDeviceVoice || synth.speaking || synth.pending) {
-        synth.cancel();
+      // Leave the silent primer from the play tap alone: cancelling it can undo the unlock
+      const priming = Date.now() < this._primingUntil;
+      if (this.deviceUtterance || this.isUsingDeviceVoice || (!priming && (synth.speaking || synth.pending))) {
+        this.cancelDeviceSpeech();
       }
     }
     this.deviceUtterance = null;
@@ -2058,12 +2249,16 @@ const TTSEngine = {
     }
 
     this.currentIndex = index;
+    this.markLineStart(index);
     this._lastProgressAt = Date.now();
     const el = this.paragraphs[index];
     if (!el) return;
 
     const textToSpeak = el.innerText.trim();
-    if (!textToSpeak) {
+    if (!this.isSpeakable(textToSpeak)) {
+      // Nothing to say ("…", a row of dashes, a blank line): never send it to a voice, go straight on.
+      // Straight on, in this same task, so the phone keeps its audio session in the background.
+      if (textToSpeak) this.logEvent(`paragraph ${index} has no words, skipped`);
       this.speakParagraph(index + 1);
       return;
     }
@@ -2226,7 +2421,7 @@ const TTSEngine = {
       if (offset > count && bufferedSeconds >= targetAudioSeconds) break;
       const el = this.paragraphs[idx];
       const text = el ? el.innerText.trim() : '';
-      if (!text) continue;
+      if (!this.isSpeakable(text)) continue;
       const cacheKey = this.cacheKeyFor(text, currentVoice, currentPitch);
       bufferedSeconds += this.estimateParagraphSeconds(text, cacheKey);
       if (!this.blobCache.has(cacheKey) && !this.pendingFetches.has(cacheKey)) needed.push(text);
