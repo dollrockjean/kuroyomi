@@ -8,7 +8,7 @@ import cgi
 import time
 import uuid
 BOOT_ID = uuid.uuid4().hex[:12]
-APP_VERSION = "v55"
+APP_VERSION = "v56"
 import urllib.parse
 import mimetypes
 import hashlib

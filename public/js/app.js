@@ -1577,17 +1577,9 @@ const App = {
     }
 
     // 6. TTS Voice
-    if (cur.tts_voice) {
-      TTSEngine.selectedVoice = cur.tts_voice;
-      const voiceSelect = document.getElementById('ttsVoiceSelect');
-      if (voiceSelect && voiceSelect.value !== cur.tts_voice) {
-        voiceSelect.value = cur.tts_voice;
-      }
-      const modalVoice = document.getElementById('audiobookModalVoiceSelect');
-      if (modalVoice && modalVoice.value !== cur.tts_voice) {
-        modalVoice.value = cur.tts_voice;
-      }
-    }
+    if (cur.tts_voice) TTSEngine.selectedVoice = cur.tts_voice;
+    if (typeof cur.kokoro_voice === 'string') TTSEngine.kokoroVoice = cur.kokoro_voice;
+    if (typeof TTSEngine.syncVoicePickers === 'function') TTSEngine.syncVoicePickers();
     if (typeof TTSEngine.updateAudioUI === 'function') {
       TTSEngine.updateAudioUI();
     }
