@@ -161,6 +161,50 @@ class AnnouncingTests(unittest.TestCase):
         status, res = self.announce(sync_key=SYNC_KEY)
         self.assertTrue(res.get("registered"))
 
+    def test_owning_the_account_is_enough_even_when_a_key_is_set(self):
+        """Nothing has to be configured by hand, and a mistyped KOKORO_KEY cannot lock the PC out."""
+        server.KOKORO_KEY = "shared-key"
+        status, res = self.announce(sync_key=SYNC_KEY)
+        self.assertTrue(res.get("registered"), (status, res))
+        self.assertEqual(server.kokoro_get(self.user_id)["url"], TUNNEL)
+
+    def test_an_announcement_with_no_key_anywhere_is_refused(self):
+        """A PC the server cannot unlock would show up as a voice that answers 401 to everything."""
+        server.KOKORO_KEY = ""
+        body = dict(user_id=self.user_id, url=TUNNEL, sync_key=SYNC_KEY, device="cuda")
+        h = handler_for("/api/tts/engine", "POST", json.dumps(body).encode("utf-8"))
+        h.do_POST()
+        self.assertEqual(h.sent_status, 401)
+        self.assertIsNone(server.kokoro_get(self.user_id))
+
+
+class RelayKeyTests(unittest.TestCase):
+    """Which key this server presents to the PC. The PC announces its own, so Rocco never has to
+    put one in Render's dashboard; KOKORO_KEY only fills in when an announcement carries none."""
+
+    def setUp(self):
+        self.old_key = server.KOKORO_KEY
+
+    def tearDown(self):
+        server.KOKORO_KEY = self.old_key
+
+    def test_the_announced_key_is_used(self):
+        server.KOKORO_KEY = ""
+        self.assertEqual(server.kokoro_request_key({"token": "pc-token"}), "pc-token")
+
+    def test_the_announced_key_wins_over_a_stale_environment_one(self):
+        server.KOKORO_KEY = "an-old-value"
+        self.assertEqual(server.kokoro_request_key({"token": "pc-token"}), "pc-token")
+
+    def test_the_environment_key_fills_in_when_none_was_announced(self):
+        server.KOKORO_KEY = "shared-key"
+        self.assertEqual(server.kokoro_request_key({"token": ""}), "shared-key")
+        self.assertEqual(server.kokoro_request_key(None), "shared-key")
+
+    def test_no_key_anywhere_means_an_empty_key(self):
+        server.KOKORO_KEY = ""
+        self.assertEqual(server.kokoro_request_key({}), "")
+
 
 class PlayerContractTests(unittest.TestCase):
     """The app's side of the same deal, checked against the file the phone actually loads."""

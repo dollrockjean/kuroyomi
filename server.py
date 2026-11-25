@@ -199,11 +199,18 @@ RATE_LIMITS = {"register": 30, "upload": 20, "restore": 10, "tts": 300, "engine"
 # An announcement older than KOKORO_STALE_SECONDS counts as gone, which is what makes the app drop
 # back to Edge by itself when the PC sleeps, loses its connection or is switched off.
 #
-# The PC's voice server needs a shared key on every request. This server holds it in the KOKORO_KEY
-# environment variable (set on Render, not in this repo and never sent to the browser) and adds it to
-# each call. The key also proves who may announce a PC: without it, anyone who knew an account id
-# could point the app at a machine of their own. Until KOKORO_KEY is set, this falls back to the key
-# the PC sends with its announcement, which keeps the voice working but cannot check the announcer.
+# The PC's voice server needs a shared key on every request, and this server is the only thing that
+# ever holds it: it is never sent to the browser and never written down here.
+# The PC hands the key over itself, inside the announcement, and the announcement has to prove it
+# owns the account (its sync key or a registered device of it) before anything is believed - so a
+# stranger who knew an account id still cannot point the app at a machine of their own. That is why
+# nothing has to be configured by hand for the voice to work (2026-11-24).
+# KOKORO_KEY stays supported as an extra: if it is set in the environment it also lets a PC announce
+# without the account secret, and it is used as the key when an announcement carries none. It is
+# never preferred over the key the PC just announced, because a stale or mistyped value there would
+# make every call to the PC answer 401 and the voice would quietly drop to Edge.
+# An announcement with no key at all, from either source, is refused: a half-registered PC would show
+# up in the app as an available voice that answers 401 to everything.
 KOKORO_STALE_SECONDS = 150
 KOKORO_KEY = (os.environ.get("KOKORO_KEY") or "").strip()
 _KOKORO_ENGINES = {}
@@ -237,8 +244,8 @@ def kokoro_get(user_id):
 
 
 def kokoro_request_key(info):
-    """The key to present to the PC: this server's own if it has one, else the announced fallback."""
-    return KOKORO_KEY or (info or {}).get("token", "")
+    """The key to present to the PC: the one it announced, or KOKORO_KEY when it announced none."""
+    return ((info or {}).get("token") or "").strip() or KOKORO_KEY
 
 
 def fetch_kokoro_audio(info, text, voice, timeout=20):
@@ -1083,9 +1090,11 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         conn = database.get_db()
         cur = conn.cursor()
 
-        # 0. The PC says where its Kokoro voice can be reached (or that it is going away).
-        # It has to present the shared key, so a stranger cannot point the app at a machine of their
-        # own; without a key set here, it still has to be a registered device of the account.
+        # 0. The PC says where its Kokoro voice can be reached (or that it is going away), and hands
+        # over the key its voice server wants. The announcement has to prove itself first: either it
+        # owns the account (sync key, or a device registered to it) or it carries KOKORO_KEY when one
+        # is set here. Either way a stranger cannot point the app at a machine of their own, and
+        # neither route needs anything configured by hand.
         # An empty url withdraws it and the app falls back to Edge immediately.
         if path == "/api/tts/engine":
             user_id = (body.get("user_id") or "").strip()
@@ -1093,13 +1102,16 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             if not user_id:
                 self.send_json({"error": "user_id required"}, status=400)
                 return
-            if KOKORO_KEY:
-                given = (self.headers.get("X-Kokoro-Key") or "").strip()
-                if not hmac.compare_digest(given.encode("utf-8"), KOKORO_KEY.encode("utf-8")):
+            given = (self.headers.get("X-Kokoro-Key") or "").strip()
+            has_server_key = bool(KOKORO_KEY) and hmac.compare_digest(
+                given.encode("utf-8"), KOKORO_KEY.encode("utf-8"))
+            if not has_server_key and not self.is_authorized(user_id, body.get("sync_key")):
+                # 401 when a key was offered and did not match, 403 when none was offered at all:
+                # the PC's log then says which of the two went wrong.
+                if given or KOKORO_KEY:
                     self.send_json({"error": "a key is required"}, status=401)
-                    return
-            elif not self.is_authorized(user_id, body.get("sync_key")):
-                self.send_json({"error": "not authorized for this account"}, status=403)
+                else:
+                    self.send_json({"error": "not authorized for this account"}, status=403)
                 return
             url = (body.get("url") or "").strip()
             if not url:
@@ -1109,9 +1121,15 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             if not url.startswith("https://") or len(url) > 300:
                 self.send_json({"error": "url must be https"}, status=400)
                 return
+            token = str(body.get("token") or "").strip()[:200]
+            if not token and not KOKORO_KEY:
+                # Nothing to lock the PC with: registering it would put a voice in the app that
+                # answers 401 to every paragraph. Refuse instead, so the app stays on Edge.
+                self.send_json({"error": "a key is required"}, status=401)
+                return
             kokoro_set(user_id, {
                 "url": url.rstrip("/"),
-                "token": str(body.get("token") or "")[:200],
+                "token": token,
                 "device": str(body.get("device") or "")[:20],
                 "device_name": str(body.get("device_name") or "PC")[:60],
                 "version": str(body.get("version") or "")[:40],
