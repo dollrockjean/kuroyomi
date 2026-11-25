@@ -504,7 +504,7 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=PUBLIC_DIR, **kwargs)
 
-    def send_json(self, data, status=200):
+    def send_json(self, data, status=200, extra_headers=None):
         body = json.dumps(data).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -512,6 +512,8 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Device-Token")
+        for hk, hv in (extra_headers or {}).items():
+            self.send_header(hk, hv)
         self.end_headers()
         self.wfile.write(body)
 
@@ -928,6 +930,7 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             # paragraph never fails just because the PC went to sleep halfway through a chapter.
             audio_data = None
             engine_used = "edge"
+            fallback_reason = ""
             if query.get("engine", [""])[0] == "kokoro":
                 wanted_by = query.get("user_id", [""])[0]
                 info = kokoro_get(wanted_by)
@@ -935,9 +938,10 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                     audio_data = fetch_kokoro_audio(info, text, query.get("kvoice", [voice])[0])
                     if audio_data:
                         engine_used = "kokoro"
+                if engine_used != "kokoro":
+                    fallback_reason = "PC did not answer" if info else "no PC"
                 kokoro_note(wanted_by, "paragraph asked for the PC",
-                            answer=("kokoro" if engine_used == "kokoro"
-                                    else ("PC did not answer" if info else "no PC")))
+                            answer=("kokoro" if engine_used == "kokoro" else fallback_reason))
             if audio_data is None:
                 audio_data = synthesize_speech(text, voice, rate, pitch)
             conn.close()
@@ -945,6 +949,9 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_json({"error": "Neural TTS unavailable"}, status=503)
                 return
             self._tts_engine_used = engine_used
+            # Never cache an Edge fallback under a ?engine=kokoro URL: Safari would replay Edge for 24h
+            # even after the PC comes back.
+            audio_cache_control = "no-store" if fallback_reason else "public, max-age=86400"
 
             total_len = len(audio_data)
             range_header = self.headers.get("Range")
@@ -970,10 +977,12 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_header("Content-Range", f"bytes {start}-{end}/{total_len}")
                 self.send_header("Content-Length", str(len(chunk)))
                 self.send_header("Accept-Ranges", "bytes")
-                self.send_header("Cache-Control", "public, max-age=86400")
+                self.send_header("Cache-Control", audio_cache_control)
                 self.send_header("Access-Control-Allow-Origin", "*")
-                self.send_header("Access-Control-Expose-Headers", "X-BYoB-Engine, Content-Range")
+                self.send_header("Access-Control-Expose-Headers", "X-BYoB-Engine, X-BYoB-Fallback, Content-Range")
                 self.send_header("X-BYoB-Engine", getattr(self, "_tts_engine_used", "edge"))
+                if fallback_reason:
+                    self.send_header("X-BYoB-Fallback", fallback_reason)
                 self.end_headers()
                 self.wfile.write(chunk)
             else:
@@ -981,10 +990,12 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_header("Content-Type", "audio/mpeg")
                 self.send_header("Content-Length", str(total_len))
                 self.send_header("Accept-Ranges", "bytes")
-                self.send_header("Cache-Control", "public, max-age=86400")
+                self.send_header("Cache-Control", audio_cache_control)
                 self.send_header("Access-Control-Allow-Origin", "*")
-                self.send_header("Access-Control-Expose-Headers", "X-BYoB-Engine, Content-Range")
+                self.send_header("Access-Control-Expose-Headers", "X-BYoB-Engine, X-BYoB-Fallback, Content-Range")
                 self.send_header("X-BYoB-Engine", getattr(self, "_tts_engine_used", "edge"))
+                if fallback_reason:
+                    self.send_header("X-BYoB-Fallback", fallback_reason)
                 self.end_headers()
                 self.wfile.write(audio_data)
             return
@@ -1032,7 +1043,8 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                     "realtime_factor": info.get("realtime_factor"),
                     "age_seconds": info.get("age_seconds"),
                 })
-            self.send_json({"engines": engines, "stale_after_seconds": KOKORO_STALE_SECONDS})
+            self.send_json({"engines": engines, "stale_after_seconds": KOKORO_STALE_SECONDS},
+                           extra_headers={"Cache-Control": "no-store"})
             return
 
         # 9c. What the voice has been doing, for the account that owns it. This is the answer to
@@ -1062,7 +1074,7 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 },
                 "stale_after_seconds": KOKORO_STALE_SECONDS,
                 "diary": [e for e in _KOKORO_DIARY if e.get("user") == user_id[:24]],
-            })
+            }, extra_headers={"Cache-Control": "no-store"})
             return
 
         # 10. Health Check (for Cloud Deployments: Render, Railway, Fly.io)

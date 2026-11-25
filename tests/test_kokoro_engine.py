@@ -106,6 +106,26 @@ class KokoroEngineTests(unittest.TestCase):
         k = ask_engines(self.user_id, sync_key=SYNC_KEY)
         self.assertFalse(k["available"])
 
+    def test_engines_response_is_never_cached(self):
+        h = handler_for("/api/tts/engines?user_id=" + self.user_id)
+        h.do_GET()
+        self.assertEqual(h.sent_headers.get("Cache-Control"), "no-store")
+
+    def test_kokoro_fallback_to_edge_is_not_cached_and_reports_reason(self):
+        server.kokoro_set(self.user_id, None)
+        orig_synth = server.synthesize_speech
+        server.synthesize_speech = lambda *a, **kw: b"ID3" + b"\x00" * 300
+        try:
+            h = handler_for("/api/tts/speak?engine=kokoro&user_id=%s&text=hello" % self.user_id)
+            h.do_GET()
+        finally:
+            server.synthesize_speech = orig_synth
+        self.assertEqual(h.sent_status, 200)
+        self.assertEqual(h.sent_headers.get("X-BYoB-Engine"), "edge")
+        self.assertEqual(h.sent_headers.get("X-BYoB-Fallback"), "no PC")
+        self.assertEqual(h.sent_headers.get("Cache-Control"), "no-store")
+        self.assertIn("X-BYoB-Fallback", h.sent_headers.get("Access-Control-Expose-Headers", ""))
+
 
 class AnnouncingTests(unittest.TestCase):
     """Who may tell this server where the PC is."""

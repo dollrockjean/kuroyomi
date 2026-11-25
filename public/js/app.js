@@ -237,6 +237,10 @@ const App = {
           SyncService.isOnline = true;
           await SyncService.init();
           SyncService.updateStatus('synced', 'ONLINE');
+          if (typeof TTSEngine !== 'undefined') {
+            if (typeof TTSEngine.probeEngines === 'function') TTSEngine.probeEngines(true);
+            if (typeof TTSEngine.loadBuildReport === 'function') TTSEngine.loadBuildReport();
+          }
           await this.loadLibrary(false);
           SyncService.flushOfflineQueue();
         }
@@ -348,7 +352,13 @@ const App = {
           // once now, and again each time he brings it back to the front.
           reg.update().catch(() => {});
           document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible') reg.update().catch(() => {});
+            if (document.visibilityState === 'visible') {
+              reg.update().catch(() => {});
+              App.rescueStaleBuild();
+              if (typeof TTSEngine !== 'undefined' && !TTSEngine.servedBuild && typeof TTSEngine.loadBuildReport === 'function') {
+                TTSEngine.loadBuildReport();
+              }
+            }
           });
         }).catch((err) => {
           console.warn('[SW] ServiceWorker registration failed:', err);
@@ -382,6 +392,9 @@ const App = {
 
       // 3. Connect to sync service & fetch cloud account settings (instant local fallback if offline)
       const session = await SyncService.init();
+      if (typeof TTSEngine !== 'undefined' && typeof TTSEngine.probeEngines === 'function') {
+        TTSEngine.probeEngines(true);
+      }
       if (session && session.settings && Object.keys(session.settings).length > 0) {
         const server = SyncService.expandSettings(session.settings);
         // Read again: pairing a link (?pair=) during init resets the local stamp so the account's settings win
@@ -1668,6 +1681,28 @@ const App = {
       }
     }
 
+    // 6c. TTS Engine & Kokoro Narrator (keeps synced settings from server/pairing in sync with the player)
+    if (typeof TTSEngine !== 'undefined') {
+      let engineChanged = false;
+      if (cur.tts_engine && ['auto', 'kokoro', 'edge'].indexOf(cur.tts_engine) !== -1 && cur.tts_engine !== TTSEngine.engineMode) {
+        TTSEngine.engineMode = cur.tts_engine;
+        try { localStorage.setItem(TTSEngine.engineStorageKey, cur.tts_engine); } catch (e) {}
+        engineChanged = true;
+      }
+      if (cur.kokoro_voice !== undefined && cur.kokoro_voice !== TTSEngine.kokoroVoice) {
+        TTSEngine.kokoroVoice = cur.kokoro_voice || '';
+        try { localStorage.setItem('byob_kokoro_voice', TTSEngine.kokoroVoice); } catch (e) {}
+        if (typeof TTSEngine.populateKokoroVoiceSelect === 'function') TTSEngine.populateKokoroVoiceSelect();
+        engineChanged = true;
+      }
+      if (engineChanged && typeof TTSEngine.updateEngineUI === 'function') {
+        TTSEngine.updateEngineUI();
+        if (TTSEngine.engineMode !== 'edge' && typeof TTSEngine.probeEngines === 'function') {
+          TTSEngine.probeEngines(true);
+        }
+      }
+    }
+
     // 7. Auto-Scroll Speed
     const scrollSpeed = parseInt(cur.auto_scroll_speed || 35);
     AutoScroll.speed = scrollSpeed;
@@ -1832,7 +1867,10 @@ const App = {
         const remember = document.getElementById('rememberDeviceToggle').checked;
         const result = await SyncService.pairDeviceWithKey(key, remember);
         if (result && result.settings && Object.keys(result.settings).length > 0) {
-          this.applySettings(result.settings, false);
+          this.applySettings(SyncService.expandSettings(result.settings), false);
+        }
+        if (typeof TTSEngine !== 'undefined' && typeof TTSEngine.probeEngines === 'function') {
+          TTSEngine.probeEngines(true);
         }
         // Clear cached novels to prevent old account books from remaining in memory
         this.novels = [];

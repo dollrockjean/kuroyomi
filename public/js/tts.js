@@ -54,6 +54,7 @@ const TTSEngine = {
   // home-screen app has no address bar, no console and no reload button, so until this existed the
   // only report from the one device that mattered was "it says Edge" (2026-11-25).
   engineProbeReason: 'not asked yet',
+  lastFallbackReason: '',           // exact reason the last Kokoro probe or relay fell back to Edge
   engineProbeAt: 0,                 // when that answer landed
   engineProbeCount: 0,              // how many questions this app has asked since it loaded
   servedBuild: '',                  // the build the server serves, when it has been looked up
@@ -586,7 +587,7 @@ const TTSEngine = {
       if (!nextCh) return null;
       const texts = reader.getSpeakableTexts(nextCh, 1);
       if (!texts.length) return null;
-      const url = this.blobCache.get(`${this.selectedVoice}_1.0_${this.pitch}_${this.normalizeForSpeech(texts[0])}`);
+      const url = this.blobCache.get(this.cacheKeyFor(texts[0]));
       if (!url) return null;
       const a = this.audioElement;
       this._ignorePauseUntil = Date.now() + 500;
@@ -1304,7 +1305,15 @@ const TTSEngine = {
 
   setEngineMode(mode) {
     if (['auto', 'kokoro', 'edge'].indexOf(mode) === -1) return;
-    if (mode === this.engineMode) { this.updateEngineUI(); return; }
+    if (mode === this.engineMode) {
+      if (mode !== 'edge' && !this.kokoroUsable()) {
+        this._kokoroColdUntil = 0;
+        this._engineRetries = 0;
+        this.probeEngines(true).then(() => this.updateEngineUI());
+      }
+      this.updateEngineUI();
+      return;
+    }
     this.engineMode = mode;
     this._kokoroColdUntil = 0;
     try { localStorage.setItem(this.engineStorageKey, mode); } catch (e) {}
@@ -1392,7 +1401,7 @@ const TTSEngine = {
           || (typeof Storage !== 'undefined' && Storage.getUserId && Storage.getUserId()) || '';
         const token = (typeof Storage !== 'undefined' && Storage.getDeviceToken
           && Storage.getDeviceToken()) || '';
-        if (!userId) {
+        if (!userId || userId === 'offline_user' || userId === 'universal_device_mirror') {
           // No account yet: sync is still connecting, or the server was asleep when it tried. That
           // is not an answer about the PC, so keep asking instead of going quiet for the whole
           // session, which is what this did until 2026-11-25.
@@ -1418,12 +1427,13 @@ const TTSEngine = {
           res = await fetch(`/api/tts/engines?user_id=${encodeURIComponent(userId)}`
             + `&build=${encodeURIComponent(this.runningBuild())}`, {
             signal: controller.signal,
+            cache: 'no-store',
             headers: token ? { 'X-Device-Token': token } : {}
           });
         } finally {
           clearTimeout(timer);
         }
-        if (!res.ok) throw new Error('server answered ' + res.status);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
         const data = await res.json();
         answered = true;
         const k = data && data.engines && data.engines.kokoro;
@@ -1444,14 +1454,18 @@ const TTSEngine = {
           // The server answered and said no. Pass on its own words when it gave a reason, because
           // "the PC has not checked in" and "this app is not allowed to ask" are different jobs.
           const why = (k && (k.reason || k.why)) || (data && data.reason) || '';
-          this.engineProbeReason = 'server says no PC' + (why ? ' (' + String(why).slice(0, 60) + ')' : '');
+          const reason = 'server says no PC' + (why ? ' (' + String(why).slice(0, 60) + ')' : '');
+          this.engineProbeReason = reason;
+          this.lastFallbackReason = reason;
         }
       } catch (e) {
         this.kokoro = null;
-        this.engineProbeReason = (gaveUp || (e && e.name) === 'AbortError')
+        const reason = (gaveUp || (e && e.name) === 'AbortError')
           ? 'no answer in ' + Math.round(this.ENGINE_PROBE_TIMEOUT_MS / 1000)
             + 's (server asleep or no signal)'
           : 'could not ask: ' + String((e && e.message) || e).slice(0, 60);
+        this.engineProbeReason = reason;
+        this.lastFallbackReason = reason;
       }
       this.engineProbeAt = Date.now();
       this.engineProbeCount += 1;
@@ -1549,6 +1563,9 @@ const TTSEngine = {
       build += ' (current)';
     }
     bits.push(build);
+    const inUse = this.isUsingDeviceVoice ? 'Device'
+      : (this.engineActive === 'kokoro' ? 'Kokoro' : 'Edge');
+    bits.push('engine: ' + inUse);
     if (this.swCacheName) bits.push('cache ' + this.swCacheName);
     let asked = this.engineProbeReason || 'not asked yet';
     if (this.engineProbeAt) {
@@ -1558,6 +1575,9 @@ const TTSEngine = {
     }
     if (this.engineProbeCount) asked += ', asked ' + this.engineProbeCount + 'x';
     bits.push(asked);
+    if (this.lastFallbackReason && this.lastFallbackReason !== this.engineProbeReason) {
+      bits.push('last fallback: ' + this.lastFallbackReason);
+    }
     return bits.join(' · ');
   },
 
@@ -1623,6 +1643,7 @@ const TTSEngine = {
   markKokoroDown(why) {
     this._kokoroColdUntil = Date.now() + this.KOKORO_COLD_MS;
     this.engineActive = 'edge';
+    this.lastFallbackReason = String(why || 'error').slice(0, 60);
     this.logEvent(`PC voice unavailable (${why}), using Edge`);
     this.updateEngineUI();
     // Ask the server again soon: the PC may have come back with a new address.
@@ -1678,17 +1699,29 @@ const TTSEngine = {
         try {
           const res = await fetch(rUrl, { signal: controller.signal });
           clearTimeout(timer);
-          if (!res.ok) throw new Error('PC voice via server status ' + res.status);
+          if (!res.ok) throw new Error('HTTP ' + res.status);
           const blob = await res.blob();
           if (!blob || blob.size < 200) throw new Error('PC voice via server sent nothing');
-          const blobUrl = await storeBlob(blob, cacheKey);
-          this.engineActive = res.headers.get('X-BYoB-Engine') === 'kokoro' ? 'kokoro' : 'edge';
+          const actualEngine = (res.headers && res.headers.get && res.headers.get('X-BYoB-Engine') === 'kokoro')
+            ? 'kokoro' : 'edge';
+          const storeKey = actualEngine === 'kokoro'
+            ? cacheKey : this.cacheKeyFor(text, voiceId, pVal, 'edge');
+          const blobUrl = await storeBlob(blob, storeKey);
+          this.engineActive = actualEngine;
+          if (actualEngine !== 'kokoro') {
+            const fb = (res.headers && res.headers.get && res.headers.get('X-BYoB-Fallback')) || 'server returned Edge';
+            this.lastFallbackReason = 'relay: ' + String(fb).slice(0, 50);
+            this.logEvent(`PC voice fell back to Edge (${fb})`);
+          }
           this.pendingFetches.delete(cacheKey);
           this.updateEngineUI();
           return blobUrl;
         } catch (err) {
           clearTimeout(timer);
-          this.markKokoroDown(err && err.name === 'AbortError' ? 'server too slow' : (err.message || 'error'));
+          const why = (err && err.name === 'AbortError')
+            ? 'relay timeout (' + Math.round(this.KOKORO_RELAY_TIMEOUT_MS / 1000) + 's)'
+            : ((err && err.message) || 'error');
+          this.markKokoroDown(why);
           // fall through to Edge below, under Edge's own cache key
         }
       }
@@ -1698,6 +1731,7 @@ const TTSEngine = {
       if (this.blobCache.has(edgeKey)) {
         this.pendingFetches.delete(cacheKey);
         this.engineActive = 'edge';
+        this.updateEngineUI();
         return this.blobCache.get(edgeKey);
       }
       const pitchParam = this.getPitchParam(pVal);
@@ -1714,7 +1748,6 @@ const TTSEngine = {
           }
           const blob = await res.blob();
           const blobUrl = await storeBlob(blob, edgeKey);
-          if (edgeKey !== cacheKey) this.blobCache.set(cacheKey, blobUrl);
           this.pendingFetches.delete(cacheKey);
           this.engineActive = 'edge';
           this.updateEngineUI();
@@ -2264,9 +2297,10 @@ const TTSEngine = {
     }
 
     // Cached audio goes first, ahead of every DOM update below. That work costs 100ms+ on a phone and used to sit
-    // between one paragraph ending and the next starting.
-    const cleanSpeech = this.normalizeForSpeech(textToSpeak);
-    const cacheKey = `${this.selectedVoice}_1.0_${this.pitch}_${cleanSpeech}`;
+    // between one paragraph ending and the next starting. Key includes the active engine so switching to Kokoro
+    // (or Kokoro coming online mid-chapter) never replays Edge blobs prefetched earlier, and Kokoro chains stitch.
+    const nextEngine = this.engineForNextFetch();
+    const cacheKey = this.cacheKeyFor(textToSpeak, this.selectedVoice, this.pitch, nextEngine);
     const isCached = this.blobCache.has(cacheKey);
     let started = null;
     if (isCached && navigator.onLine) {
@@ -2284,6 +2318,8 @@ const TTSEngine = {
           started.catch(() => {});
           if (chain) this.logEvent(`stream: paragraphs ${chain.parts[0].index}-${chain.parts[chain.parts.length - 1].index} joined (${Math.round(chain.parts[chain.parts.length - 1].end)}s)`);
         }
+        this.engineActive = nextEngine;
+        this.updateEngineUI();
       } catch (e) {
         started = null;
       }
