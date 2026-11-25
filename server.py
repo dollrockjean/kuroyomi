@@ -21,6 +21,7 @@ import asyncio
 import sys
 import threading
 import html
+import collections
 
 # Ensure user site-packages is searched for neural TTS modules
 for p in [os.path.expanduser("~/Library/Python/3.9/lib/python/site-packages"),
@@ -215,6 +216,41 @@ KOKORO_STALE_SECONDS = 150
 KOKORO_KEY = (os.environ.get("KOKORO_KEY") or "").strip()
 _KOKORO_ENGINES = {}
 _KOKORO_LOCK = threading.Lock()
+
+# What the voice did lately, in memory only, newest last. Rocco's phone is the one thing in this
+# system nobody can look inside: when it says the PC is unreachable there is no way to tell a stale
+# copy of the app from a real fault, and both nights of this bug were spent guessing. Every question
+# the app asks about engines, every paragraph relayed and every announcement from the PC leaves one
+# line here, and the account owner can read them back from /api/tts/diag (2026-11-25).
+_KOKORO_DIARY = collections.deque(maxlen=120)
+
+
+def kokoro_note(user_id, what, **fields):
+    try:
+        entry = {"at": round(time.time(), 1), "user": (user_id or "")[:24], "what": what}
+        entry.update({k: v for k, v in fields.items() if v not in (None, "")})
+        _KOKORO_DIARY.append(entry)
+    except Exception:  # noqa: BLE001 - a diary must never break the thing it is watching
+        pass
+
+
+_ASSET_VERSION_CACHE = []
+
+
+def asset_version():
+    """The build this server serves, read once out of the service worker that defines it."""
+    if _ASSET_VERSION_CACHE:
+        return _ASSET_VERSION_CACHE[0]
+    version = ""
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "public", "sw.js"),
+                  encoding="utf-8") as fh:
+            found = re.search(r"ASSET_VERSION\s*=\s*'([0-9.]+)'", fh.read())
+        version = found.group(1) if found else ""
+    except Exception:  # noqa: BLE001 - only used for reporting
+        version = ""
+    _ASSET_VERSION_CACHE.append(version)
+    return version
 
 
 def kokoro_set(user_id, info):
@@ -893,11 +929,15 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             audio_data = None
             engine_used = "edge"
             if query.get("engine", [""])[0] == "kokoro":
-                info = kokoro_get(query.get("user_id", [""])[0])
+                wanted_by = query.get("user_id", [""])[0]
+                info = kokoro_get(wanted_by)
                 if info:
                     audio_data = fetch_kokoro_audio(info, text, query.get("kvoice", [voice])[0])
                     if audio_data:
                         engine_used = "kokoro"
+                kokoro_note(wanted_by, "paragraph asked for the PC",
+                            answer=("kokoro" if engine_used == "kokoro"
+                                    else ("PC did not answer" if info else "no PC")))
             if audio_data is None:
                 audio_data = synthesize_speech(text, voice, rate, pitch)
             conn.close()
@@ -959,7 +999,13 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
         # while Rocco's PC has checked in. The app reads this to decide what Auto does.
         if path == "/api/tts/engines":
             conn.close()
-            info = kokoro_get(query.get("user_id", [""])[0])
+            asked_for = query.get("user_id", [""])[0]
+            info = kokoro_get(asked_for)
+            kokoro_note(asked_for, "asked",
+                        build=query.get("build", [""])[0][:12],
+                        answer="up" if info else "no PC",
+                        age=(info or {}).get("age_seconds"),
+                        agent=(self.headers.get("User-Agent") or "")[:80])
             engines = {
                 "edge": {"available": True, "label": "Edge",
                          "description": "Microsoft cloud voices (always available)"},
@@ -987,6 +1033,36 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                     "age_seconds": info.get("age_seconds"),
                 })
             self.send_json({"engines": engines, "stale_after_seconds": KOKORO_STALE_SECONDS})
+            return
+
+        # 9c. What the voice has been doing, for the account that owns it. This is the answer to
+        # "his phone says the PC is unreachable and the PC is fine": it shows whether the phone
+        # asked at all, which build asked, what it was told, and when the PC last checked in.
+        if path == "/api/tts/diag":
+            conn.close()
+            user_id = query.get("user_id", [""])[0]
+            if not user_id or not database.user_exists(user_id) \
+                    or not self.is_authorized(user_id, query.get("sync_key", [""])[0]):
+                self.deny()
+                return
+            info = kokoro_get(user_id)
+            with _KOKORO_LOCK:
+                known = dict(_KOKORO_ENGINES.get(user_id) or {})
+            self.send_json({
+                "now": round(time.time(), 1),
+                "boot_id": BOOT_ID,
+                "asset_version": asset_version(),
+                "pc": {
+                    "live": bool(info),
+                    "announced_at": known.get("announced_at"),
+                    "age_seconds": (info or {}).get("age_seconds"),
+                    "device": known.get("device"),
+                    "version": known.get("version"),
+                    "has_key": bool(kokoro_request_key(known)),
+                },
+                "stale_after_seconds": KOKORO_STALE_SECONDS,
+                "diary": [e for e in _KOKORO_DIARY if e.get("user") == user_id[:24]],
+            })
             return
 
         # 10. Health Check (for Cloud Deployments: Render, Railway, Fly.io)
@@ -1127,14 +1203,23 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 # answers 401 to every paragraph. Refuse instead, so the app stays on Edge.
                 self.send_json({"error": "a key is required"}, status=401)
                 return
-            kokoro_set(user_id, {
+            info = {
                 "url": url.rstrip("/"),
                 "token": token,
                 "device": str(body.get("device") or "")[:20],
                 "device_name": str(body.get("device_name") or "PC")[:60],
                 "version": str(body.get("version") or "")[:40],
                 "realtime_factor": body.get("realtime_factor"),
-            })
+            }
+            kokoro_set(user_id, dict(info))
+            # The app asks for the voice under the account id the server gave it, which is derived
+            # from the sync key. The PC announces under the id written in its own config file. Those
+            # are the same today and would be a silent, unfindable outage if they ever drifted, so
+            # register the voice under both (2026-11-25).
+            also = database.account_id_for_sync_key(body.get("sync_key"))
+            if also and also != user_id:
+                kokoro_set(also, dict(info))
+            kokoro_note(user_id, "PC checked in", device=info["device"], also=also)
             self.send_json({"ok": True, "registered": True,
                             "stale_after_seconds": KOKORO_STALE_SECONDS})
             return

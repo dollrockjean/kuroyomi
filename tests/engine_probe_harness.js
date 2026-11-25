@@ -5,6 +5,7 @@
 //   cold-then-up   the server ignores the first question, then says the PC is there
 //   never-answers  the server never answers at all
 //   says-pc-is-off the server answers at once and says the PC is not there
+//   no-account-yet the app has no account id yet (sync is still connecting), then it gets one
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -34,6 +35,15 @@ function fakeFetch(url, opts) {
   calls += 1;
   const n = calls;
   const signal = opts && opts.signal;
+  if (scenario === 'no-account-yet') {
+    return Promise.resolve(jsonResponse({
+      engines: {
+        edge: { available: true },
+        kokoro: { available: true, device: 'cuda', device_name: 'BYoB Kokoro (PC)',
+                  realtime_factor: 3.3, url: null, token: null, direct: false },
+      },
+    }));
+  }
   if (scenario === 'says-pc-is-off') {
     return Promise.resolve(jsonResponse({ engines: { edge: { available: true },
                                                      kokoro: { available: false } } }));
@@ -58,8 +68,12 @@ function jsonResponse(obj) {
   return { ok: true, status: 200, json: async () => obj };
 }
 
+// The account id the app knows about. Empty while sync is still connecting, which is normal on a
+// cold start against a sleeping server: the probe must keep asking rather than go quiet for good.
+let account = scenario === 'no-account-yet' ? '' : 'usr_test';
+
 const win = {
-  SyncService: { currentUserId: 'usr_test' },
+  SyncService: { get currentUserId() { return account; } },
   ReaderSettings: {},
   addEventListener: noop,
   innerWidth: 440, innerHeight: 956,
@@ -72,7 +86,7 @@ const sandbox = {
   },
   navigator: { onLine: true, userAgent: 'node', mediaSession: null },
   localStorage,
-  Storage: { getUserId: () => 'usr_test', getDeviceToken: () => 'dev_test',
+  Storage: { getUserId: () => account, getDeviceToken: () => 'dev_test',
              getLocalSettings: () => ({}), setLocalSettings: noop },
   fetch: fakeFetch,
   AbortController, setTimeout, clearTimeout, setInterval, clearInterval,
@@ -96,6 +110,8 @@ T.logEvent = () => {};
   await new Promise((r) => setTimeout(r, 300));
   answers.push({ at: 'while the server is still waking', status: T.engineStatusText(),
                  usable: T.kokoroUsable(), probes: calls });
+  // Sync finishes connecting a moment later, with nobody touching the app.
+  if (scenario === 'no-account-yet') setTimeout(() => { account = 'usr_test'; }, 1000);
   // Long enough for the give-up and the first two retries, never touching the app.
   await new Promise((r) => setTimeout(r, 26000));
   answers.push({ at: 'after waiting, with no app restart', status: T.engineStatusText(),

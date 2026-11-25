@@ -1205,6 +1205,17 @@ const TTSEngine = {
     return 'edge';
   },
 
+  // Which build of the app this page is, read off the address its own script was asked for.
+  runningBuild() {
+    try {
+      const el = document.querySelector('script[src*="js/tts.js"]');
+      const m = ((el && el.getAttribute('src')) || '').match(/[?&]v=([0-9.]+)/);
+      return m ? m[1] : '';
+    } catch (e) {
+      return '';
+    }
+  },
+
   // Asks the BYoB server which engines are up. Cheap, never blocks playback, and keeps asking.
   probeEngines(force) {
     const now = Date.now();
@@ -1219,7 +1230,16 @@ const TTSEngine = {
           || (typeof Storage !== 'undefined' && Storage.getUserId && Storage.getUserId()) || '';
         const token = (typeof Storage !== 'undefined' && Storage.getDeviceToken
           && Storage.getDeviceToken()) || '';
-        if (!userId) { this.kokoro = null; return null; }
+        if (!userId) {
+          // No account yet: sync is still connecting, or the server was asleep when it tried. That
+          // is not an answer about the PC, so keep asking instead of going quiet for the whole
+          // session, which is what this did until 2026-11-25.
+          this.kokoro = null;
+          this.engineProbeState = 'unknown';
+          this.scheduleEngineRetry();
+          this.updateEngineUI();
+          return null;
+        }
         const controller = new AbortController();
         // The BYoB server sleeps when nobody is reading and needs 30 to 60 seconds to wake up. Six
         // seconds used to be the whole budget, so the very first question of the morning timed out
@@ -1227,7 +1247,11 @@ const TTSEngine = {
         const timer = setTimeout(() => controller.abort(), this.ENGINE_PROBE_TIMEOUT_MS);
         let res;
         try {
-          res = await fetch(`/api/tts/engines?user_id=${encodeURIComponent(userId)}`, {
+          // The build is sent so the server can say which app a phone is running when the voice
+          // goes missing. Without it a stale copy of the app and a real fault look identical from
+          // here, and that cost two nights of guessing (2026-11-25).
+          res = await fetch(`/api/tts/engines?user_id=${encodeURIComponent(userId)}`
+            + `&build=${encodeURIComponent(this.runningBuild())}`, {
             signal: controller.signal,
             headers: token ? { 'X-Device-Token': token } : {}
           });

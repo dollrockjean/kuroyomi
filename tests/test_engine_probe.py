@@ -54,6 +54,20 @@ class EngineProbeTests(unittest.TestCase):
         self.assertGreater(later["probes"], 1)
 
 
+    def test_no_account_yet_is_not_the_end_of_the_search(self):
+        """Sync still connecting is not an answer about the PC, so the app must keep asking.
+
+        The probe used to return the moment it had no account id, without arranging to ask again,
+        so a launch that reached the engine question before sync finished - normal when the free
+        host is waking up - left the voice switched off for the whole session (2026-11-25).
+        """
+        waking, later = run("no-account-yet")
+        self.assertFalse(waking["usable"])
+        self.assertEqual(waking["status"], "Looking for your PC, using Edge")
+        self.assertTrue(later["usable"], "the app stopped asking once it had no account id")
+        self.assertEqual(later["status"], "Your PC is speaking")
+
+
 class EngineProbeSourceTests(unittest.TestCase):
     """Guards on the two numbers that caused it, for the day node is missing."""
 

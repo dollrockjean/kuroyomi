@@ -335,6 +335,22 @@ def sync_key_matches(user_id: str, sync_key: str) -> bool:
         conn.close()
     return bool(row and row["sync_key"] and hmac.compare_digest(row["sync_key"], sync_key.strip().upper()))
 
+def account_id_for_sync_key(sync_key: str):
+    """The account this sync key already belongs to, or None. Never creates one."""
+    if not sync_key or not isinstance(sync_key, str):
+        return None
+    key = sync_key.strip().upper()
+    if not key or key in ("OFFLINE", "DEFAULT_READER"):
+        return None
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM users WHERE sync_key = ?", (key,))
+        row = cur.fetchone()
+    finally:
+        conn.close()
+    return row["id"] if row else None
+
 def get_user_devices(user_id: str):
     conn = get_db()
     cur = conn.cursor()

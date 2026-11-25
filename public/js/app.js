@@ -254,6 +254,48 @@ const App = {
     window.location.reload();
   },
 
+  // The build this page is actually running, taken from the address its own script was asked for.
+  runningBuild() {
+    const el = document.querySelector('script[src*="js/app.js"]');
+    const src = el ? el.getAttribute('src') || '' : '';
+    const m = src.match(/[?&]v=([0-9.]+)/);
+    return m ? m[1] : '';
+  },
+
+  // Last resort, and the only one that does not depend on the service worker behaving: ask the
+  // server which build it serves and, if this page is an older one, throw the caches away and load
+  // again. A home-screen app has no address bar and no reload button, so without this the only cure
+  // for a wedged worker is deleting the app (2026-11-25).
+  async rescueStaleBuild() {
+    const running = this.runningBuild();
+    if (!running) return;
+    try {
+      if (sessionStorage.getItem('byob_rescued') === '1') return;
+    } catch (e) {}
+    try {
+      const res = await fetch('/sw.js', { cache: 'reload' });
+      if (!res || !res.ok) return;
+      const text = await res.text();
+      const m = text.match(/ASSET_VERSION\s*=\s*'([0-9.]+)'/);
+      const served = m ? m[1] : '';
+      if (!served || served === running) return;
+      console.warn('[SW] This app is build ' + running + ' but the server serves ' + served
+        + '; clearing caches and reloading.');
+      try { sessionStorage.setItem('byob_rescued', '1'); } catch (e) {}
+      if (window.caches) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      }
+      if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map((r) => r.unregister().catch(() => false)));
+      }
+      window.location.reload();
+    } catch (e) {
+      // Offline or a sleeping server: nothing to rescue from, try again next launch.
+    }
+  },
+
   async init() {
 
     try {
@@ -327,7 +369,15 @@ const App = {
             console.log('[SW] Newer app file arrived, reloading:', event.data.url);
             reloadOnce();
           }
+          // The page itself was out of date: it was served from the cache because the network was
+          // slow, and the real answer turned out to be a different app (2026-11-25).
+          if (event.data && event.data.type === 'SHELL_UPDATED') {
+            console.log('[SW] Newer app page arrived, reloading');
+            reloadOnce();
+          }
         });
+
+        this.rescueStaleBuild();
       }
 
       // 3. Connect to sync service & fetch cloud account settings (instant local fallback if offline)

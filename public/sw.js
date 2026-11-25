@@ -7,7 +7,7 @@
 // unchanged address keeps being read from the old copy. (2026-11-24: a fixed tts.js sat unused
 // on the phone for exactly this reason, and the phone kept saying the PC voice was unreachable.)
 // Forgetting the bump is no longer fatal - see the revalidate below - but it costs a reload.
-const ASSET_VERSION = '55.3';
+const ASSET_VERSION = '55.4';
 const CACHE_NAME = 'byob-v' + ASSET_VERSION;
 
 const PRECACHE_ASSETS = [
@@ -81,6 +81,38 @@ async function revalidateAsset(request, cachedClone) {
   }
 }
 
+// The app shell we fall back to when the network is slow. Both addresses are pre-cached and a
+// navigation can arrive as either, so look under both.
+// This build's own cache first: a copy left behind in an older cache is by definition the older
+// page, and caches.match() searches every cache in the order they were made, so it would win.
+async function cachedShell() {
+  const cache = await caches.open(CACHE_NAME);
+  return (await cache.match('/index.html')) || (await cache.match('/'))
+    || (await caches.match('/index.html')) || (await caches.match('/'));
+}
+
+// The slow answer to a navigation we already served from the cache. If the page really changed,
+// store it and tell the running app, which reloads into the new code. Reloading is safe to repeat:
+// the next launch compares equal bytes and says nothing.
+async function reviseShell(networkPromise, cachedClone) {
+  try {
+    const fresh = await networkPromise;
+    if (!fresh || fresh.status !== 200) return;
+    // Clone once and read the original: cloning a response whose body has been read is not allowed.
+    const toCache = fresh.clone();
+    const [freshText, oldText] = await Promise.all([fresh.text(), cachedClone.text()]);
+    if (freshText === oldText) return;
+    const cache = await caches.open(CACHE_NAME);
+    await cache.put('/index.html', toCache);
+    const clients = await self.clients.matchAll({ type: 'window' });
+    for (const client of clients) {
+      client.postMessage({ type: 'SHELL_UPDATED' });
+    }
+  } catch (err) {
+    // Offline or a dead zone: keep the cached shell and try again next launch.
+  }
+}
+
 // Fetch routing
 self.addEventListener('fetch', (event) => {
   const request = event.request;
@@ -97,28 +129,42 @@ self.addEventListener('fetch', (event) => {
       (async () => {
         // Fast path: if browser is offline, serve cached shell instantly (0ms latency)
         if (!navigator.onLine) {
-          const cached = await caches.match('/index.html') || await caches.match('/');
+          const cached = await cachedShell();
           if (cached) return cached;
         }
 
-        // Online path: fetch network with a strict 1500ms timeout so offline/dead-zone WebKit never stalls
+        // Online path: give the network 1500 ms so offline/dead-zone WebKit never stalls, then
+        // serve the cached shell - but the request is NOT cancelled. It used to be aborted, and
+        // that is how a phone could stay on last week's app for days: every launch that lost the
+        // race served the old page and threw away the only chance to learn about the new one, and
+        // the old page is what asks for the old /js/ files. Now the slow answer still arrives,
+        // still replaces the cached shell, and the running page is told to reload into it
+        // (2026-11-25: Rocco's phone kept saying the PC voice was unreachable for this reason).
+        const networkPromise = fetch(request, { cache: 'reload' });
+        networkPromise.catch(() => {});  // handled below; never an unhandled rejection
+        let fresh = null;
         try {
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 1500);
-          const networkResponse = await fetch(request, { signal: controller.signal });
-          clearTimeout(timer);
-
-          if (networkResponse && networkResponse.status === 200) {
-            const copy = networkResponse.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
-          }
-          return networkResponse;
+          fresh = await Promise.race([
+            networkPromise,
+            new Promise((resolve) => setTimeout(() => resolve(null), 1500))
+          ]);
         } catch (err) {
-          // Network failed or timed out: fall back instantly to cached index.html
-          const cached = await caches.match('/index.html') || await caches.match('/');
-          if (cached) return cached;
-          throw err;
+          fresh = null;
         }
+
+        if (fresh && fresh.status === 200) {
+          const copy = fresh.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put('/index.html', copy));
+          return fresh;
+        }
+
+        const cached = await cachedShell();
+        if (cached) {
+          event.waitUntil(reviseShell(networkPromise, cached.clone()));
+          return cached;
+        }
+        // Nothing cached at all: the network is the only answer, however long it takes.
+        return networkPromise;
       })()
     );
     return;
