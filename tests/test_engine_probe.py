@@ -68,6 +68,36 @@ class EngineProbeTests(unittest.TestCase):
         self.assertEqual(later["status"], "Your PC is speaking")
 
 
+@unittest.skipIf(NODE is None, "node is not installed on this machine")
+class VoiceReportTests(unittest.TestCase):
+    """The one line on screen that tells him which app he is running and what it was told.
+
+    Three nights (V13, V14, V15) each ended with "fixed and live" and his real iPhone still on Edge,
+    because the only thing the phone could say was "Edge" and the server's diary lives in memory on
+    the free plan, so a restart wipes whatever his phone did. The report has to carry the build and
+    the reason without anybody reading a log (2026-11-25).
+    """
+
+    def test_the_report_names_the_build_this_app_is_running(self):
+        waking, later = run("cold-then-up")
+        for moment in (waking, later):
+            self.assertIn("build 55.6", moment["report"])
+
+    def test_waiting_on_a_sleeping_server_says_so_and_does_not_blame_the_pc(self):
+        _waking, later = run("never-answers")
+        self.assertIn("no answer in 20s", later["report"])
+        self.assertNotIn("says no PC", later["report"])
+
+    def test_a_pc_the_server_says_is_off_reads_differently_from_silence(self):
+        waking, _later = run("says-pc-is-off")
+        self.assertIn("server says no PC", waking["report"])
+
+    def test_a_healthy_pc_is_reported_with_the_device_it_runs_on(self):
+        _waking, later = run("cold-then-up")
+        self.assertIn("server says your PC is up (cuda)", later["report"])
+        self.assertIn("asked", later["report"])
+
+
 class EngineProbeSourceTests(unittest.TestCase):
     """Guards on the two numbers that caused it, for the day node is missing."""
 

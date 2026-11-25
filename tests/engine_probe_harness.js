@@ -52,7 +52,12 @@ function fakeFetch(url, opts) {
   const wakesOnCall = scenario === 'cold-then-up' ? 2 : Infinity;
   if (n < wakesOnCall) {
     return new Promise((_resolve, reject) => {
-      if (signal) signal.addEventListener('abort', () => reject(new Error('aborted')));
+      // A browser rejects an aborted fetch with a DOMException named AbortError, not a plain Error.
+      if (signal) signal.addEventListener('abort', () => {
+        const err = new Error('The operation was aborted.');
+        err.name = 'AbortError';
+        reject(err);
+      });
     });
   }
   return Promise.resolve(jsonResponse({
@@ -81,7 +86,12 @@ const win = {
 const sandbox = {
   window: win,
   document: {
-    querySelectorAll: () => [], querySelector: () => null, getElementById: () => null,
+    querySelectorAll: () => [],
+    // The page knows which build it is only from the address its own script was asked for, and the
+    // on-screen voice report prints that, so the harness has to carry a real-looking script tag.
+    querySelector: (sel) => (String(sel).indexOf('js/tts.js') >= 0
+      ? { getAttribute: () => '/js/tts.js?v=55.6' } : null),
+    getElementById: () => null,
     addEventListener: noop, createElement: fakeElement, body: fakeElement(), hidden: false,
   },
   navigator: { onLine: true, userAgent: 'node', mediaSession: null },
@@ -109,13 +119,13 @@ T.logEvent = () => {};
   T.probeEngines(true);
   await new Promise((r) => setTimeout(r, 300));
   answers.push({ at: 'while the server is still waking', status: T.engineStatusText(),
-                 usable: T.kokoroUsable(), probes: calls });
+                 usable: T.kokoroUsable(), probes: calls, report: T.engineReportText() });
   // Sync finishes connecting a moment later, with nobody touching the app.
   if (scenario === 'no-account-yet') setTimeout(() => { account = 'usr_test'; }, 1000);
   // Long enough for the give-up and the first two retries, never touching the app.
   await new Promise((r) => setTimeout(r, 26000));
   answers.push({ at: 'after waiting, with no app restart', status: T.engineStatusText(),
-                 usable: T.kokoroUsable(), probes: calls });
+                 usable: T.kokoroUsable(), probes: calls, report: T.engineReportText() });
   if (T._engineRetryTimer) clearTimeout(T._engineRetryTimer);
   console.log(JSON.stringify(answers));
   process.exit(0);

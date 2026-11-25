@@ -1019,6 +1019,20 @@ body {
   margin-top: 4px;
 }
 
+/* The voice report: which build this app is and what the server last said about the PC. It is the
+   only way to tell a stale app from a real fault on a home-screen phone, which has no address bar,
+   no console and no reload button (2026-11-25: three nights were spent guessing at that). Small and
+   grey, so it reads as a footnote rather than an error. */
+.engine-switch-report {
+  margin-top: 4px;
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--text-muted);
+  opacity: 0.85;
+  word-break: break-word;
+  font-variant-numeric: tabular-nums;
+}
+
 .engine-seg {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

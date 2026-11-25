@@ -50,6 +50,14 @@ const TTSEngine = {
   // 'unknown' until the server has answered once: a question that never came back is not the same
   // thing as a PC that is switched off, and the status line must not blame the PC for the server.
   engineProbeState: 'unknown',      // 'unknown' | 'ok' | 'down'
+  // Why the last question ended the way it did, in words a reader can repeat down the phone. A
+  // home-screen app has no address bar, no console and no reload button, so until this existed the
+  // only report from the one device that mattered was "it says Edge" (2026-11-25).
+  engineProbeReason: 'not asked yet',
+  engineProbeAt: 0,                 // when that answer landed
+  engineProbeCount: 0,              // how many questions this app has asked since it loaded
+  servedBuild: '',                  // the build the server serves, when it has been looked up
+  swCacheName: '',                  // the cache this app is actually being served out of
   _engineRetries: 0,
   _engineRetryTimer: null,
   ENGINE_PROBE_MS: 30000,           // re-ask the server at most this often
@@ -724,6 +732,7 @@ const TTSEngine = {
     this.updateEngineUI();
     // Ask once at startup and then whenever the tab comes back, so Auto knows if the PC is up.
     this.probeEngines(true);
+    this.loadBuildReport();
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden) this.probeEngines(true);
     });
@@ -1225,6 +1234,9 @@ const TTSEngine = {
     this._engineCheckedAt = now;
     this._enginePromise = (async () => {
       let answered = false;
+      // Whether we were the ones who hung up. Browsers signal that with a DOMException named
+      // AbortError, but the reason on screen must not depend on the shape of someone else's error.
+      let gaveUp = false;
       try {
         const userId = (window.SyncService && window.SyncService.currentUserId)
           || (typeof Storage !== 'undefined' && Storage.getUserId && Storage.getUserId()) || '';
@@ -1236,6 +1248,8 @@ const TTSEngine = {
           // session, which is what this did until 2026-11-25.
           this.kokoro = null;
           this.engineProbeState = 'unknown';
+          this.engineProbeReason = 'not signed in yet (sync still connecting)';
+          this.engineProbeAt = Date.now();
           this.scheduleEngineRetry();
           this.updateEngineUI();
           return null;
@@ -1244,7 +1258,8 @@ const TTSEngine = {
         // The BYoB server sleeps when nobody is reading and needs 30 to 60 seconds to wake up. Six
         // seconds used to be the whole budget, so the very first question of the morning timed out
         // against a server that was only yawning (2026-11-24).
-        const timer = setTimeout(() => controller.abort(), this.ENGINE_PROBE_TIMEOUT_MS);
+        const timer = setTimeout(() => { gaveUp = true; controller.abort(); },
+          this.ENGINE_PROBE_TIMEOUT_MS);
         let res;
         try {
           // The build is sent so the server can say which app a phone is running when the voice
@@ -1258,7 +1273,7 @@ const TTSEngine = {
         } finally {
           clearTimeout(timer);
         }
-        if (!res.ok) throw new Error('engine list ' + res.status);
+        if (!res.ok) throw new Error('server answered ' + res.status);
         const data = await res.json();
         answered = true;
         const k = data && data.engines && data.engines.kokoro;
@@ -1273,12 +1288,23 @@ const TTSEngine = {
             rtf: k.realtime_factor || 0
           };
           if (wasDown) this._kokoroPrefetched.clear();
+          this.engineProbeReason = 'server says your PC is up (' + (k.device || 'unknown') + ')';
         } else {
           this.kokoro = null;
+          // The server answered and said no. Pass on its own words when it gave a reason, because
+          // "the PC has not checked in" and "this app is not allowed to ask" are different jobs.
+          const why = (k && (k.reason || k.why)) || (data && data.reason) || '';
+          this.engineProbeReason = 'server says no PC' + (why ? ' (' + String(why).slice(0, 60) + ')' : '');
         }
       } catch (e) {
         this.kokoro = null;
+        this.engineProbeReason = (gaveUp || (e && e.name) === 'AbortError')
+          ? 'no answer in ' + Math.round(this.ENGINE_PROBE_TIMEOUT_MS / 1000)
+            + 's (server asleep or no signal)'
+          : 'could not ask: ' + String((e && e.message) || e).slice(0, 60);
       }
+      this.engineProbeAt = Date.now();
+      this.engineProbeCount += 1;
       // "The server never answered" and "the server says the PC is not there" look the same on
       // screen otherwise, and only one of them is the PC's fault.
       this.engineProbeState = this.kokoro ? 'ok' : (answered ? 'down' : 'unknown');
@@ -1359,6 +1385,52 @@ const TTSEngine = {
       ? 'PC not reachable, using Edge' : 'Auto: using Edge (PC not reachable)';
   },
 
+  // The whole truth about the voice in one grey line he can read off the phone and repeat: which
+  // build of the app is running, whether that is the build the server serves, which cache it came
+  // out of, and what the last question about the PC actually came back with. Three nights were lost
+  // to a phone that could only say "Edge" (2026-11-25).
+  engineReportText() {
+    const bits = [];
+    const running = this.runningBuild();
+    let build = 'build ' + (running || 'unknown');
+    if (this.servedBuild && running && this.servedBuild !== running) {
+      build += ' (server serves ' + this.servedBuild + ' - this app is old)';
+    } else if (this.servedBuild && running) {
+      build += ' (current)';
+    }
+    bits.push(build);
+    if (this.swCacheName) bits.push('cache ' + this.swCacheName);
+    let asked = this.engineProbeReason || 'not asked yet';
+    if (this.engineProbeAt) {
+      const secs = Math.max(0, Math.round((Date.now() - this.engineProbeAt) / 1000));
+      const ago = secs < 90 ? secs + 's ago' : Math.round(secs / 60) + 'm ago';
+      asked += ' - ' + ago;
+    }
+    if (this.engineProbeCount) asked += ', asked ' + this.engineProbeCount + 'x';
+    bits.push(asked);
+    return bits.join(' · ');
+  },
+
+  // Fills in the two facts the page cannot know about itself: the build the server is serving right
+  // now and the cache this copy is being handed out of. Both are cheap and both are asked for once.
+  async loadBuildReport() {
+    try {
+      if (window.caches && caches.keys) {
+        const keys = await caches.keys();
+        const mine = keys.filter(k => String(k).indexOf('byob-') === 0);
+        if (mine.length) this.swCacheName = mine.sort().join(', ');
+      }
+    } catch (e) {}
+    try {
+      const res = await fetch('/sw.js', { cache: 'reload' });
+      if (res && res.ok) {
+        const m = (await res.text()).match(/ASSET_VERSION\s*=\s*'([0-9.]+)'/);
+        if (m) this.servedBuild = m[1];
+      }
+    } catch (e) {}
+    this.updateEngineUI();
+  },
+
   // Keeps every engine control in the app showing the same truth: the chosen mode, whether the PC is
   // reachable right now, and which engine the audio playing came from.
   updateEngineUI() {
@@ -1371,6 +1443,9 @@ const TTSEngine = {
     document.querySelectorAll('[data-engine-status]').forEach(el => {
       el.textContent = this.engineStatusText();
       el.classList.toggle('engine-live', live);
+    });
+    document.querySelectorAll('[data-engine-report]').forEach(el => {
+      el.textContent = this.engineReportText();
     });
     document.querySelectorAll('[data-engine-active]').forEach(el => {
       el.textContent = this.engineActive === 'kokoro' ? 'Kokoro' : 'Edge';
