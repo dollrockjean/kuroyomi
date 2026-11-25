@@ -238,5 +238,42 @@ class RateLimitTests(unittest.TestCase):
         self.assertTrue(rl.allow("/tts"))
 
 
+class SingleSupervisorTests(unittest.TestCase):
+    """Two supervisors on one PC used to fight over the account (found live 2026-11-24).
+
+    Each ran its own quick tunnel and announced the same user, and when one copy's tunnel died it
+    withdrew the PC voice even though the other copy was healthy: the phone read that as "PC not
+    reachable" and dropped to Edge. Only one copy may hold the lock.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib.util
+        p = os.path.join(os.path.dirname(__file__), "..", "tools", "kokoro_supervisor.py")
+        spec = importlib.util.spec_from_file_location("kokoro_supervisor_lock", p)
+        cls.mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.mod)
+        with open(p, encoding="utf-8") as fh:
+            cls.py = fh.read()
+
+    def test_the_second_copy_cannot_claim_the_lock(self):
+        port = 18766
+        first = self.mod.claim_single_instance(port)
+        self.addCleanup(first.close)
+        self.assertIsNotNone(first)
+        self.assertIsNone(self.mod.claim_single_instance(port))
+        first.close()
+        second = self.mod.claim_single_instance(port)   # released with the process that held it
+        self.assertIsNotNone(second)
+        second.close()
+
+    def test_the_lock_is_taken_before_anything_announces(self):
+        start = self.py.index("def main(")
+        body = self.py[start:]
+        self.assertLess(body.index("claim_single_instance("), body.index("sup.tick()"))
+        self.assertLess(body.index("claim_single_instance("), body.index("sup.run()"))
+        self.assertIn("another supervisor is already running", body)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

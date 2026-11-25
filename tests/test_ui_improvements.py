@@ -419,6 +419,79 @@ class TestUIImprovements(unittest.TestCase):
         self.assertIn("reg.update()", app_js,
                       "a home-screen app never navigates, so it must ask for updates itself")
 
+    def test_iphone_status_bar_strip_stays_solid(self):
+        """The strip under the Dynamic Island must be painted by something that never hides.
+
+        Rocco's 2026-11-24 screenshot: the reader's top bar hides on scroll and used to take the
+        status-bar inset with it, so chapter text ran into that strip and Safari smeared it with
+        its own glass blur. The scrim is what stops that, so it must stay in the page and keep a
+        z-index above the reading column but below the bars that sit on top of it.
+        """
+        index_path = os.path.join(server.PUBLIC_DIR, "index.html")
+        with open(index_path, "r", encoding="utf-8") as f:
+            index_html = f.read()
+
+        self.assertIn('id="safeAreaScrim"', index_html,
+                      "the status-bar scrim must be in the page, not added by script")
+
+        css_path = os.path.join(server.PUBLIC_DIR, "css", "brutalist.css")
+        with open(css_path, "r", encoding="utf-8") as f:
+            css = f.read()
+
+        scrim_rule = re.search(r"\.safe-area-scrim\s*\{([^}]*)\}", css)
+        self.assertIsNotNone(scrim_rule, "the scrim needs a .safe-area-scrim rule")
+        rule = scrim_rule.group(1)
+        self.assertIn("position: fixed", rule, "a scrolling scrim is no scrim at all")
+        self.assertIn("height: var(--safe-top)", rule,
+                      "the scrim must be exactly the status-bar inset tall")
+        self.assertRegex(rule, r"background:\s*var\(--bg-primary\)",
+                         "the strip must take the theme's own background, not a fixed colour")
+
+        scrim_z = int(re.search(r"z-index:\s*(\d+)", rule).group(1))
+        bar_rule = re.search(r"\.reader-top-bar\s*\{([^}]*)\}", css)
+        bar_z = int(re.search(r"z-index:\s*(\d+)", bar_rule.group(1)).group(1))
+        self.assertLess(scrim_z, bar_z, "the reader's top bar must still draw over the scrim")
+
+    def test_reading_column_clears_the_bar_without_double_counting_the_inset(self):
+        """No dead space between the header and the first line of a chapter.
+
+        `body` already pads both safe-area insets, so the reading column must not add --safe-top
+        again, and it clears the measured bar height rather than a magic number. That double count
+        plus the library's page padding is where Rocco's 76 px gap came from.
+        """
+        css_path = os.path.join(server.PUBLIC_DIR, "css", "brutalist.css")
+        with open(css_path, "r", encoding="utf-8") as f:
+            css = f.read()
+
+        for rule in re.findall(r"\.reader-body-wrapper\s*\{([^}]*)\}", css):
+            padding = re.search(r"padding:\s*([^;]+);", rule)
+            if not padding:
+                continue
+            value = padding.group(1)
+            self.assertIn("var(--reader-bar-h", value,
+                          "the column must clear the measured bar height, not a magic number")
+            self.assertIn("- var(--safe-top)", value,
+                          "body already pads the top inset; subtract it instead of adding it twice")
+            self.assertNotIn("+ var(--safe-bottom)", value,
+                             "body already pads the bottom inset too")
+
+        self.assertRegex(css, r"body\.reading-mode\s+\.main-content\s*\{[^}]*padding-top:\s*0",
+                         "the library's page padding is dead space under a fixed bar while reading")
+
+        app_path = os.path.join(server.PUBLIC_DIR, "js", "app.js")
+        with open(app_path, "r", encoding="utf-8") as f:
+            app_js = f.read()
+        self.assertIn("'reading-mode', view === 'reader'", app_js,
+                      "reading-mode must follow the reader view, or the padding never comes back")
+
+        reader_path = os.path.join(server.PUBLIC_DIR, "js", "reader.js")
+        with open(reader_path, "r", encoding="utf-8") as f:
+            reader_js = f.read()
+        self.assertIn("--reader-bar-h", reader_js,
+                      "something has to measure the bar and publish its height")
+        self.assertIn("offsetHeight", reader_js,
+                      "offsetHeight ignores the hide transform, so the value survives auto-hiding")
+
     def test_user_paragraph_normalization_and_synthesis(self):
         """Verify complex RPG paragraph with evolution arrows, ratios, and double colons is normalized and synthesized cleanly."""
         user_text = (
