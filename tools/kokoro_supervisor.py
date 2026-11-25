@@ -15,6 +15,7 @@ Config: <data>/config.json
 Run: python kokoro_supervisor.py [--data DIR] [--once] [--no-tunnel]
 """
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -33,6 +34,33 @@ DEFAULT_DATA = os.path.join(HOME, "BYoB Backups", "kokoro")
 HERE = os.path.dirname(os.path.abspath(__file__))
 ANNOUNCE_EVERY = 45          # the server treats an announcement as stale after 150s
 TUNNEL_URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
+# Other BYoB accounts that should hear this PC's voice too, one reader key per line (2026-11-25: Rocco's
+# iPhone lives on its own READER- account, not the keeper's, so it was told "no PC" for days while the
+# keeper account was told "up"). The files stay on this PC; the keys are never logged or sent anywhere
+# but the announcement to the BYoB server, which checks each one against its own account.
+EXTRA_KEY_FILES = ("phone-reader-key.txt", "reader-keys.txt")
+
+
+def account_id_for_key(key):
+    """The account id the BYoB server derives from a sync key (database.get_or_create_user)."""
+    return "usr_" + hashlib.sha256(key.strip().upper().encode("utf-8")).hexdigest()[:12]
+
+
+def read_extra_keys(data_dir):
+    keys = []
+    for name in EXTRA_KEY_FILES:
+        try:
+            with open(os.path.join(data_dir, name), "r", encoding="utf-8-sig") as fh:
+                for line in fh:
+                    k = line.strip().upper()
+                    if k and not k.startswith("#") and k not in ("OFFLINE", "DEFAULT_READER") \
+                            and k not in keys:
+                        keys.append(k)
+        except OSError:
+            pass
+    return keys
+
+
 CLOUDFLARED_CANDIDATES = [
     shutil.which("cloudflared") or "",
     r"C:\Program Files (x86)\cloudflared\cloudflared.exe",
@@ -148,6 +176,22 @@ class Supervisor:
         self.named = bool(self.cfg.get("hostname"))
         self.last_announce_ok = 0.0
 
+    def accounts(self):
+        """Every (user_id, sync_key) this PC announces to: the keeper's account first, then each extra
+        reader key on this PC (re-read every time, so a new key works without a restart)."""
+        out = []
+        if self.cfg.get("user_id"):
+            out.append((self.cfg["user_id"], self.sync_key))
+        seen = {self.cfg.get("user_id")}
+        for key in read_extra_keys(self.dir):
+            if key == (self.sync_key or "").strip().upper():
+                continue
+            uid = account_id_for_key(key)
+            if uid not in seen:
+                seen.add(uid)
+                out.append((uid, key))
+        return out
+
     # --- local server ----------------------------------------------------
     def server_health(self, timeout=4):
         try:
@@ -261,7 +305,6 @@ class Supervisor:
             self.note_quiet_skip("the local voice server did not answer /health")
             return False
         body = {
-            "user_id": self.cfg["user_id"],
             "url": self.tunnel_url,
             # Only so a server that has no KOKORO_KEY of its own can still reach this PC. A server
             # that does have the key ignores this and checks the header below instead, which is what
@@ -273,8 +316,19 @@ class Supervisor:
             "voices_url": self.tunnel_url + "/voices",
             "device_name": "BYoB Kokoro (PC)",
         }
-        if self.sync_key:
-            body["sync_key"] = self.sync_key
+        ok_main = False
+        for n, (user_id, key) in enumerate(self.accounts()):
+            one = dict(body, user_id=user_id)
+            if key:
+                one["sync_key"] = key
+            ok = self._post_engine(base, one, "keeper account" if n == 0 else "reader account %d" % n)
+            if n == 0:
+                ok_main = ok
+        if ok_main:
+            self.last_announce_ok = time.time()
+        return ok_main
+
+    def _post_engine(self, base, body, label):
         try:
             req = urllib.request.Request(
                 base + "/api/tts/engine", data=json.dumps(body).encode("utf-8"),
@@ -284,12 +338,11 @@ class Supervisor:
                          "X-Device-Token": self.cfg.get("device_token", "")})
             with urllib.request.urlopen(req, timeout=30) as r:
                 r.read()
-            self.last_announce_ok = time.time()
             return True
         except urllib.error.HTTPError as exc:
-            log(self.dir, "announce rejected: HTTP %s" % exc.code)
+            log(self.dir, "announce rejected (%s): HTTP %s" % (label, exc.code))
         except Exception as exc:  # noqa: BLE001
-            log(self.dir, "announce failed: %s" % exc)
+            log(self.dir, "announce failed (%s): %s" % (label, exc))
         return False
 
     def withdraw(self):
@@ -297,21 +350,22 @@ class Supervisor:
         base = (self.cfg.get("base_url") or "").rstrip("/")
         if not base or not self.cfg.get("user_id"):
             return
-        gone = {"user_id": self.cfg["user_id"], "url": ""}
-        if self.sync_key:
-            gone["sync_key"] = self.sync_key
-        try:
-            req = urllib.request.Request(
-                base + "/api/tts/engine",
-                data=json.dumps(gone).encode("utf-8"),
-                headers={"Content-Type": "application/json",
-                         "X-Kokoro-Key": self.token,
-                         "X-Device-Token": self.cfg.get("device_token", "")})
-            with urllib.request.urlopen(req, timeout=15) as r:
-                r.read()
-            log(self.dir, "withdrew the PC voice")
-        except Exception:  # noqa: BLE001
-            pass
+        for user_id, key in self.accounts():
+            gone = {"user_id": user_id, "url": ""}
+            if key:
+                gone["sync_key"] = key
+            try:
+                req = urllib.request.Request(
+                    base + "/api/tts/engine",
+                    data=json.dumps(gone).encode("utf-8"),
+                    headers={"Content-Type": "application/json",
+                             "X-Kokoro-Key": self.token,
+                             "X-Device-Token": self.cfg.get("device_token", "")})
+                with urllib.request.urlopen(req, timeout=15) as r:
+                    r.read()
+            except Exception:  # noqa: BLE001
+                pass
+        log(self.dir, "withdrew the PC voice")
 
     def write_state(self):
         health = self.server_health() or {}
@@ -323,6 +377,7 @@ class Supervisor:
             "realtime_factor": health.get("realtime_factor"),
             "server_ok": bool(health),
             "last_announce_ok": self.last_announce_ok,
+            "accounts": [uid for uid, _ in self.accounts()],
             "updated": time.time(),
         })
 

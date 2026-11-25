@@ -81,7 +81,7 @@ class VoiceReportTests(unittest.TestCase):
     def test_the_report_names_the_build_this_app_is_running(self):
         waking, later = run("cold-then-up")
         for moment in (waking, later):
-            self.assertIn("build 55.7", moment["report"])
+            self.assertIn("build 55.8", moment["report"])
             self.assertIn("engine: Edge", moment["report"])
 
     def test_waiting_on_a_sleeping_server_says_so_and_does_not_blame_the_pc(self):
