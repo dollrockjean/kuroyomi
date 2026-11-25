@@ -20,6 +20,7 @@ import os
 import re
 import secrets
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -69,6 +70,28 @@ def write_json(path, data):
     os.replace(tmp, path)
 
 
+def claim_single_instance(port):
+    """One supervisor per PC, or they fight over the same account.
+
+    Two copies were running on 2026-11-24: each started its own quick tunnel, the second
+    kokoro_server could not have port 8766 so its health check read the *first* one's server and
+    looked fine, and both announced the same account - so whichever answered last owned it. When one
+    copy's own tunnel went dead it called withdraw() and the phone lost Kokoro even though the other
+    copy was healthy. That is the "PC not reachable" flapping.
+
+    The lock is a socket on the port next to the voice server's, held for the life of the process:
+    no stale pid file to clean up, and it releases itself if the process is killed.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind(("127.0.0.1", port + 1))
+        sock.listen(1)
+    except OSError:
+        sock.close()
+        return None
+    return sock
+
+
 def find_cloudflared():
     for c in CLOUDFLARED_CANDIDATES:
         if c and os.path.exists(c):
@@ -109,6 +132,13 @@ class Supervisor:
                 changed = True
         if changed:
             write_json(self.cfg_path, self.cfg)
+        # The account's sync key, kept only in the keeper's file and only in memory here, never
+        # copied into this folder's config and never put in a URL. Without KOKORO_KEY set on Render
+        # the announcement has to prove it owns the account, and this PC's device token is not a
+        # registered device of it, so the sync key is the only proof it has (found 2026-11-24: every
+        # announcement was answered 403 "not authorized for this account" and the phone read that as
+        # "PC not reachable").
+        self.sync_key = (keeper.get("sync_key") or "").strip()
         self.port = int(self.cfg["port"])
         self.token = self.cfg["token"]
         self.want_tunnel = want_tunnel
@@ -211,14 +241,24 @@ class Supervisor:
             return None
 
     # --- announce --------------------------------------------------------
+    def note_quiet_skip(self, why):
+        """An announcement that never leaves used to return without a word, so the log looked calm
+        while the phone was losing the PC voice. Say it, but at most once every ten minutes."""
+        if time.time() - getattr(self, "_quiet_logged_at", 0) < 600:
+            return
+        self._quiet_logged_at = time.time()
+        log(self.dir, "did not announce: %s" % why)
+
     def announce(self):
         base = (self.cfg.get("base_url") or "").rstrip("/")
         if not base or not self.cfg.get("user_id"):
             return False
         if not self.tunnel_url:
+            self.note_quiet_skip("no tunnel address yet")
             return False
         health = self.server_health()
         if not health:
+            self.note_quiet_skip("the local voice server did not answer /health")
             return False
         body = {
             "user_id": self.cfg["user_id"],
@@ -233,6 +273,8 @@ class Supervisor:
             "voices_url": self.tunnel_url + "/voices",
             "device_name": "BYoB Kokoro (PC)",
         }
+        if self.sync_key:
+            body["sync_key"] = self.sync_key
         try:
             req = urllib.request.Request(
                 base + "/api/tts/engine", data=json.dumps(body).encode("utf-8"),
@@ -255,10 +297,13 @@ class Supervisor:
         base = (self.cfg.get("base_url") or "").rstrip("/")
         if not base or not self.cfg.get("user_id"):
             return
+        gone = {"user_id": self.cfg["user_id"], "url": ""}
+        if self.sync_key:
+            gone["sync_key"] = self.sync_key
         try:
             req = urllib.request.Request(
                 base + "/api/tts/engine",
-                data=json.dumps({"user_id": self.cfg["user_id"], "url": ""}).encode("utf-8"),
+                data=json.dumps(gone).encode("utf-8"),
                 headers={"Content-Type": "application/json",
                          "X-Kokoro-Key": self.token,
                          "X-Device-Token": self.cfg.get("device_token", "")})
@@ -342,6 +387,12 @@ def main():
             "state": read_json(os.path.join(args.data, "state.json"), {}),
             "health": sup.server_health(),
         }, indent=2))
+        return 0
+    # Anything that starts a tunnel or announces has to be the only copy running.
+    lock = claim_single_instance(sup.port)
+    if lock is None:
+        log(args.data, "another supervisor is already running (lock port %d): exiting"
+            % (sup.port + 1))
         return 0
     if args.once:
         sup.tick()

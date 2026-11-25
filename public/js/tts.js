@@ -47,7 +47,14 @@ const TTSEngine = {
   _engineCheckedAt: 0,
   _kokoroColdUntil: 0,              // after a failure, stop trying for a few seconds
   _kokoroPrefetched: new Set(),
+  // 'unknown' until the server has answered once: a question that never came back is not the same
+  // thing as a PC that is switched off, and the status line must not blame the PC for the server.
+  engineProbeState: 'unknown',      // 'unknown' | 'ok' | 'down'
+  _engineRetries: 0,
+  _engineRetryTimer: null,
   ENGINE_PROBE_MS: 30000,           // re-ask the server at most this often
+  ENGINE_PROBE_TIMEOUT_MS: 20000,   // the free host sleeps and wakes slowly; 6 s called it dead
+  ENGINE_RETRY_MS: [2000, 4000, 8000, 15000, 30000],  // keep asking until the PC turns up
   KOKORO_RELAY_TIMEOUT_MS: 12000,   // a paragraph the PC has not rendered yet, over two hops
   KOKORO_COLD_MS: 20000,            // how long to stay on Edge after the PC failed
   
@@ -1144,6 +1151,9 @@ const TTSEngine = {
     try { localStorage.setItem(this.engineStorageKey, mode); } catch (e) {}
     this.persistEngineSetting('tts_engine', mode);
     this._engineCheckedAt = 0;
+    this._engineRetries = 0;
+    // Picking Edge stops the search; picking Kokoro or Auto starts it again from the quick steps.
+    this.scheduleEngineRetry();
     this.probeEngines().then(() => this.updateEngineUI());
     this.updateEngineUI();
     this.logEvent(`voice engine set to ${mode}`);
@@ -1195,7 +1205,7 @@ const TTSEngine = {
     return 'edge';
   },
 
-  // Asks the BYoB server which engines are up. Cheap, cached, never blocks playback.
+  // Asks the BYoB server which engines are up. Cheap, never blocks playback, and keeps asking.
   probeEngines(force) {
     const now = Date.now();
     if (!force && this._enginePromise && now - this._engineCheckedAt < this.ENGINE_PROBE_MS) {
@@ -1203,6 +1213,7 @@ const TTSEngine = {
     }
     this._engineCheckedAt = now;
     this._enginePromise = (async () => {
+      let answered = false;
       try {
         const userId = (window.SyncService && window.SyncService.currentUserId)
           || (typeof Storage !== 'undefined' && Storage.getUserId && Storage.getUserId()) || '';
@@ -1210,14 +1221,22 @@ const TTSEngine = {
           && Storage.getDeviceToken()) || '';
         if (!userId) { this.kokoro = null; return null; }
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 6000);
-        const res = await fetch(`/api/tts/engines?user_id=${encodeURIComponent(userId)}`, {
-          signal: controller.signal,
-          headers: token ? { 'X-Device-Token': token } : {}
-        });
-        clearTimeout(timer);
+        // The BYoB server sleeps when nobody is reading and needs 30 to 60 seconds to wake up. Six
+        // seconds used to be the whole budget, so the very first question of the morning timed out
+        // against a server that was only yawning (2026-11-24).
+        const timer = setTimeout(() => controller.abort(), this.ENGINE_PROBE_TIMEOUT_MS);
+        let res;
+        try {
+          res = await fetch(`/api/tts/engines?user_id=${encodeURIComponent(userId)}`, {
+            signal: controller.signal,
+            headers: token ? { 'X-Device-Token': token } : {}
+          });
+        } finally {
+          clearTimeout(timer);
+        }
         if (!res.ok) throw new Error('engine list ' + res.status);
         const data = await res.json();
+        answered = true;
         const k = data && data.engines && data.engines.kokoro;
         if (k && k.available) {
           // All this side needs to know is that the PC is up. Where it is and the key that opens it
@@ -1236,10 +1255,38 @@ const TTSEngine = {
       } catch (e) {
         this.kokoro = null;
       }
+      // "The server never answered" and "the server says the PC is not there" look the same on
+      // screen otherwise, and only one of them is the PC's fault.
+      this.engineProbeState = this.kokoro ? 'ok' : (answered ? 'down' : 'unknown');
+      this.scheduleEngineRetry();
       this.updateEngineUI();
       return this.kokoro;
     })();
     return this._enginePromise;
+  },
+
+  // One unanswered question used to be the final word. The app asked once at startup and then only
+  // when it came back to the front, so opening it while the server was still waking left "PC not
+  // reachable" on the screen for the whole chapter with a perfectly healthy PC behind it. It is also
+  // normal for the server to know nothing for the first three quarters of a minute after it wakes:
+  // the PC's check-in only comes every 45 seconds. So keep asking, quickly at first and then every
+  // half minute, until the PC turns up or he switches to Edge (2026-11-24).
+  scheduleEngineRetry() {
+    if (this._engineRetryTimer) {
+      clearTimeout(this._engineRetryTimer);
+      this._engineRetryTimer = null;
+    }
+    if (this.engineMode === 'edge' || this.kokoro) {
+      this._engineRetries = 0;
+      return;
+    }
+    const steps = this.ENGINE_RETRY_MS;
+    const wait = steps[Math.min(this._engineRetries, steps.length - 1)];
+    this._engineRetries += 1;
+    this._engineRetryTimer = setTimeout(() => {
+      this._engineRetryTimer = null;
+      this.probeEngines(true);
+    }, wait);
   },
 
   // Tells the PC which paragraphs are coming so it renders them before they are asked for. This is
@@ -1275,10 +1322,17 @@ const TTSEngine = {
   engineStatusText() {
     if (this.engineMode === 'edge') return 'Edge voices';
     const live = this.kokoroUsable();
-    if (this.engineMode === 'kokoro') {
-      return live ? 'Your PC is speaking' : 'PC not reachable, using Edge';
+    if (live) {
+      return this.engineMode === 'kokoro' ? 'Your PC is speaking' : 'Auto: your PC is speaking';
     }
-    return live ? 'Auto: your PC is speaking' : 'Auto: using Edge (PC not reachable)';
+    // Still waiting on an answer (a sleeping server, no signal): Edge carries the reading in the
+    // meantime and the app keeps asking, so do not announce the PC as dead before it has been asked.
+    if (this.engineProbeState !== 'down') {
+      return this.engineMode === 'kokoro'
+        ? 'Looking for your PC, using Edge' : 'Auto: looking for your PC, using Edge';
+    }
+    return this.engineMode === 'kokoro'
+      ? 'PC not reachable, using Edge' : 'Auto: using Edge (PC not reachable)';
   },
 
   // Keeps every engine control in the app showing the same truth: the chosen mode, whether the PC is
