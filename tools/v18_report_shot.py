@@ -47,6 +47,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--live", action="store_true", help="shoot the deployed site instead")
     ap.add_argument("--wait", type=int, default=25, help="seconds to let the engine probe settle")
+    ap.add_argument("--as-owner", action="store_true",
+                    help="sign in with the account's sync key from this PC's keeper, so the report "
+                         "says what Rocco's own phone would see rather than what a stranger sees")
     args = ap.parse_args()
 
     from playwright.sync_api import sync_playwright
@@ -78,6 +81,14 @@ def main():
                 "s.textContent=%s;document.head.appendChild(s);});"
                 % json.dumps(ps.inset_css(ps.PORTRAIT["insets"]))
             )
+            if args.as_owner:
+                keeper_path = os.path.join(os.path.expanduser("~"), "BYoB Backups", "keeper",
+                                           "keeper.json")
+                with open(keeper_path, encoding="utf-8") as fh:
+                    keeper = json.load(fh)
+                ctx.add_init_script(
+                    "try{localStorage.setItem('byob_sync_key', %s);}catch(e){}"
+                    % json.dumps(keeper["sync_key"]))
             page = ctx.new_page()
             errors = []
             page.on("pageerror", lambda e: errors.append(str(e)))
