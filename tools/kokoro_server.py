@@ -37,6 +37,9 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import pronounce  # noqa: E402  words espeak says wrong (lead, read, close...)
+
 SERVER_VERSION = "kokoro-1.1"
 DEFAULT_PORT = 8766
 HOST = "127.0.0.1"  # not configurable on purpose: the tunnel is the only way in
@@ -267,7 +270,8 @@ class Cache:
         self.misses = 0
 
     def key(self, text, voice):
-        return hashlib.sha256(("%s|%s|%d" % (voice, text, MP3_BITRATE)).encode("utf-8")).hexdigest()
+        return hashlib.sha256(("%s|%s|%d|%s|%s" % (voice, text, MP3_BITRATE, pronounce.VERSION,
+                                                  pronounce.user_version())).encode("utf-8")).hexdigest()
 
     def path(self, key):
         return os.path.join(self.dir, key[:2], key + ".mp3")
@@ -366,7 +370,7 @@ class Renderer:
         try:
             chunks = []
             sr = self.engine.sample_rate
-            for piece in split_sentences(text):
+            for piece in split_sentences(pronounce.fix(text)):
                 pcm, sr = self.engine.pcm(piece, voice)
                 chunks.append(pcm)
             data = encode_mp3(chunks, sr)
@@ -661,6 +665,7 @@ def main():
 
     models = args.models or os.path.join(args.data, "models")
     cache_dir = os.path.join(args.data, "cache")
+    pronounce.set_user_file(os.path.join(args.data, "pronunciations.json"))
     os.makedirs(args.data, exist_ok=True)
 
     engine = Engine(models, prefer_gpu=not args.cpu)
