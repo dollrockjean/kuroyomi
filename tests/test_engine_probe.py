@@ -79,9 +79,12 @@ class VoiceReportTests(unittest.TestCase):
     """
 
     def test_the_report_names_the_build_this_app_is_running(self):
+        import re
+        sw = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "public", "sw.js")).read()
+        version = re.search(r"ASSET_VERSION = '([0-9.]+)'", sw).group(1)
         waking, later = run("cold-then-up")
         for moment in (waking, later):
-            self.assertIn("build 55.8", moment["report"])
+            self.assertIn("build " + version, moment["report"])
             self.assertIn("engine: Edge", moment["report"])
 
     def test_waiting_on_a_sleeping_server_says_so_and_does_not_blame_the_pc(self):

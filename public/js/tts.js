@@ -66,6 +66,8 @@ const TTSEngine = {
   ENGINE_RETRY_MS: [2000, 4000, 8000, 15000, 30000],  // keep asking until the PC turns up
   KOKORO_RELAY_TIMEOUT_MS: 12000,   // a paragraph the PC has not rendered yet, over two hops
   KOKORO_COLD_MS: 20000,            // how long to stay on Edge after the PC failed
+  KOKORO_RELAY_MAX: 3,              // PC paragraphs asked of the server at once (each holds a server slot)
+  KOKORO_BUSY_RETRIES: 3,           // a busy server (503/429) is asked again this many times before Edge
   
   paragraphs: [],
   currentIndex: 0,
@@ -78,6 +80,8 @@ const TTSEngine = {
   _resumeAtChapterEnd: false,
   _preloadedChapterId: null,
   _prefetchActive: 0,
+  _relayActive: 0,
+  _kokoroPrefetchBusy: false,
   // Dead-zone buffer: keep this much audio fetched past the paragraph now playing, so a drive through
   // a cellular dead zone keeps talking. Time-based, capped by paragraph count, three requests at a time.
   BUFFER_AHEAD_SECONDS: 240,
@@ -1268,8 +1272,9 @@ const TTSEngine = {
         else this.setVoice(e.target.value);
       };
     });
+    const label = engine === 'kokoro' ? 'Kokoro narrator (your PC)' : 'Edge voice';
     document.querySelectorAll('[data-voice-label]').forEach(el => {
-      el.textContent = engine === 'kokoro' ? 'Kokoro narrator (your PC)' : 'Edge voice';
+      if (el.textContent !== label) el.textContent = label;
     });
   },
 
@@ -1679,14 +1684,26 @@ const TTSEngine = {
     const userId = (window.SyncService && window.SyncService.currentUserId)
       || (typeof Storage !== 'undefined' && Storage.getUserId && Storage.getUserId()) || '';
     if (!userId) return;
+    // One heads-up at a time: each holds a server slot until the PC answers. Paragraphs not sent now
+    // are forgotten so the next call sends them.
+    if (this._kokoroPrefetchBusy) {
+      for (const t of fresh) this._kokoroPrefetched.delete(voice + '|' + t);
+      return;
+    }
+    this._kokoroPrefetchBusy = true;
+    const done = () => { this._kokoroPrefetchBusy = false; };
     try {
       fetch('/api/tts/prefetch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId, texts: fresh.slice(0, 60), voice: voice }),
         keepalive: true
-      }).catch(() => {});
-    } catch (e) {}
+      }).then(res => {
+        if (res && !res.ok) for (const t of fresh) this._kokoroPrefetched.delete(voice + '|' + t);
+      }).catch(() => {
+        for (const t of fresh) this._kokoroPrefetched.delete(voice + '|' + t);
+      }).finally(done);
+    } catch (e) { done(); }
   },
 
   engineStatusText() {
@@ -1766,15 +1783,18 @@ const TTSEngine = {
       btn.classList.toggle('active', on);
       btn.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
+    const statusText = this.engineStatusText();
     document.querySelectorAll('[data-engine-status]').forEach(el => {
-      el.textContent = this.engineStatusText();
+      if (el.textContent !== statusText) el.textContent = statusText;
       el.classList.toggle('engine-live', live);
     });
+    const reportText = this.engineReportText();
     document.querySelectorAll('[data-engine-report]').forEach(el => {
-      el.textContent = this.engineReportText();
+      if (el.textContent !== reportText) el.textContent = reportText;
     });
+    const activeText = this.engineActive === 'kokoro' ? 'Kokoro' : 'Edge';
     document.querySelectorAll('[data-engine-active]').forEach(el => {
-      el.textContent = this.engineActive === 'kokoro' ? 'Kokoro' : 'Edge';
+      if (el.textContent !== activeText) el.textContent = activeText;
     });
     document.querySelectorAll('[data-engine-detail]').forEach(el => {
       if (live && this.kokoro) {
@@ -1787,7 +1807,8 @@ const TTSEngine = {
     });
     this.syncVoicePickers();
     const pitchNote = document.getElementById('ttsPitchKokoroNote');
-    if (pitchNote) pitchNote.style.display = (this.engineMode === 'edge') ? 'none' : '';
+    const pitchDisplay = (this.engineMode === 'edge') ? 'none' : '';
+    if (pitchNote && pitchNote.style.display !== pitchDisplay) pitchNote.style.display = pitchDisplay;
   },
 
   markKokoroDown(why) {
@@ -1844,12 +1865,46 @@ const TTSEngine = {
           + `&voice=${encodeURIComponent(voiceId)}`
           + `&kvoice=${encodeURIComponent(this.kokoroVoiceFor(voiceId || this.selectedVoice))}`
           + `&rate=${encodeURIComponent('+0%')}&pitch=${encodeURIComponent(this.getPitchParam(pVal))}`;
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), this.KOKORO_RELAY_TIMEOUT_MS);
+        // A busy server (503 "temporarily loaded", 429 rate limit) is not a missing PC: wait a moment and
+        // ask again, and never start the 20 s Edge window for it. Treating it as "PC down" is what made
+        // long listens drop to Edge after several minutes, once look-ahead requests piled up.
+        let busyTries = 0;
+        let relayed = null;
+        let relayErr = null;
+        while (true) {
+          while (this._relayActive >= this.KOKORO_RELAY_MAX) await new Promise(r => setTimeout(r, 50));
+          this._relayActive++;
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), this.KOKORO_RELAY_TIMEOUT_MS);
+          let res = null;
+          try {
+            res = await fetch(rUrl, { signal: controller.signal });
+          } catch (err) {
+            relayErr = err;
+          } finally {
+            clearTimeout(timer);
+            this._relayActive--;
+          }
+          if (res && (res.status === 503 || res.status === 429) && busyTries < this.KOKORO_BUSY_RETRIES) {
+            busyTries++;
+            const ra = parseFloat((res.headers && res.headers.get && res.headers.get('Retry-After')) || '1');
+            const waitMs = Math.min(4000, Math.max(500, (isFinite(ra) ? ra : 1) * 1000) * busyTries);
+            this.logEvent(`server busy (HTTP ${res.status}), asking again in ${Math.round(waitMs / 100) / 10}s`);
+            await new Promise(r => setTimeout(r, waitMs));
+            continue;
+          }
+          relayed = res;
+          break;
+        }
         try {
-          const res = await fetch(rUrl, { signal: controller.signal });
-          clearTimeout(timer);
-          if (!res.ok) throw new Error('HTTP ' + res.status);
+          if (relayErr) throw relayErr;
+          const res = relayed;
+          if (!res.ok) {
+            const e = new Error('HTTP ' + res.status);
+            e.busy = (res.status === 503 || res.status === 429)
+              && !(res.headers && res.headers.get && res.headers.get('X-BYoB-Engine'));
+            throw e;
+          }
           const blob = await res.blob();
           if (!blob || blob.size < 200) throw new Error('PC voice via server sent nothing');
           const actualEngine = (res.headers && res.headers.get && res.headers.get('X-BYoB-Engine') === 'kokoro')
@@ -1867,11 +1922,15 @@ const TTSEngine = {
           this.updateEngineUI();
           return blobUrl;
         } catch (err) {
-          clearTimeout(timer);
           const why = (err && err.name === 'AbortError')
             ? 'relay timeout (' + Math.round(this.KOKORO_RELAY_TIMEOUT_MS / 1000) + 's)'
             : ((err && err.message) || 'error');
-          this.markKokoroDown(why);
+          if (err && err.busy) {
+            // Still busy after the retries: this one paragraph uses Edge, but the PC stays the voice.
+            this.logEvent(`server still busy (${why}), this paragraph uses Edge`);
+          } else {
+            this.markKokoroDown(why);
+          }
           // fall through to Edge below, under Edge's own cache key
         }
       }
@@ -3300,19 +3359,13 @@ const TTSEngine = {
       chip.classList.toggle('selected', Math.abs(chipSpeed - this.rate) < 0.05);
     });
 
-    // Voice selects
-    const modalVoiceSelect = document.getElementById('audiobookModalVoiceSelect');
-    if (modalVoiceSelect && modalVoiceSelect.value !== this.selectedVoice) {
-      modalVoiceSelect.value = this.selectedVoice;
-    }
-    const sideVoiceSelect = document.getElementById('ttsVoiceSelect');
-    if (sideVoiceSelect && sideVoiceSelect.value !== this.selectedVoice) {
-      sideVoiceSelect.value = this.selectedVoice;
-    }
-    const cogVoiceSelect = document.getElementById('audiobookCogVoiceSelect');
-    if (cogVoiceSelect && cogVoiceSelect.value !== this.selectedVoice) {
-      cogVoiceSelect.value = this.selectedVoice;
-    }
+    // Voice selects: each picker holds the list of the engine it was built for (syncVoicePickers), so it
+    // gets that engine's value. Writing the Edge voice id into a Kokoro list blanked the picker on every
+    // paragraph until the next engine update put it back: the flash between paragraphs.
+    this.voicePickerSelects().forEach(sel => {
+      const want = this.voicePickerValue(sel.dataset.engine || this.voicePickerEngine());
+      if (sel.value !== want) sel.value = want;
+    });
 
     this.updateSleepBadge();
 

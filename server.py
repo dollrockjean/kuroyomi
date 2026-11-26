@@ -1842,23 +1842,47 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
 class ThreadedHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
     allow_reuse_address = True
-    _thread_semaphore = threading.Semaphore(24)
+    # Up to 40 requests run at once. A request that finds every slot busy waits in its own thread for up
+    # to SLOT_WAIT_SECONDS instead of being refused on the spot: a Kokoro paragraph holds a slot for the
+    # whole Render -> Cloudflare -> PC trip, and an instant 503 made the phone think the PC was down and
+    # switch to Edge mid-chapter (the "worse voice after 9 minutes" bug). Only when even the waiting room
+    # (MAX_WAITING) is full, or the wait runs out, does a request get the 503.
+    MAX_RUNNING = 40
+    MAX_WAITING = 120
+    SLOT_WAIT_SECONDS = 6.0   # under the phone's 12 s relay timeout, so a busy answer arrives before it gives up
+    _thread_semaphore = threading.Semaphore(MAX_RUNNING)
+    _waiting_semaphore = threading.Semaphore(MAX_WAITING)
+
+    @staticmethod
+    def _send_busy(request):
+        try:
+            request.sendall(b"HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nX-BYoB-Busy: 1\r\nContent-Type: text/plain\r\nContent-Length: 26\r\nConnection: close\r\n\r\nServer temporarily loaded.")
+        except Exception:
+            pass
 
     def process_request(self, request, client_address):
-        if not self._thread_semaphore.acquire(blocking=False):
-            try:
-                request.sendall(b"HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nContent-Type: text/plain\r\nContent-Length: 26\r\nConnection: close\r\n\r\nServer temporarily loaded.")
-                request.close()
-            except Exception:
-                pass
+        if not self._waiting_semaphore.acquire(blocking=False):
+            self._send_busy(request)
+            self.shutdown_request(request)
             return
-        super().process_request(request, client_address)
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._waiting_semaphore.release()
+            raise
 
     def process_request_thread(self, request, client_address):
         try:
-            super().process_request_thread(request, client_address)
+            if not self._thread_semaphore.acquire(timeout=self.SLOT_WAIT_SECONDS):
+                self._send_busy(request)
+                self.shutdown_request(request)
+                return
+            try:
+                super().process_request_thread(request, client_address)
+            finally:
+                self._thread_semaphore.release()
         finally:
-            self._thread_semaphore.release()
+            self._waiting_semaphore.release()
 
     def server_bind(self):
         import socket as s
