@@ -29,6 +29,8 @@ def run(scenario):
 class ReadAloudStallTests(unittest.TestCase):
     def test_ellipsis_line_is_skipped_with_the_cloud_voice(self):
         r = run("ellipsis-edge")
+        self.assertEqual(r["onBeat"], 1, "the '…' line should hold a short pause, not be skipped")
+        self.assertTrue(r["beatIsSilence"], "the pause must be real silence on the audio element")
         self.assertEqual(r["afterEllipsis"], 2, "playback did not get past the '…' line")
         self.assertEqual(r["fetched"], ["Hello there.", "Next line."])
         self.assertFalse(r["usedDeviceVoice"], "an empty line must not knock it onto the device voice")

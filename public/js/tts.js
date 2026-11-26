@@ -178,7 +178,12 @@ const TTSEngine = {
     // Ellipses become one short breath pause. A comma or a run of dots left standing between
     // spaces is read out loud as the word "comma" (or "dot dot dot"), so the pause is attached to
     // the word before it, and an ellipsis with nothing before it is dropped.
-    clean = clean.replace(/(\w)\s*(?:\.{3,}|…+)\s*/g, '$1, ');
+    // How long the pause is depends on what follows: at the end of a line it is a full stop, before
+    // a new sentence a full stop, and a voice trailing off mid-sentence gets a dash, which every
+    // voice reads as a longer hold than a comma (2026-11-25: a comma was too quick to be heard).
+    clean = clean.replace(/(\w)\s*(?:\.{3,}|…+)(?=[\s"'”’)]*$)/g, '$1.');
+    clean = clean.replace(/(\w)\s*(?:\.{3,}|…+)\s*(?=["'“‘]?[A-Z])/g, '$1. ');
+    clean = clean.replace(/(\w)\s*(?:\.{3,}|…+)\s*/g, '$1 — ');
     clean = clean.replace(/\s*(?:\.{3,}|…+)\s*/g, ' ');
     clean = clean.replace(/[\u2013\u2014]+|--+/g, ' — ');
 
@@ -200,6 +205,24 @@ const TTSEngine = {
   // True when a line has something to say. A line that is only "…", dashes, stars or other
   // punctuation normalizes to nothing: sent to a voice it returns no audio (Edge) or an utterance
   // that never ends (iOS device voice), and read aloud froze there (2026-11-25, build 55.6).
+  // A line with no words is still part of the scene: "…" is a silence, "***" a scene break. This is
+  // how long to hold on it before the next line (0 for a truly empty line). The audio element plays
+  // it at the listening speed, so 2x halves it like everything else.
+  beatSecondsFor(text) {
+    const t = (text || '').trim();
+    if (!t) return 0;
+    if (/^[\s*~#=_\-–—•·◇◆○●✦✧❖]{3,}$/u.test(t) && !/[.…!?]/.test(t)) return 1.4;
+    if (/[.…!?]/.test(t)) return 0.9;
+    return 0.5;
+  },
+
+  silenceUriFor(seconds) {
+    this._silenceUris = this._silenceUris || {};
+    const key = seconds.toFixed(2);
+    if (!this._silenceUris[key]) this._silenceUris[key] = this.generateSilenceWavUri(seconds);
+    return this._silenceUris[key];
+  },
+
   isSpeakable(text) {
     if (!text) return false;
     return /[\p{L}\p{N}]/u.test(this.normalizeForSpeech(text));
@@ -377,7 +400,11 @@ const TTSEngine = {
     for (let i = startIndex; i < this.paragraphs.length && parts.length < 12 && t < 300; i++) {
       const el = this.paragraphs[i];
       const text = el ? el.innerText.trim() : '';
-      if (!this.isSpeakable(text)) continue;
+      if (!this.isSpeakable(text)) {
+        // A silent beat ends the joined stream so the pause is really played, not stitched over
+        if (this.beatSecondsFor(text) > 0) break;
+        continue;
+      }
       const info = this.audioBytes.get(this.cacheKeyFor(text));
       if (!info || (rate && info.rate !== rate)) break;
       rate = info.rate;
@@ -2335,6 +2362,24 @@ const TTSEngine = {
     if (!this.isSpeakable(textToSpeak)) {
       // Nothing to say ("…", a row of dashes, a blank line): never send it to a voice, go straight on.
       // Straight on, in this same task, so the phone keeps its audio session in the background.
+      const beat = navigator.onLine && !this.isUsingDeviceVoice ? this.beatSecondsFor(textToSpeak) : 0;
+      if (beat > 0) {
+        // Hold a short silence on it, played on the same audio element so the phone keeps its audio
+        // session and lock-screen controls; 'ended' moves on exactly like after a spoken line.
+        this.logEvent(`paragraph ${index} has no words, ${beat}s pause`);
+        this.setChain(null);
+        this.clearHighlight();
+        el.classList.add('speaking-active');
+        const a = this.audioElement;
+        a.loop = false;
+        a.src = this.silenceUriFor(beat);
+        a.playbackRate = this.rate || 1.0;
+        const p = a.play();
+        if (p && p.catch) p.catch(() => {
+          if (this.playbackSessionId === sessionId && this.isPlaying && !this.isPaused) this.speakParagraph(index + 1);
+        });
+        return;
+      }
       if (textToSpeak) this.logEvent(`paragraph ${index} has no words, skipped`);
       this.speakParagraph(index + 1);
       return;

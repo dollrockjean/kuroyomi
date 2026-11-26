@@ -156,6 +156,11 @@ async function tick(n, ms) {
     // the audio element's 'ended' for line 0 hands over to line 1, which is only "…"
     T.speakParagraph(1);
     await sleep(50);
+    // it holds a short silence on the "…" line, then the silence ending moves on
+    out.onBeat = T.currentIndex;
+    out.beatIsSilence = Object.values(T._silenceUris || {}).indexOf(T.audioElement.src) !== -1;
+    T.speakParagraph(T.indexAfterAudio());  // what the "ended" event does
+    await sleep(50);
     out.afterEllipsis = T.currentIndex;
     out.fetched = fetched;
     out.usedDeviceVoice = T.isUsingDeviceVoice;
