@@ -33,6 +33,11 @@
         d.style.color = c[1];
         var m = document.querySelector('meta[name="theme-color"]');
         if (m) m.setAttribute('content', c[0]);
+        // Translucent status bar lets text scroll under it and iOS blurs that edge. An opaque bar
+        // starts the page below it instead (black for dark themes, default/white for light ones).
+        var n = parseInt(c[0].slice(1), 16), lum = (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
+        var sb = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+        if (sb) sb.setAttribute('content', lum < 0.5 ? 'black' : 'default');
       } catch (e) {}
     })();
   </script>
@@ -56,8 +61,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,300;0,400;0,700;1,300;1,400;1,700&family=Lora:ital,wght@0,400..700;1,400..700&family=Merriweather:ital,wght@0,300;0,400;0,700;1,300;1,400;1,700&family=Open+Sans:ital,wght@0,300..800;1,300..800&family=PT+Serif:ital,wght@0,400;0,700;1,400;1,700&family=Roboto:ital,wght@0,300;0,400;0,500;0,700;1,400;1,700&display=swap" rel="stylesheet">
 
   <!-- Styles -->
-  <link rel="stylesheet" href="/css/brutalist.css?v=56.1">
-  <link rel="stylesheet" href="/css/refresh.css?v=56.1">
+  <link rel="stylesheet" href="/css/brutalist.css?v=56.2">
+  <link rel="stylesheet" href="/css/refresh.css?v=56.2">
 
   <!-- Critical Quick Sheet Theme & Layout Styles (Anti-Cache Protection) -->
   <style id="quickSheetCriticalStyles">
@@ -1345,11 +1350,11 @@
   <input type="file" id="novelCoverInput" accept="image/*" style="display: none;" />
 
   <!-- Application Logic Modules -->
-  <script src="/js/storage.js?v=56.1"></script>
-  <script src="/js/sync.js?v=56.1"></script>
-  <script src="/js/autoscroll.js?v=56.1"></script>
-  <script src="/js/tts.js?v=56.1"></script>
-  <script src="/js/reader.js?v=56.1"></script>
-  <script src="/js/app.js?v=56.1"></script>
+  <script src="/js/storage.js?v=56.2"></script>
+  <script src="/js/sync.js?v=56.2"></script>
+  <script src="/js/autoscroll.js?v=56.2"></script>
+  <script src="/js/tts.js?v=56.2"></script>
+  <script src="/js/reader.js?v=56.2"></script>
+  <script src="/js/app.js?v=56.2"></script>
 </body>
 </html>
