@@ -514,6 +514,27 @@ const TTSEngine = {
       const log = JSON.parse(localStorage.getItem('kuroyomi_tts_log') || '[]');
       log.push(entry);
       localStorage.setItem('kuroyomi_tts_log', JSON.stringify(log.slice(-60)));
+      this._logOutbox = (this._logOutbox || []).concat(entry).slice(-40);
+    } catch (e) {}
+  },
+
+  // Sends the lines logged since the last send to the server diary (/api/tts/diag reads it back)
+  flushLogToServer() {
+    const lines = this._logOutbox || [];
+    if (!lines.length || !navigator.onLine) return;
+    const userId = (window.SyncService && window.SyncService.currentUserId)
+      || (typeof Storage !== 'undefined' && Storage.getUserId && Storage.getUserId()) || '';
+    const syncKey = (typeof Storage !== 'undefined' && Storage.getSyncKey && Storage.getSyncKey()) || '';
+    if (!userId || !syncKey) return;
+    this._logOutbox = [];
+    const build = (window.App && typeof window.App.runningBuild === 'function') ? window.App.runningBuild() : '';
+    try {
+      fetch('/api/tts/log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, sync_key: syncKey, lines: lines, build: build }),
+        keepalive: true
+      }).catch(() => {});
     } catch (e) {}
   },
 
@@ -720,6 +741,36 @@ const TTSEngine = {
     this.audioElement.loop = false;
   },
 
+  // The cloud voice failed on a line while the app is in the background. The phone's own voice cannot
+  // speak there (iOS holds speechSynthesis while the page is hidden), and handing over to it pauses the
+  // audio element, which loses the background audio session for good: read aloud went quiet the moment
+  // he tabbed out (2026-11-25). So in the background keep the session alive on silence and try the
+  // cloud voice again; after a few tries skip the line. Returns true when it took over.
+  holdInBackgroundInsteadOfDevice(index, why) {
+    if (!document.hidden || !this.audioElement) return false;
+    const sessionId = this.playbackSessionId;
+    this._bgRetry = (this._bgRetryIndex === index) ? (this._bgRetry || 0) + 1 : 1;
+    this._bgRetryIndex = index;
+    this.isLoading = false;
+    this.holdAudioSession();
+    if (this._bgRetry > 4) {
+      this.logEvent(`paragraph ${index}: cloud voice failed ${this._bgRetry - 1} times in the background (${why}), skipping it`);
+      this._bgRetry = 0;
+      setTimeout(() => {
+        if (this.playbackSessionId === sessionId && this.isPlaying && !this.isPaused) this.speakParagraph(index + 1);
+      }, 300);
+      return true;
+    }
+    this.logEvent(`paragraph ${index}: cloud voice failed in the background (${why}), holding audio and retrying (${this._bgRetry})`);
+    setTimeout(() => {
+      if (this.playbackSessionId === sessionId && this.isPlaying && !this.isPaused) {
+        if (!document.hidden) this._bgRetry = 0;
+        this.speakParagraph(index);
+      }
+    }, 2500 * this._bgRetry);
+    return true;
+  },
+
   bindAudioElementEvents() {
     if (this._onEndedHandler) {
       this.audioElement.removeEventListener('ended', this._onEndedHandler);
@@ -803,7 +854,7 @@ const TTSEngine = {
       if (!this.isLoading) {
         const el = this.paragraphs[this.currentIndex];
         const text = el ? el.innerText.trim() : '';
-        if (text) {
+        if (text && !this.holdInBackgroundInsteadOfDevice(this.currentIndex, 'audio error')) {
           this.setDeviceVoiceMode(true);
           this.updateAudiobookModalContent();
           this.speakWithDeviceVoice(text, this.currentIndex);
@@ -930,6 +981,17 @@ const TTSEngine = {
         }
       } catch (e) {}
     }
+
+    // Every trip to the background and back goes in the log, and the log goes to the server diary
+    document.addEventListener('visibilitychange', () => {
+      if (this.isPlaying) {
+        const a = this.audioElement;
+        this.logEvent(`page ${document.hidden ? 'hidden' : 'visible'} at paragraph ${this.currentIndex}`
+          + ` (${this.isUsingDeviceVoice ? 'device voice' : this.engineActive}, audio ${a && a.paused ? 'paused' : 'playing'}${this.isPaused ? ', app paused' : ''})`);
+      }
+      this.flushLogToServer();
+    });
+    window.addEventListener('pagehide', () => this.flushLogToServer());
 
     // Handle tab visibility changes: restore smooth scrolling & wake suspended audio
     document.addEventListener('visibilitychange', () => {
@@ -1944,7 +2006,10 @@ const TTSEngine = {
     }
 
     if (fromIndex === null || fromIndex === undefined) {
-      if (window.Reader && typeof window.Reader.getVisibleParagraphIndex === 'function') {
+      if (window.Reader && typeof window.Reader.getVisibleParagraphListIndex === 'function') {
+        // Index into this.paragraphs (same selector), not the data-pid, so it starts on the line he is looking at
+        fromIndex = window.Reader.getVisibleParagraphListIndex();
+      } else if (window.Reader && typeof window.Reader.getVisibleParagraphIndex === 'function') {
         fromIndex = window.Reader.getVisibleParagraphIndex();
       } else {
         fromIndex = 0;
@@ -2180,6 +2245,12 @@ const TTSEngine = {
   },
 
   stop() {
+    if (this.isPlaying) {
+      let caller = '';
+      try { caller = ((new Error().stack || '').split('\n')[2] || '').trim().slice(0, 120); } catch (e) {}
+      this.logEvent(`stop() at paragraph ${this.currentIndex}${document.hidden ? ' while hidden' : ''} ${caller}`);
+      this.flushLogToServer();
+    }
     if (window.__reloadWhenIdle) {
       window.__reloadWhenIdle = false;
       setTimeout(() => window.location.reload(), 400);
@@ -2510,6 +2581,7 @@ const TTSEngine = {
         this.pauseWithReason('The browser blocked audio from starting on its own.');
         return;
       }
+      if (this.holdInBackgroundInsteadOfDevice(index, err && err.name ? err.name : 'error')) return;
       this.logEvent(`cloud voice failed (${err && err.name ? err.name : 'error'}), using device voice for paragraph ${index}`);
       console.warn('Cloud TTS synthesis failed, using device voice fallback for this paragraph:', err);
       this.releaseAudioSession();

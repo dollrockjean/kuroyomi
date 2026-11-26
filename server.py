@@ -1163,7 +1163,9 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 return
             if path == "/api/tts/prefetch" and self.rate_limited("tts"):
                 return
-            if path in ("/api/restore", "/api/devices/unlink", "/api/novels/cover", "/api/novels/clean-text", "/api/novels/rechapter") or path.startswith("/api/novels/delete"):
+            if path == "/api/tts/log" and self.rate_limited("engine"):
+                return
+            if path in ("/api/restore", "/api/tts/log", "/api/devices/unlink", "/api/novels/cover", "/api/novels/clean-text", "/api/novels/rechapter") or path.startswith("/api/novels/delete"):
                 if not self.is_authorized(body.get("user_id"), body.get("sync_key")):
                     self.deny()
                     return
@@ -1238,6 +1240,17 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
 
         # 0b. The app says which paragraphs are coming so the PC can render them ahead. It goes
         # through here because only this server knows where the PC is and holds its key.
+        # 0b. The phone's own read-aloud log (why it paused, stopped or skipped), into the same diary
+        # /api/tts/diag reads, so a stop in the background can be explained afterwards (2026-11-25).
+        if path == "/api/tts/log":
+            conn.close()
+            user_id = (body.get("user_id") or "").strip()
+            lines = [ln[:300] for ln in (body.get("lines") or []) if isinstance(ln, str) and ln.strip()][-40:]
+            for ln in lines:
+                kokoro_note(user_id, "client", line=ln, build=str(body.get("build") or "")[:16])
+            self.send_json({"ok": True, "saved": len(lines)})
+            return
+
         if path == "/api/tts/prefetch":
             conn.close()
             info = kokoro_get((body.get("user_id") or "").strip())

@@ -171,18 +171,52 @@ const Reader = {
     }
   },
 
-  getVisibleParagraphIndex() {
-    const paras = document.querySelectorAll('#readerContent .reader-paragraph, #readerContent .reader-heading');
-    let bestPid = 0;
-    for (let p of paras) {
-      const rect = p.getBoundingClientRect();
-      if (rect.top <= window.innerHeight * 0.4) {
-        bestPid = parseInt(p.getAttribute('data-pid') || '0');
-      } else {
-        break;
+  // Height covered at the top of the screen (status bar strip + top bar when it is showing)
+  getTopInset() {
+    let inset = 0;
+    const scrim = document.querySelector('.safe-area-scrim');
+    if (scrim) {
+      const r = scrim.getBoundingClientRect();
+      if (r.height > 0 && r.top <= 0) inset = Math.max(inset, r.bottom);
+    }
+    const topBar = document.getElementById('readerTopBar');
+    if (topBar && !topBar.classList.contains('minimized')) {
+      const r = topBar.getBoundingClientRect();
+      const cs = window.getComputedStyle(topBar);
+      if (r.height > 0 && r.top <= 1 && cs.visibility !== 'hidden' && parseFloat(cs.opacity || '1') > 0.05) {
+        inset = Math.max(inset, r.bottom);
       }
     }
-    return bestPid;
+    return Math.max(0, Math.min(inset, window.innerHeight * 0.5));
+  },
+
+  // The first paragraph he can see under the top bar: the spot that gets saved and where read aloud starts
+  getTopVisibleParagraph() {
+    const paras = document.querySelectorAll('#readerContent .reader-paragraph, #readerContent .reader-heading');
+    const line = this.getTopInset() + 4;
+    for (let i = 0; i < paras.length; i++) {
+      const rect = paras[i].getBoundingClientRect();
+      if (rect.height === 0 && rect.width === 0) continue;
+      if (rect.bottom > line) {
+        return { el: paras[i], index: i, pid: parseInt(paras[i].getAttribute('data-pid') || '0', 10) || 0 };
+      }
+    }
+    return { el: paras[0] || null, index: 0, pid: paras[0] ? (parseInt(paras[0].getAttribute('data-pid') || '0', 10) || 0) : 0 };
+  },
+
+  getVisibleParagraphIndex() {
+    return this.getTopVisibleParagraph().pid;
+  },
+
+  getVisibleParagraphListIndex() {
+    return this.getTopVisibleParagraph().index;
+  },
+
+  // Put a paragraph just under the top bar (scrollIntoView alone hides it behind the bar)
+  scrollParagraphToTop(el) {
+    if (!el) return;
+    const y = window.scrollY + el.getBoundingClientRect().top - this.getTopInset() - 8;
+    window.scrollTo(0, Math.max(0, y));
   },
 
   bindCenterScreenTap() {
@@ -780,7 +814,7 @@ const Reader = {
               }
             }
             if (el) {
-              el.scrollIntoView({ behavior: 'auto', block: 'start' });
+              this.scrollParagraphToTop(el);
               found = true;
             }
           }

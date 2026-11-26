@@ -501,8 +501,30 @@ const SyncService = {
           })
         });
         const data = await res.json().catch(() => null);
-        if (data && data.applied === false && data.settings && window.App && App.adoptServerSettings) {
-          App.adoptServerSettings(data.settings);
+        if (data && data.applied === false && data.settings) {
+          const serverAt = Number(data.updated_at || data.settings.updated_at || 0);
+          const tappedJustNow = !keepStamp && settings.changed_at && (Date.now() - settings.changed_at) < 15000;
+          if (tappedJustNow && serverAt > 0 && !this._settingsRetry) {
+            // He changed this a moment ago, so it is the newest change whatever the clocks say. The server
+            // refused it only because another device's clock runs ahead; adopting the server copy flipped
+            // his tap straight back (the engine switch "did nothing", 2026-11-25). Send it again, stamped
+            // just after the server's copy.
+            this._settingsRetry = true;
+            try {
+              settings.changed_at = Math.round(serverAt * 1000) + 10;
+              Storage.setLocalSettings(settings);
+              const { user_id: _u, updated_at: _a, sync_key: _k, ...again } = settings;
+              await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ...again, user_id: this.currentUserId, client_updated_at: serverAt + 0.01 })
+              });
+            } finally {
+              this._settingsRetry = false;
+            }
+          } else if (window.App && App.adoptServerSettings) {
+            App.adoptServerSettings(data.settings);
+          }
         }
       } catch (e) {
         console.warn('Settings cloud sync error:', e);

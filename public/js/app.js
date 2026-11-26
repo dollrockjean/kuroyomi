@@ -273,6 +273,8 @@ const App = {
   async rescueStaleBuild() {
     const running = this.runningBuild();
     if (!running) return;
+    // Never reload under read aloud: it would cut him off mid-sentence
+    if (typeof TTSEngine !== 'undefined' && TTSEngine.isPlaying) return;
     try {
       if (sessionStorage.getItem('byob_rescued') === '1') return;
     } catch (e) {}
@@ -294,6 +296,7 @@ const App = {
         const regs = await navigator.serviceWorker.getRegistrations();
         await Promise.all(regs.map((r) => r.unregister().catch(() => false)));
       }
+      if (typeof TTSEngine !== 'undefined' && TTSEngine.isPlaying) return;
       window.location.reload();
     } catch (e) {
       // Offline or a sleeping server: nothing to rescue from, try again next launch.
