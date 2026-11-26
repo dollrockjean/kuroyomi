@@ -69,7 +69,8 @@ class StudioVoiceTests(unittest.TestCase):
         self.assertIn('kvoice.startswith("vs_")', src)
         self.assertIn('"kokoro-fallback"', src)
         js = open(os.path.join(root, "public", "js", "tts.js"), encoding="utf-8").read()
-        self.assertIn("id: 'vs_default'", js)
+        # Studio was dropped from the picker (2026-11-26: lower quality, less emotion); the relay keeps it.
+        self.assertNotIn("id: 'vs_default'", js)
 
 
 if __name__ == "__main__":

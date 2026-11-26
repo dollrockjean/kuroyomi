@@ -16,7 +16,7 @@ import json
 import os
 import re
 
-VERSION = "p2"  # part of the audio cache key: bump when a rule changes so old audio is redone
+VERSION = "p3"  # part of the audio cache key: bump when a rule changes so old audio is redone
 
 MODALS = {"to", "will", "would", "can", "could", "should", "must", "may", "might", "shall", "do",
           "does", "did", "don't", "didn't", "doesn't", "can't", "cannot", "won't", "wouldn't",
@@ -37,6 +37,14 @@ NOT_METAL_NEXT = DETS | {"to", "them", "him", "her", "us", "me", "you", "the", "
                          "singer", "character", "story", "in", "on", "from"}
 
 
+HABITUAL_RE = re.compile(r"\b(every|each|always|often|usually|daily|sometimes|never|rarely|nightly)\b", re.I)
+MINUTE_NEXT = {"detail", "details", "particle", "particles", "amount", "amounts", "traces", "trace",
+               "fraction", "differences", "difference", "changes", "quantity", "quantities",
+               "hint", "hints", "cracks", "crack", "movements", "movement", "adjustments", "flaws"}
+BASS_FISH_NEXT = {"fish", "fishing", "fillet", "fillets", "lake", "boat"}
+BASS_FISH_PREV = {"sea", "striped", "largemouth", "smallmouth", "caught", "catch", "catching", "grilled"}
+
+
 def _cap(src, word):
     if src.isupper() and len(src) > 1:
         return word.upper()
@@ -52,6 +60,7 @@ def _fix_sentence(sentence, in_quote):
         prev2 = words[n - 2][1].lower() if n > 1 else ""
         nxt = words[n + 1][1].lower() if n + 1 < len(words) else ""
         new = None
+        habitual = bool(HABITUAL_RE.search(sentence))
         if w == "lead":
             if nxt in METAL_NEXT or (prev in METAL_PREV and nxt not in NOT_METAL_NEXT
                                      and not (prev == "of" and prev2 in {"take", "took", "in"})):
@@ -62,7 +71,9 @@ def _fix_sentence(sentence, in_quote):
             past = prev in {"had", "has", "have", "'ve", "i've", "you've", "we've", "they've",
                             "was", "were", "been", "being", "is", "are", "be", "already", "just",
                             "once", "well", "widely", "he'd", "she'd", "i'd", "they'd", "we'd"}
-            if past or (not present and (prev in SUBJECTS or prev[:1].isupper() or
+            if habitual:
+                new = None
+            elif past or (not present and (prev in SUBJECTS or prev[:1].isupper() or
                                          re.match(r"^[A-Z]", words[n - 1][1] if n else ""))):
                 new = "red"
             elif not present and prev in {"and", "then", "but", "finally", "quickly", "slowly"}:
@@ -88,6 +99,12 @@ def _fix_sentence(sentence, in_quote):
             if prev not in DETS | {"white", "grey", "gray", "mourning", "turtle", "like", "as",
                                    "peace", "little", "rock", "wild", "dove"}:
                 new = "dohv"
+        elif w == "minute":
+            if nxt in MINUTE_NEXT:
+                new = "mynute"
+        elif w == "bass":
+            if nxt in BASS_FISH_NEXT or prev in BASS_FISH_PREV:
+                new = "bas"
         elif w == "bow":
             if nxt in {"down", "low", "deeply", "slightly", "before", "respectfully", "politely",
                        "out", "his", "her", "their", "my", "your"} or prev in MODALS | {"deep",
