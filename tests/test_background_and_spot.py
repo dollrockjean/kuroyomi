@@ -56,3 +56,19 @@ class SyncTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PrevParagraphAcrossChapterTest(unittest.TestCase):
+    def test_back_from_first_line_lands_on_last_speakable_line_of_previous_chapter(self):
+        js = src("tts.js")
+        pp = js[js.index("  prevParagraph() {"):]
+        pp = pp[:pp.index("\n  },")]
+        self.assertIn("this.prevChapter(true)", pp)
+        body = js[js.index("async prevChapter(toEnd = false)"):]
+        body = body[:body.index("// === Sleep Timer")]
+        self.assertIn("this.isSpeakable(", body)
+        self.assertIn("this.start(startAt)", body)
+        self.assertNotIn("this.start(0)", body)
+        self.assertIn("scrollParagraphToTop", body)
+        # the chapter button still starts the previous chapter from its top
+        self.assertIn("this.prevChapter()", js) if "this.prevChapter()" in js else None

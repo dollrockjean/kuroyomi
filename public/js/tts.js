@@ -2794,7 +2794,7 @@ const TTSEngine = {
     if (this.currentIndex > 0) {
       this.jumpToParagraph(this.currentIndex - 1);
     } else if (this.isPlaying && window.Reader && window.Reader.currentChapter && window.Reader.currentChapter.prev_chapter) {
-      this.prevChapter();
+      this.prevChapter(true);
     } else {
       this.jumpToParagraph(0);
     }
@@ -2830,7 +2830,9 @@ const TTSEngine = {
     }
   },
 
-  async prevChapter() {
+  // toEnd: stepping back a paragraph from the first line lands on the LAST line of the previous chapter,
+  // not its start. Plain prevChapter() (the chapter button) still starts it from the top.
+  async prevChapter(toEnd = false) {
     if (window.Reader && window.Reader.currentChapter && window.Reader.currentChapter.prev_chapter) {
       const wasModalOpen = document.getElementById('audiobookFullModal')?.style.display === 'flex';
       const prevId = window.Reader.currentChapter.prev_chapter.id;
@@ -2839,7 +2841,18 @@ const TTSEngine = {
       this.playKeepAliveSilence();
       await window.Reader.loadChapter(prevId, false, true, true);
       this.refreshParagraphs();
-      this.start(0);
+      let startAt = 0;
+      if (toEnd === true) {
+        startAt = Math.max(0, this.paragraphs.length - 1);
+        for (let i = this.paragraphs.length - 1; i >= 0; i--) {
+          const el = this.paragraphs[i];
+          if (el && this.isSpeakable(el.innerText.trim())) { startAt = i; break; }
+        }
+      }
+      this.start(startAt);
+      if (toEnd && window.Reader && window.Reader.scrollParagraphToTop && this.paragraphs[startAt]) {
+        try { window.Reader.scrollParagraphToTop(this.paragraphs[startAt]); } catch (e) {}
+      }
       if (wasModalOpen) {
         this.openAudiobookModal();
       }
