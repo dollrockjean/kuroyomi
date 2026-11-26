@@ -1990,6 +1990,7 @@ const TTSEngine = {
           }
           const blob = await res.blob();
           const blobUrl = await storeBlob(blob, edgeKey);
+          this.noteNetworkBack();
           this.pendingFetches.delete(cacheKey);
           this.engineActive = 'edge';
           this.updateEngineUI();
@@ -1998,6 +1999,7 @@ const TTSEngine = {
           clearTimeout(timer);
           if (attempt === retries) {
             this.pendingFetches.delete(cacheKey);
+            this._netFailAt = Date.now();
             throw err;
           }
           await new Promise(r => setTimeout(r, 400));
@@ -2690,6 +2692,7 @@ const TTSEngine = {
         this.pauseWithReason('The browser blocked audio from starting on its own.');
         return;
       }
+      if (this.isNoSignal()) this.warnRanOut(document.hidden);
       if (this.holdInBackgroundInsteadOfDevice(index, err && err.name ? err.name : 'error')) return;
       this.logEvent(`cloud voice failed (${err && err.name ? err.name : 'error'}), using device voice for paragraph ${index}`);
       console.warn('Cloud TTS synthesis failed, using device voice fallback for this paragraph:', err);
@@ -2784,6 +2787,69 @@ const TTSEngine = {
     if (typeof last !== 'number') return;
     const d = t - last;
     if (d > 0 && d < 5) window.AudioTank.recordListen(d);
+    this.checkAudioLow();
+  },
+
+  // --- Running low with no signal ---------------------------------------------------------------
+  // No signal = the phone says it is offline, or the last request for audio failed in the last minute.
+  isNoSignal() {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return true;
+    return !!this._netFailAt && Date.now() - this._netFailAt < 60000;
+  },
+
+  noteNetworkBack() {
+    this._netFailAt = 0;
+    if (this._lowWarned || this._ranOutWarned) this.logEvent('signal back, read aloud audio refilling');
+    this._lowWarned = false;
+    this._ranOutWarned = false;
+  },
+
+  // Minutes of listening ready on the phone from the line after this one, in order, stopping at the first
+  // line that is not stored. Past the end of the chapter it counts what the last tank fill stored ahead.
+  readyAheadSeconds() {
+    const tank = window.AudioTank;
+    let audio = 0;
+    let complete = true;
+    for (let i = this.currentIndex + 1; i < this.paragraphs.length; i++) {
+      const el = this.paragraphs[i];
+      const text = el ? el.innerText.trim() : '';
+      if (!this.isSpeakable(text)) continue;
+      const key = this.cacheKeyFor(text);
+      const kKey = this.engineMode !== 'edge' ? this.cacheKeyFor(text, undefined, undefined, 'kokoro') : '';
+      const have = this.blobCache.has(key) || (tank && (tank.has(key) || (kKey && tank.has(kKey))));
+      if (!have) { complete = false; break; }
+      audio += this.estimateParagraphSeconds(text, key);
+    }
+    if (complete) audio += this._tankBeyondSeconds || 0;
+    return audio / Math.max(0.5, parseFloat(this.rate) || 1);
+  },
+
+  LOW_CHECK_MS: 15000,
+  checkAudioLow(force) {
+    const now = Date.now();
+    if (!force && now - (this._lowCheckAt || 0) < this.LOW_CHECK_MS) return;
+    this._lowCheckAt = now;
+    const tank = window.AudioTank;
+    if (!tank || !this.isPlaying || this.isPaused || this.isUsingDeviceVoice) return;
+    if (!this.isNoSignal()) return;
+    const left = this.readyAheadSeconds();
+    if (left >= tank.LOW_SECONDS || this._lowWarned) return;
+    this._lowWarned = true;
+    const min = Math.max(1, Math.round(left / 60));
+    this.logEvent(`no signal, about ${min} min of stored audio left`);
+    tank.notify('Read aloud is running low',
+      `About ${min} min of voice left on this phone and no signal. Get Wi-Fi or signal to keep it going.`);
+  },
+
+  warnRanOut(inBackground) {
+    if (this._ranOutWarned || !window.AudioTank) return;
+    this._ranOutWarned = true;
+    this._lowWarned = true;
+    this.logEvent('stored audio ran out with no signal');
+    window.AudioTank.notify('Read aloud ran out of stored audio',
+      inBackground
+        ? 'No signal. It is waiting and will carry on when signal comes back.'
+        : 'No signal, so the phone\'s own voice is reading until signal comes back.');
   },
 
   // Phone tank fill: past the normal look-ahead, keep fetching the rest of this chapter and the chapters
@@ -2832,11 +2898,15 @@ const TTSEngine = {
       }
       const reader = window.Reader;
       let ch = reader && reader.currentChapter;
+      const inChapter = ahead;
+      this._tankBeyondSeconds = 0;
       for (let n = 0; n < this.TANK_FILL_MAX_CHAPTERS && ch && ch.next_chapter && alive(); n++) {
         ch = await reader.preloadChapter(ch.next_chapter.id);
         if (!ch) return;
         for (const text of reader.getSpeakableTexts(ch, 100000)) {
-          if (!(await step(text))) return;
+          const go = await step(text);
+          this._tankBeyondSeconds = Math.max(0, ahead - inChapter);
+          if (!go) return;
         }
       }
     } finally {

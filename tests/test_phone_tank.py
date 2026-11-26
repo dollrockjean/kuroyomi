@@ -89,6 +89,21 @@ class PhoneTankTests(unittest.TestCase):
         self.assertEqual(r["stored"], 29, "every line after the current one is stored ahead")
         self.assertEqual(r["blobCache"], 0, "a tank fill must not hold audio in memory")
 
+    def test_warns_once_when_low_and_when_it_runs_out(self):
+        r = run("tts-low")
+        self.assertEqual(r["onlineToasts"], 0, "with signal nothing is low: it keeps fetching")
+        self.assertEqual(len(r["lowToasts"]), 1, "one warning per outage, not one every check")
+        self.assertIn("running low", r["lowToasts"][0])
+        self.assertEqual(len(r["allToasts"]), 2)
+        self.assertIn("ran out", r["allToasts"][1])
+        self.assertFalse(r["resetLow"], "signal back re-arms the warning")
+
+    def test_mobile_data_is_off_by_default(self):
+        r = run("sizing")
+        self.assertEqual(r["iphone"], "lookahead")
+        self.assertIn("data-tank-cellular", read("index.html"))
+        self.assertNotIn('data-tank-cellular style="width: 20px; height: 20px; accent-color: var(--accent); cursor: pointer;" checked', read("index.html"))
+
     def test_no_fill_on_unknown_connection_by_default(self):
         r = run("tts-nofill")
         self.assertEqual(r["stored"], 0)
@@ -103,7 +118,7 @@ class PhoneTankWiringTests(unittest.TestCase):
         self.assertIn("/js/tank.js?v=%s" % stamp, index)
         self.assertLess(index.index("/js/tank.js"), index.index("/js/tts.js"), "tank.js must load before tts.js")
         self.assertIn("'/js/tank.js?v=' + ASSET_VERSION", sw)
-        for attr in ("data-tank-status", "data-tank-cellular", "data-tank-clear"):
+        for attr in ("data-tank-status", "data-tank-cellular", "data-tank-clear", "data-tank-alerts"):
             self.assertIn(attr, index)
         self.assertIn("Keep audio on this phone", index)
         self.assertIn("Use mobile data to fill", index)

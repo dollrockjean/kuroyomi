@@ -235,6 +235,25 @@ const DAY = 86400000;
       out.url = !!url;
       out.fetched = fetched.slice();
       out.engineActive = T.engineActive;
+    } else if (scenario === 'tts-low') {
+      const toasts = [];
+      env.win.App = { showToast: (m) => toasts.push(m) };
+      T.engineMode = 'edge';
+      T.isPlaying = true; T.isPaused = false; T.currentIndex = 0;
+      // Lines 1-3 are stored (a few seconds), the rest are not, and the phone has no signal
+      for (let i = 1; i <= 3; i++) await A.put(T.cacheKeyFor(paras[i]), new Blob([new Uint8Array(3000)]), 2);
+      env.sandbox.navigator.onLine = true;
+      T.checkAudioLow(true);
+      out.onlineToasts = toasts.length;
+      env.sandbox.navigator.onLine = false;
+      T.checkAudioLow(true);
+      T.checkAudioLow(true);
+      out.lowToasts = toasts.slice();
+      T.warnRanOut(false);
+      T.warnRanOut(false);
+      out.allToasts = toasts.slice();
+      T.noteNetworkBack();
+      out.resetLow = T._lowWarned;
     } else if (scenario === 'tts-fill' || scenario === 'tts-nofill') {
       T.engineMode = 'edge';
       T.isPlaying = true; T.isPaused = false;

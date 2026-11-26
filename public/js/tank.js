@@ -15,7 +15,9 @@
 
   const AudioTank = {
     LISTEN_KEY: 'byob_tank_listen',       // { 'YYYY-MM-DD': seconds of audio played }
-    CELLULAR_KEY: 'byob_tank_cellular',   // '1' = fill on mobile data too
+    CELLULAR_KEY: 'byob_tank_cellular',   // '1' = fill on mobile data too (off unless he turns it on)
+    ALERTS_KEY: 'byob_tank_alerts',       // '1' = also send a phone notification, not just the in-app message
+    LOW_SECONDS: 10 * 60,                 // warn when less than this much listening is left with no signal
     HISTORY_DAYS: 14,
     TARGET_DAYS: 2,
     MIN_SECONDS: 30 * 60,
@@ -117,6 +119,45 @@
     setCellularAllowed(on) {
       try { localStorage.setItem(this.CELLULAR_KEY, on ? '1' : '0'); } catch (e) {}
       this.updateUI();
+    },
+
+    alertsOn() {
+      try { return localStorage.getItem(this.ALERTS_KEY) === '1'; } catch (e) { return false; }
+    },
+
+    // Turning phone notifications on asks iOS for permission (it only asks from a tap).
+    async setAlertsOn(on) {
+      let ok = !!on;
+      if (ok && typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
+        try { ok = (await Notification.requestPermission()) === 'granted'; } catch (e) { ok = false; }
+        if (!ok && root.App && typeof root.App.showToast === 'function') {
+          root.App.showToast('Notifications are blocked. Allow them for BYoB in iPhone Settings, Notifications.');
+        }
+      }
+      if (ok && typeof Notification === 'undefined') ok = false;
+      try { localStorage.setItem(this.ALERTS_KEY, ok ? '1' : '0'); } catch (e) {}
+      this.updateUI();
+      return ok;
+    },
+
+    // One message, two places: always the in-app banner, and a phone notification when he turned it on
+    // (it is what reaches him with the screen off or the app in the background).
+    notify(title, body) {
+      if (root.App && typeof root.App.showToast === 'function') {
+        try { root.App.showToast(title + '. ' + body); } catch (e) {}
+      }
+      if (!this.alertsOn() || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+      const opts = { body, tag: 'byob-read-aloud', renotify: true, icon: '/icons/icon-192.png' };
+      try {
+        // iPhone home-screen apps can only notify through the service worker
+        if (typeof navigator !== 'undefined' && navigator.serviceWorker && navigator.serviceWorker.ready) {
+          navigator.serviceWorker.ready.then((reg) => reg.showNotification(title, opts)).catch(() => {
+            try { new Notification(title, opts); } catch (e) {}
+          });
+        } else {
+          new Notification(title, opts);
+        }
+      } catch (e) {}
     },
 
     currentFillMode() {
@@ -295,12 +336,16 @@
       const text = this.statusText();
       document.querySelectorAll('[data-tank-status]').forEach((el) => { if (el.textContent !== text) el.textContent = text; });
       document.querySelectorAll('[data-tank-cellular]').forEach((el) => { el.checked = this.cellularAllowed(); });
+      document.querySelectorAll('[data-tank-alerts]').forEach((el) => { el.checked = this.alertsOn(); });
     },
 
     bindUI() {
       if (typeof document === 'undefined') return;
       document.querySelectorAll('[data-tank-cellular]').forEach((el) => {
         el.addEventListener('change', () => this.setCellularAllowed(!!el.checked));
+      });
+      document.querySelectorAll('[data-tank-alerts]').forEach((el) => {
+        el.addEventListener('change', async () => { el.checked = await this.setAlertsOn(!!el.checked); });
       });
       document.querySelectorAll('[data-tank-clear]').forEach((el) => {
         el.addEventListener('click', async () => {
