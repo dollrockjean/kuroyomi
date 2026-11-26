@@ -67,7 +67,7 @@ def _fix_sentence(sentence, in_quote, cmu=False):
         prev2 = words[n - 2][1].lower() if n > 1 else ""
         nxt = words[n + 1][1].lower() if n + 1 < len(words) else ""
         new = None
-        habitual = bool(HABITUAL_RE.search(sentence))
+        habitual = bool(HABITUAL_RE.search(" ".join(x[1] for x in words[n + 1:n + 5])))
         if w == "lead":
             if nxt in METAL_NEXT or (prev in METAL_PREV and nxt not in NOT_METAL_NEXT
                                      and not (prev == "of" and prev2 in {"take", "took", "in"})):
