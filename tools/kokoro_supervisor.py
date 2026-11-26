@@ -221,6 +221,37 @@ class Supervisor:
         log(self.dir, "started kokoro_server (pid %d) with %s" % (self.server_proc.pid, py))
         return False
 
+    # --- second voice engine: VoiceStudio's backend (optional) ------------
+    def ensure_voicestudio(self):
+        """Keeps VoiceStudio's OmniVoice backend running on 127.0.0.1:3900 when it is installed in
+        ~/claude-work/voicestudio. Without it the app's "Studio" voice falls back to Kokoro."""
+        root = os.path.join(HOME, "claude-work", "voicestudio")
+        py = os.path.join(root, ".venv", "Scripts", "python.exe")
+        keyfile = os.path.join(root, "api-key.txt")
+        if not (os.path.exists(py) and os.path.exists(keyfile)):
+            return
+        try:
+            with socket.create_connection(("127.0.0.1", 3900), timeout=1):
+                return
+        except OSError:
+            pass
+        proc = getattr(self, "vs_proc", None)
+        if proc and proc.poll() is None:
+            return  # still starting up
+        try:
+            with open(keyfile, "r", encoding="utf-8") as fh:
+                key = fh.read().strip()
+            env = dict(os.environ, OMNIVOICE_API_KEY=key, OMNIVOICE_ANALYTICS_DISABLED="1",
+                       OMNIVOICE_BIND_HOST="127.0.0.1", OMNIVOICE_PORT="3900")
+            out = open(os.path.join(self.dir, "voicestudio.log"), "a", encoding="utf-8", errors="replace")
+            self.vs_proc = subprocess.Popen(
+                [py, os.path.join("backend", "main.py")], cwd=root, env=env,
+                stdout=out, stderr=subprocess.STDOUT,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            log(self.dir, "started VoiceStudio backend (pid %d)" % self.vs_proc.pid)
+        except Exception as exc:  # noqa: BLE001 - the Studio voice just falls back to Kokoro
+            log(self.dir, "VoiceStudio backend did not start: %s" % exc)
+
     # --- tunnel ----------------------------------------------------------
     def ensure_tunnel(self):
         if not self.want_tunnel:
@@ -404,6 +435,7 @@ class Supervisor:
 
     def tick(self):
         self.ensure_server()
+        self.ensure_voicestudio()
         self.check_tunnel()
         self.ensure_tunnel()
         if self.named and not self.tunnel_url:

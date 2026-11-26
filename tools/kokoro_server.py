@@ -82,9 +82,54 @@ KOKORO_VOICES = [
     {"id": "bm_lewis", "name": "Lewis", "desc": "Gravelly British"},
     {"id": "bf_emma", "name": "Emma", "desc": "Refined British"},
     {"id": "bf_isabella", "name": "Isabella", "desc": "Bright British"},
+    # The second engine: VoiceStudio's OmniVoice, running on this same PC. "vs_" ids are rendered by
+    # it; when it is down the BYoB server asks again with the Kokoro default (see server.py).
+    {"id": "vs_default", "name": "Studio", "desc": "New voice (OmniVoice), PC only"},
 ]
 VALID_KOKORO = {v["id"] for v in KOKORO_VOICES}
 DEFAULT_VOICE = "am_michael"
+VS_URL = os.environ.get("OMNIVOICE_URL", "http://127.0.0.1:3900").rstrip("/")
+VS_KEY_FILE = os.environ.get("BYOB_VS_KEY_FILE") or os.path.join(HOME, "claude-work", "voicestudio", "api-key.txt")
+VS_TIMEOUT = 90
+
+
+def vs_key():
+    key = (os.environ.get("OMNIVOICE_API_KEY") or "").strip()
+    if key:
+        return key
+    try:
+        with open(VS_KEY_FILE, "r", encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
+def vs_pcm(text, voice):
+    """int16 mono samples and sample rate for one piece of text from VoiceStudio (127.0.0.1 only)."""
+    import io
+    import urllib.request
+    import wave
+    import array
+    body = json.dumps({"model": "omnivoice", "input": text, "voice": "default",
+                       "response_format": "wav"}).encode("utf-8")
+    req = urllib.request.Request(VS_URL + "/v1/audio/speech", data=body, headers={
+        "Content-Type": "application/json", "Authorization": "Bearer " + vs_key()})
+    with urllib.request.urlopen(req, timeout=VS_TIMEOUT) as r:
+        raw = r.read()
+    with wave.open(io.BytesIO(raw)) as w:
+        sr, ch, width = w.getframerate(), w.getnchannels(), w.getsampwidth()
+        frames = w.readframes(w.getnframes())
+    if width != 2:
+        raise ValueError("unexpected sample width %d" % width)
+    arr = array.array("h")
+    arr.frombytes(frames[: len(frames) - len(frames) % 2])
+    if sys.byteorder == "big":
+        arr.byteswap()
+    if ch > 1:
+        arr = array.array("h", [sum(arr[i:i + ch]) // ch for i in range(0, len(arr) - ch + 1, ch)])
+    if not len(arr):
+        raise ValueError("empty audio")
+    return arr, sr
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?…])[\"'”’)\]]*\s+")
 
@@ -371,7 +416,10 @@ class Renderer:
             chunks = []
             sr = self.engine.sample_rate
             for piece in split_sentences(pronounce.fix(text)):
-                pcm, sr = self.engine.pcm(piece, voice)
+                if voice.startswith("vs_"):
+                    pcm, sr = vs_pcm(piece, voice)
+                else:
+                    pcm, sr = self.engine.pcm(piece, voice)
                 chunks.append(pcm)
             data = encode_mp3(chunks, sr)
             self.cache.put(key, data)

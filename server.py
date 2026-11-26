@@ -941,10 +941,19 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 wanted_by = query.get("user_id", [""])[0]
                 info = kokoro_get(wanted_by)
                 if info:
-                    audio_data = fetch_kokoro_audio(info, text, query.get("kvoice", [voice])[0])
+                    kvoice = query.get("kvoice", [voice])[0]
+                    audio_data = fetch_kokoro_audio(info, text, kvoice)
                     if audio_data:
                         engine_used = "kokoro"
-                if engine_used != "kokoro":
+                    elif kvoice.startswith("vs_"):
+                        # The new voice (VoiceStudio) is down but the PC may be up: use Kokoro for
+                        # this paragraph. Labelled so the app does not store it under the new voice's key.
+                        audio_data = fetch_kokoro_audio(info, text, "am_michael")
+                        if audio_data:
+                            engine_used = "kokoro-fallback"
+                if engine_used == "kokoro-fallback":
+                    fallback_reason = "new voice down, Kokoro used"
+                elif engine_used != "kokoro":
                     fallback_reason = "PC did not answer" if info else "no PC"
                 kokoro_note(wanted_by, "paragraph asked for the PC",
                             answer=("kokoro" if engine_used == "kokoro" else fallback_reason))
