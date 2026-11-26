@@ -91,6 +91,13 @@ DEFAULT_VOICE = "am_michael"
 VS_URL = os.environ.get("OMNIVOICE_URL", "http://127.0.0.1:3900").rstrip("/")
 VS_KEY_FILE = os.environ.get("BYOB_VS_KEY_FILE") or os.path.join(HOME, "claude-work", "voicestudio", "api-key.txt")
 VS_TIMEOUT = 90
+# Quality and style sent with every Studio request. The app default is 16 unmasking steps; 32 is the
+# model's documented quality preset. Override with OMNIVOICE_PARAMS='{"num_step": 64, ...}'.
+VS_PARAMS = {"num_step": 48, "guidance_scale": 3.0, "instruct": "male, american accent, moderate pitch"}
+try:
+    VS_PARAMS.update(json.loads(os.environ.get("OMNIVOICE_PARAMS") or "{}"))
+except ValueError:
+    pass
 
 
 def vs_key():
@@ -111,7 +118,7 @@ def vs_pcm(text, voice):
     import wave
     import array
     body = json.dumps({"model": "omnivoice", "input": text, "voice": "default",
-                       "response_format": "wav"}).encode("utf-8")
+                       "response_format": "wav", **VS_PARAMS}).encode("utf-8")
     req = urllib.request.Request(VS_URL + "/v1/audio/speech", data=body, headers={
         "Content-Type": "application/json", "Authorization": "Bearer " + vs_key()})
     with urllib.request.urlopen(req, timeout=VS_TIMEOUT) as r:
@@ -315,8 +322,9 @@ class Cache:
         self.misses = 0
 
     def key(self, text, voice):
-        return hashlib.sha256(("%s|%s|%d|%s|%s" % (voice, text, MP3_BITRATE, pronounce.VERSION,
-                                                  pronounce.user_version())).encode("utf-8")).hexdigest()
+        extra = json.dumps(VS_PARAMS, sort_keys=True) if voice.startswith("vs_") else ""
+        return hashlib.sha256(("%s|%s|%d|%s|%s|%s" % (voice, text, MP3_BITRATE, pronounce.VERSION,
+                                                     pronounce.user_version(), extra)).encode("utf-8")).hexdigest()
 
     def path(self, key):
         return os.path.join(self.dir, key[:2], key + ".mp3")
@@ -415,7 +423,7 @@ class Renderer:
         try:
             chunks = []
             sr = self.engine.sample_rate
-            for piece in split_sentences(pronounce.fix(text)):
+            for piece in split_sentences(pronounce.fix(text, cmu=voice.startswith("vs_"))):
                 if voice.startswith("vs_"):
                     pcm, sr = vs_pcm(piece, voice)
                 else:

@@ -16,7 +16,7 @@ import json
 import os
 import re
 
-VERSION = "p3"  # part of the audio cache key: bump when a rule changes so old audio is redone
+VERSION = "p4"  # part of the audio cache key: bump when a rule changes so old audio is redone
 
 MODALS = {"to", "will", "would", "can", "could", "should", "must", "may", "might", "shall", "do",
           "does", "did", "don't", "didn't", "doesn't", "can't", "cannot", "won't", "wouldn't",
@@ -51,7 +51,14 @@ def _cap(src, word):
     return word[0].upper() + word[1:] if src[0].isupper() else word
 
 
-def _fix_sentence(sentence, in_quote):
+# For engines that take explicit sounds (VoiceStudio OmniVoice reads CMU phonemes in brackets) the same
+# decisions are written as exact sounds instead of a respelling.
+CMU = {"led": "[L EH1 D]", "red": "[R EH1 D]", "cloze": "[K L OW1 Z]", "wownd": "[W AW1 N D]",
+       "wynd": "[W AY1 N D]", "dohv": "[D OW1 V]", "bough": "[B AW1]", "mynute": "[M AY0 N UW1 T]",
+       "bas": "[B AE1 S]"}
+
+
+def _fix_sentence(sentence, in_quote, cmu=False):
     toks = re.findall(r"[A-Za-z']+|[^A-Za-z']+", sentence)
     words = [(i, t) for i, t in enumerate(toks) if re.match(r"[A-Za-z']", t)]
     for n, (i, t) in enumerate(words):
@@ -111,7 +118,7 @@ def _fix_sentence(sentence, in_quote):
                                                                                       "low", "slight"}:
                 new = "bough"
         if new:
-            toks[i] = _cap(t, new)
+            toks[i] = CMU[new] if cmu else _cap(t, new)
     return "".join(toks)
 
 
@@ -164,7 +171,7 @@ def user_version():
     return str(len(m)) + ":" + str(_user["mtime"] or 0)
 
 
-def fix(text):
+def fix(text, cmu=False):
     if not text:
         return text
     out = []
@@ -177,8 +184,10 @@ def fix(text):
             out.append(part)
             continue
         sentences = re.split(r"(?<=[.!?])(\s+)", part)
-        out.append("".join(s if s.isspace() else _fix_sentence(s, in_quote) for s in sentences))
-    text = respell_interjections("".join(out))
+        out.append("".join(s if s.isspace() else _fix_sentence(s, in_quote, cmu) for s in sentences))
+    text = "".join(out)
+    if not cmu:
+        text = respell_interjections(text)
     m = _user_map()
     if m:
         pat = re.compile(r"\b(" + "|".join(re.escape(k) for k in sorted(m, key=len, reverse=True)) + r")\b",

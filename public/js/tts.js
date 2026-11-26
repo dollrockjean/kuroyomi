@@ -1301,7 +1301,8 @@ const TTSEngine = {
     { id: 'bm_fable', name: 'Fable', desc: 'storybook British' },
     { id: 'bm_lewis', name: 'Lewis', desc: 'gravelly British' },
     { id: 'bf_emma', name: 'Emma', desc: 'refined British' },
-    { id: 'bf_isabella', name: 'Isabella', desc: 'bright British' }
+    { id: 'bf_isabella', name: 'Isabella', desc: 'bright British' },
+    { id: 'vs_default', name: 'Studio', desc: 'new voice, PC only' }
   ],
 
   populateKokoroVoiceSelect() {

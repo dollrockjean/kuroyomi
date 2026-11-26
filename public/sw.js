@@ -7,7 +7,7 @@
 // unchanged address keeps being read from the old copy. (2026-11-24: a fixed tts.js sat unused
 // on the phone for exactly this reason, and the phone kept saying the PC voice was unreachable.)
 // Forgetting the bump is no longer fatal - see the revalidate below - but it costs a reload.
-const ASSET_VERSION = '56.9';
+const ASSET_VERSION = '57.0';
 const CACHE_NAME = 'byob-v' + ASSET_VERSION;
 
 const PRECACHE_ASSETS = [
