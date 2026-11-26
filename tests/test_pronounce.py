@@ -23,6 +23,13 @@ class PronounceTests(unittest.TestCase):
         self.check("Read the sign.", "Read the sign.")
         self.check('"I read every day," she said.', '"I read every day," she said.')
 
+    def test_interjections(self):
+        self.check('"Huh?" he said.', '"Hah?" he said.')
+        self.check("Hmm... maybe. HMMM!", "Hum... maybe. HUM!")
+        self.check("Uh-huh, mm-hmm. Tsk tsk! Heh.", "Uh hah, mm hum. Tisk! Hehh.")
+        self.check("The hum of Hugh, a hummingbird, huh!", "The hum of Hugh, a hummingbird, hah!")
+        self.check("Uh, um, well.", "Uh, um, well.")
+
     def test_close(self):
         self.check("Close the door.", "Cloze the door.")
         self.check("He was so close the air felt thin.", "He was so close the air felt thin.")

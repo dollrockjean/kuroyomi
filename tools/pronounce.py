@@ -16,7 +16,7 @@ import json
 import os
 import re
 
-VERSION = "p1"  # part of the audio cache key: bump when a rule changes so old audio is redone
+VERSION = "p2"  # part of the audio cache key: bump when a rule changes so old audio is redone
 
 MODALS = {"to", "will", "would", "can", "could", "should", "must", "may", "might", "shall", "do",
           "does", "did", "don't", "didn't", "doesn't", "can't", "cannot", "won't", "wouldn't",
@@ -98,6 +98,27 @@ def _fix_sentence(sentence, in_quote):
     return "".join(toks)
 
 
+# Interjections espeak spells out letter by letter ("H-U-H"). Longest first so "uh-huh" wins over "huh".
+INTERJECTIONS = [
+    (r"mm+[\s-]*h?m+", "mm hum"), (r"uh[\s-]+huh", "uh hah"), (r"uh[\s-]+uh", "uh uh"),
+    (r"h+m+", "hum"), (r"huh+", "hah"), (r"tsk(?:[\s-]*tsk)*", "tisk"), (r"heh+", "hehh"),
+]
+_INTERJ_RE = re.compile(r"(?<![A-Za-z'\-])(" + "|".join(p for p, _ in INTERJECTIONS) + r")(?![A-Za-z'])",
+                        re.IGNORECASE)
+
+
+def _interj(mo):
+    w = mo.group(0)
+    for pat, new in INTERJECTIONS:
+        if re.fullmatch(pat, w, re.IGNORECASE):
+            return _cap(w, new)
+    return w
+
+
+def respell_interjections(text):
+    return _INTERJ_RE.sub(_interj, text) if text else text
+
+
 _user = {"mtime": None, "map": {}, "path": None}
 
 
@@ -140,7 +161,7 @@ def fix(text):
             continue
         sentences = re.split(r"(?<=[.!?])(\s+)", part)
         out.append("".join(s if s.isspace() else _fix_sentence(s, in_quote) for s in sentences))
-    text = "".join(out)
+    text = respell_interjections("".join(out))
     m = _user_map()
     if m:
         pat = re.compile(r"\b(" + "|".join(re.escape(k) for k in sorted(m, key=len, reverse=True)) + r")\b",

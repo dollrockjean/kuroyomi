@@ -82,6 +82,12 @@ def normalize_text_for_narration(text: str) -> str:
     clean = re.sub(r"[\[【《〔「『{](.*?)[\]】》〕」』}]", r" \1 ", clean)
     # 7. Convert rank ratios like (15/15) or (5/5) into natural '15 of 15'
     clean = re.sub(r"\((\d+)\s*/\s*(\d+)\)", r"(\1 of \2)", clean)
+    # 7b. Interjections the voices spell out ("huh" as H-U-H): same respellings as the app and Kokoro.
+    try:
+        from tools import pronounce as _pron
+        clean = _pron.respell_interjections(clean)
+    except Exception:
+        pass
     # 8. Ellipses become one short breath pause. A comma or a run of dots left floating between
     # spaces is spoken out loud as the word "comma" (or "dot dot dot"), so the pause is attached to
     # the word before it, and an ellipsis with no word before it is dropped.

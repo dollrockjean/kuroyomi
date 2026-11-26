@@ -36,6 +36,12 @@ class NarrationTextTest(unittest.TestCase):
             self.assertNotIn("...", out, f"dots left in {out!r} (from {raw!r})")
             self.assertFalse(out.startswith(","), f"leading comma in {out!r}")
 
+    def test_interjections_are_respelled_in_server_and_app(self):
+        self.assertEqual(self.n('"Huh?" Hmm. Uh-huh!'), '"Hah?" Hum. Uh hah!')
+        js = open(JS, encoding="utf-8").read()
+        self.assertIn("respellInterjections(clean)", js)
+        self.assertIn("[/huh+/i, 'hah']", js)
+
     def test_an_ellipsis_only_paragraph_says_nothing_or_nothing_odd(self):
         self.assertEqual(self.n("..."), "")
         self.assertEqual(self.n("…"), "")

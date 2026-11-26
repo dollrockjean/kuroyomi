@@ -153,6 +153,20 @@ const TTSEngine = {
     return (id && this.ENGLISH_ONLY_VOICE[id]) || id;
   },
 
+  // Same rules as INTERJECTIONS in tools/pronounce.py (Kokoro), so Edge and the device voice match.
+  respellInterjections(text) {
+    const rules = [[/mm+[\s-]*h?m+/i, 'mm hum'], [/uh[\s-]+huh/i, 'uh hah'], [/uh[\s-]+uh/i, 'uh uh'],
+      [/h+m+/i, 'hum'], [/huh+/i, 'hah'], [/tsk(?:[\s-]*tsk)*/i, 'tisk'], [/heh+/i, 'hehh']];
+    const re = new RegExp("(?<![A-Za-z'\\-])(" + rules.map(r => r[0].source).join('|') + ")(?![A-Za-z'])", 'gi');
+    return text.replace(re, w => {
+      const hit = rules.find(r => new RegExp('^(?:' + r[0].source + ')$', 'i').test(w));
+      if (!hit) return w;
+      const n = hit[1];
+      if (w.length > 1 && w === w.toUpperCase()) return n.toUpperCase();
+      return /^[A-Z]/.test(w) ? n[0].toUpperCase() + n.slice(1) : n;
+    });
+  },
+
   normalizeForSpeech(text) {
     if (!text) return '';
     // Unescape common HTML entities so &lt;&lt;Example&gt;&gt; becomes <<Example>>
@@ -175,6 +189,8 @@ const TTSEngine = {
     clean = clean.replace(/::+/g, ': ');
     clean = clean.replace(/[\[【《〔「『{](.*?)[\]】》〕」』}]/g, ' $1 ');
     clean = clean.replace(/\((\d+)\s*\/\s*(\d+)\)/g, '($1 of $2)');
+    // Interjections the voices spell out or mangle ("huh" as H-U-H): respell them to say naturally.
+    clean = this.respellInterjections(clean);
     // Ellipses become one short breath pause. A comma or a run of dots left standing between
     // spaces is read out loud as the word "comma" (or "dot dot dot"), so the pause is attached to
     // the word before it, and an ellipsis with nothing before it is dropped.
