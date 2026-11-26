@@ -864,6 +864,7 @@ const TTSEngine = {
     this._onTimeUpdateHandler = () => {
       this.syncChainPosition();
       this.syncWordHighlight();
+      this.trackListening();
     };
 
     this._onErrorHandler = (e) => {
@@ -1821,7 +1822,10 @@ const TTSEngine = {
     setTimeout(() => this.probeEngines(true), 2000);
   },
 
-  async getAudioBlobUrl(text, voiceId, rateVal, pitchVal, retries = 1) {
+  // opts.tankOnly: fetch for the phone tank only (saved to disk, no blob URL kept in memory), returns ''.
+  async getAudioBlobUrl(text, voiceId, rateVal, pitchVal, retries = 1, opts = null) {
+    const tankOnly = !!(opts && opts.tankOnly);
+    const tank = (typeof window !== 'undefined' && window.AudioTank && !window.AudioTank.disabled) ? window.AudioTank : null;
     const pVal = pitchVal !== undefined ? pitchVal : this.pitch;
     // English books only: a voice that would guess the language becomes its English-only twin.
     voiceId = this.englishOnlyVoice(voiceId);
@@ -1838,10 +1842,19 @@ const TTSEngine = {
       return await this.pendingFetches.get(cacheKey);
     }
 
-    const storeBlob = async (blob, key) => {
+    // fromTank: the clip came off the phone, so it is not written back. Only real audio reaches here
+    // under its own engine's key (a relay that fell back to Edge is stored under the Edge key).
+    const storeBlob = async (blob, key, fromTank) => {
+      if (tankOnly) {
+        let seconds = 0;
+        try { const info = this.parseMp3(new Uint8Array(await blob.arrayBuffer())); if (info) seconds = info.duration || 0; } catch (e) {}
+        if (tank) await tank.put(key, blob, seconds);
+        return '';
+      }
       const blobUrl = URL.createObjectURL(blob);
       try {
         const info = this.parseMp3(new Uint8Array(await blob.arrayBuffer()));
+        if (tank && !fromTank) tank.put(key, blob, info ? info.duration : 0);
         if (info) {
           this.audioBytes.set(key, info);
           // A long drive must not fill the phone's memory, but the dead-zone buffer (about 4 minutes, up to
@@ -1855,6 +1868,26 @@ const TTSEngine = {
     };
 
     const fetchPromise = (async () => {
+      // 0. The phone tank: audio saved earlier, no network at all. A dead zone drops the PC for a
+      // moment and turns the next keys into Edge keys, so the PC's own copy is looked for too.
+      if (tank) {
+        if (tank._ready) { try { await tank._ready; } catch (e) {} }
+        const tries = [[cacheKey, engine]];
+        if (engine === 'edge' && this.engineMode !== 'edge') tries.push([this.cacheKeyFor(text, voiceId, pVal, 'kokoro'), 'kokoro']);
+        for (const [key, eng] of tries) {
+          if (!tank.has(key)) continue;
+          if (tankOnly) { this.pendingFetches.delete(cacheKey); return ''; }
+          if (this.blobCache.has(key)) { this.pendingFetches.delete(cacheKey); return this.blobCache.get(key); }
+          const saved = await tank.get(key);
+          if (!saved) continue;
+          const blobUrl = await storeBlob(saved, key, true);
+          tank.markPlayed(key);
+          this.pendingFetches.delete(cacheKey);
+          if (eng !== this.engineActive) { this.engineActive = eng; this.updateEngineUI(); }
+          return blobUrl;
+        }
+      }
+
       // 1. The PC, through the BYoB server. The server knows where the PC is and holds its key, and
       // falls back to Edge by itself if the PC stops answering, so this request always returns audio.
       if (engine === 'kokoro') {
@@ -2555,6 +2588,7 @@ const TTSEngine = {
         }
         this.engineActive = nextEngine;
         this.updateEngineUI();
+        if (window.AudioTank) window.AudioTank.markPlayed(cacheKey);
       } catch (e) {
         started = null;
       }
@@ -2736,6 +2770,81 @@ const TTSEngine = {
     // The buffer window ran into the end of the chapter: get the next chapter's text and first audio ready too
     if (reachedChapterEnd || fromIndex >= this.paragraphs.length - 2) {
       this.preloadNextChapter();
+    }
+    this.fillTank(fromIndex);
+  },
+
+  // Counts the audio he actually hears (by how far the audio moved, so 2x counts double), for the tank's size.
+  trackListening() {
+    const a = this.audioElement;
+    const t = a ? a.currentTime : 0;
+    const last = this._listenLastTime;
+    this._listenLastTime = t;
+    if (!this.isPlaying || this.isPaused || !a || a.paused || !window.AudioTank) return;
+    if (typeof last !== 'number') return;
+    const d = t - last;
+    if (d > 0 && d < 5) window.AudioTank.recordListen(d);
+  },
+
+  // Phone tank fill: past the normal look-ahead, keep fetching the rest of this chapter and the chapters
+  // after it straight to the phone's storage until about 2 days of his listening is stored ahead. One
+  // clip at a time so the paragraph he is about to hear always goes first. Wi-Fi only unless he allowed
+  // mobile data (see AudioTank.fillMode). Stops when read aloud stops, pauses or the voice changes.
+  TANK_FILL_MAX_CHAPTERS: 40,
+  async fillTank(fromIndex) {
+    const tank = window.AudioTank;
+    if (!tank || tank.disabled || this._tankFilling) return;
+    if (tank.currentFillMode() !== 'full' || (typeof navigator !== 'undefined' && navigator.onLine === false)) return;
+    if (Date.now() < (this._tankFillRestUntil || 0)) return;
+    this._tankFilling = true;
+    const sessionId = this.playbackSessionId;
+    const voice = this.selectedVoice;
+    const pitch = this.pitch;
+    const alive = () => this.isPlaying && !this.isPaused && this.playbackSessionId === sessionId
+      && this.selectedVoice === voice && this.pitch === pitch && tank.currentFillMode() === 'full';
+    let stored = 0;
+    let failures = 0;
+    const protect = new Set();
+    try {
+      try { await tank._ready; } catch (e) {}
+      const goal = tank.target();
+      let ahead = 0;
+      const step = async (text) => {
+        if (!this.isSpeakable(text)) return true;
+        const key = this.cacheKeyFor(text, voice, pitch);
+        protect.add(key);
+        if (!tank.has(key) && !this.blobCache.has(key)) {
+          while (this._prefetchActive > 0 && alive()) await new Promise(r => setTimeout(r, 200));
+          if (!alive()) return false;
+          try {
+            await this.getAudioBlobUrl(text, voice, 1.0, pitch, 1, { tankOnly: true });
+            stored++;
+          } catch (e) {
+            if (++failures >= 3) return false;
+          }
+        }
+        ahead += this.estimateParagraphSeconds(text, key);
+        return ahead < goal && alive();
+      };
+      for (let i = fromIndex + 1; i < this.paragraphs.length; i++) {
+        const el = this.paragraphs[i];
+        if (!(await step(el ? el.innerText.trim() : ''))) return;
+      }
+      const reader = window.Reader;
+      let ch = reader && reader.currentChapter;
+      for (let n = 0; n < this.TANK_FILL_MAX_CHAPTERS && ch && ch.next_chapter && alive(); n++) {
+        ch = await reader.preloadChapter(ch.next_chapter.id);
+        if (!ch) return;
+        for (const text of reader.getSpeakableTexts(ch, 100000)) {
+          if (!(await step(text))) return;
+        }
+      }
+    } finally {
+      this._tankFilling = false;
+      if (stored) this.logEvent(`phone tank: ${stored} clips stored ahead`);
+      if (failures >= 3) this._tankFillRestUntil = Date.now() + 120000;
+      try { await tank.trim(protect); } catch (e) {}
+      tank.updateUI();
     }
   },
 
