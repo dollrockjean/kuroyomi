@@ -120,7 +120,9 @@ class PhoneTankWiringTests(unittest.TestCase):
         self.assertIn("'/js/tank.js?v=' + ASSET_VERSION", sw)
         for attr in ("data-tank-status", "data-tank-cellular", "data-tank-clear", "data-tank-alerts"):
             self.assertIn(attr, index)
-        self.assertIn("Keep audio on this phone", index)
+        self.assertIn("Download voice to this phone", index)
+        audio_tab = index[index.index('id="tabTTS"'):index.index('id="tabScroll"')]
+        self.assertIn('id="tankSettings"', audio_tab, "the setting belongs in the Audio tab")
         self.assertIn("Use mobile data to fill", index)
         self.assertIn("Clear stored audio", index)
 
