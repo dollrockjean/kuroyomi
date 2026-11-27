@@ -666,7 +666,8 @@ const TTSEngine = {
     const p = a.play();
     if (p && p.catch) p.catch((e) => rebuild(e && e.name ? e.name : 'refused'));
     this.updateAudioUI();
-    setTimeout(() => {
+    clearTimeout(this._mediaPlayTimer);
+    this._mediaPlayTimer = setTimeout(() => {
       if (!this.isPlaying || this.isPaused || this.isLoading) return;
       if (a.paused || (a.currentTime === before && !a.ended)) rebuild('no progress');
     }, 1500);
@@ -740,18 +741,15 @@ const TTSEngine = {
       const sessionAtPause = this.playbackSessionId;
       this._pauseTimer = setTimeout(() => {
         const a = this.audioElement;
-        if (this.playbackSessionId !== sessionAtPause || !this.isPlaying || this.isPaused || this.isLoading) return;
+        if (this.playbackSessionId !== sessionAtPause || !this.isPlaying || this.isPaused) return;
         if (!a.paused) return;
-        const nearEnd = a.ended || (isFinite(a.duration) && a.duration > 0 && a.duration - a.currentTime < 0.6);
+        const nearEnd = !a.loop && (a.ended || (isFinite(a.duration) && a.duration > 0 && a.duration - a.currentTime < 0.6));
         if (nearEnd) {
           this.speakParagraph(this.indexAfterAudio());
-        } else if (document.hidden && this.tryRecoverFromInterruption(sessionAtPause)) {
-          // Paused by something other than the listener (a navigation voice prompt, a notification, a call): keep
-          // trying to continue, since a real pause from the car or lock screen arrives through the media-session
-          // handler below and never reaches this branch
         } else {
-          this.isPaused = true;
-          this.updateAudioUI();
+          // Treat any non-near-end OS/Bluetooth pause (including while backgrounded or loading) as a real pause
+          // so the read-aloud loop, timers, and progress stop cleanly and headphone play can resume.
+          this.pause();
         }
       }, 250);
     };
@@ -2042,8 +2040,12 @@ const TTSEngine = {
 
   pause() {
     clearTimeout(this._interruptTimer);
+    clearTimeout(this._pauseTimer);
+    clearTimeout(this._mediaPlayTimer);
     if (this.isPlaying) {
       this.isPaused = true;
+      this.isLoading = false;
+      this._ignorePauseUntil = Date.now() + 500;
       this.audioElement.pause();
       if ('speechSynthesis' in window) {
         if (this.deviceUtterance) {
@@ -2052,6 +2054,7 @@ const TTSEngine = {
         }
         this.cancelDeviceSpeech();
       }
+      this.deviceUtterance = null;
       this.updateAudioUI();
     }
   },
@@ -2114,6 +2117,8 @@ const TTSEngine = {
       setTimeout(() => window.location.reload(), 400);
     }
     clearTimeout(this._interruptTimer);
+    clearTimeout(this._pauseTimer);
+    clearTimeout(this._mediaPlayTimer);
     this.stopWatchdog();
     this._advanceGen++;
     this._advancing = false;
@@ -2392,7 +2397,7 @@ const TTSEngine = {
       }
 
       await started;
-      if (this.playbackSessionId !== sessionId) return;
+      if (this.playbackSessionId !== sessionId || !this.isPlaying || this.isPaused) return;
       try {
         this.audioElement.playbackRate = this.rate || 1.0;
         this.audioElement.defaultPlaybackRate = this.rate || 1.0;
