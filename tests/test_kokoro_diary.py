@@ -72,8 +72,11 @@ class DiaryTests(unittest.TestCase):
             except OSError:
                 pass
 
-    def ask_engines(self, build=""):
-        path = "/api/tts/engines?user_id=" + self.user_id + ("&build=" + build if build else "")
+    def ask_engines(self, build="", mode="", src="", user_id=None):
+        path = "/api/tts/engines?user_id=" + (user_id or self.user_id)
+        for name, value in (("build", build), ("mode", mode), ("src", src)):
+            if value:
+                path += "&%s=%s" % (name, value)
         h = handler_for(path, headers={"User-Agent": "iPhone-test"})
         h.do_GET()
         return answer_of(h)["engines"]["kokoro"]
@@ -121,6 +124,39 @@ class DiaryTests(unittest.TestCase):
         self.assertNotIn("secret-pc-token", blob)
         self.assertNotIn("trycloudflare", blob)
         self.assertTrue(res["pc"]["has_key"], "the server should still say it holds one")
+
+    def test_the_mode_the_phone_is_in_is_written_down(self):
+        """A phone sitting in Edge mode never asks the PC for anything, however healthy the PC is.
+
+        That was the bug of 2026-11-22 to 25, and from the server it looked exactly like a phone
+        that could not reach the PC: same question, same "up" answer, no sound from the PC. The
+        mode, and where the app got it from, now go in the diary with the build.
+        """
+        self.ask_engines(build="55.6", mode="edge", src="device")
+        status, res = self.diag(sync_key=SYNC_KEY)
+        asked = [e for e in res["diary"] if e["what"] == "asked"][0]
+        self.assertEqual(asked["mode"], "edge")
+        self.assertEqual(asked["mode_from"], "device")
+        self.assertEqual(asked["build"], "55.6")
+
+    def test_the_owner_can_see_a_phone_that_drifted_to_another_account(self):
+        """The one fault the diary could not show was the one it was built to catch.
+
+        It was filtered to the owner's own lines, so a phone whose sync key had changed - a new
+        account id, an empty library, no PC - left its trace in a bucket nobody was allowed to read.
+        The owner now sees those lines too, with only the first eight characters of the other id.
+        """
+        stranger = database.get_or_create_user("READER-DIARY-DRIFTED")
+        self.ask_engines(build="55.6", mode="auto", user_id=stranger)
+        status, res = self.diag(sync_key=SYNC_KEY)
+        self.assertEqual(status, 200)
+        self.assertEqual(res["diary"], [], "another account's ask is not the owner's own line")
+        others = [e for e in res["others"] if e["what"] == "asked"]
+        self.assertEqual(len(others), 1)
+        self.assertEqual(others[0]["answer"], "no PC")
+        self.assertTrue(others[0]["user"].endswith("..."))
+        self.assertNotIn(stranger, json.dumps(res), "the whole other account id must not appear")
+        self.assertIn(stranger[:8], others[0]["user"])
 
     def test_another_account_sees_only_its_own_lines(self):
         self.ask_engines(build="55.4")

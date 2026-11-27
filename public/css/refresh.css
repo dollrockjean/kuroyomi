@@ -1015,6 +1015,17 @@ body {
   line-height: 1.4;
 }
 
+/* The readable truth about the voice: build, engine, and why it is not the PC. Deliberately plain
+   and always visible - this is the line he reads on the phone when nobody is around to ask. */
+.engine-switch-why {
+  margin-top: 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
 .engine-note {
   margin-top: 4px;
 }

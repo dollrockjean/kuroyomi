@@ -38,7 +38,17 @@ const TTSEngine = {
   // engineMode is what he picked; engineActive is what the audio now playing actually came from.
   // In Auto the app uses the PC whenever it answers and falls straight back to Edge when it does
   // not, mid-chapter included, because every paragraph is fetched on its own.
-  engineMode: 'edge',               // 'auto' | 'kokoro' | 'edge' (Edge by default until Kokoro is measured; a saved choice wins)
+  // Auto is the default, and that is the whole fix for three nights of "my phone still won't use my
+  // PC" (2026-11-25). It used to default to 'edge', and the choice of engine was only ever written
+  // into the one device's own storage: his account on the server had no tts_engine at all. So any
+  // phone that lost its local storage - a re-added home-screen icon, iOS clearing a site it had not
+  // opened in a week, a new browser - came back on Edge, said "Edge voices", and in that mode the
+  // app does not ask about the PC at all, no matter how healthy the PC is. Every simulated phone
+  // that "proved" it fixed had the Kokoro choice seeded into its fake storage first, so the path
+  // his real phone takes was the one path never tested. Auto cannot do this: it uses the PC the
+  // moment the server says it is up, and Edge in the same breath when it is not.
+  engineMode: 'auto',               // 'auto' | 'kokoro' | 'edge' - a saved choice wins over this
+  engineModeSource: 'default',      // 'device' | 'account' | 'default' - where the mode above came from
   engineActive: 'edge',
   kokoroVoice: '',                  // '' = use the match for the chosen Edge voice
   kokoro: null,                     // { device, deviceName, rtf } while the PC is up; never its address
@@ -50,6 +60,7 @@ const TTSEngine = {
   // 'unknown' until the server has answered once: a question that never came back is not the same
   // thing as a PC that is switched off, and the status line must not blame the PC for the server.
   engineProbeState: 'unknown',      // 'unknown' | 'ok' | 'down'
+  engineProbeNote: 'not asked yet', // plain words for why the PC is not being used, shown in the app
   _engineRetries: 0,
   _engineRetryTimer: null,
   ENGINE_PROBE_MS: 30000,           // re-ask the server at most this often
@@ -1127,13 +1138,28 @@ const TTSEngine = {
   engineStorageKey: 'byob_tts_engine',
 
   loadEngineSettings() {
+    const valid = (m) => ['auto', 'kokoro', 'edge'].indexOf(m) !== -1;
     let mode = '';
     try { mode = localStorage.getItem(this.engineStorageKey) || ''; } catch (e) {}
-    if (!mode) {
+    if (valid(mode)) {
+      this.engineMode = mode;
+      this.engineModeSource = 'device';
+    } else {
       const s = (typeof Storage !== 'undefined' && Storage.getLocalSettings) ? Storage.getLocalSettings() : null;
       mode = (s && s.tts_engine) || (window.ReaderSettings && window.ReaderSettings.tts_engine) || '';
+      if (valid(mode)) {
+        this.engineMode = mode;
+        this.engineModeSource = 'account';
+      } else {
+        // Nothing saved anywhere: this device has never been told, and neither has his account.
+        // Stay on the Auto default and write it down in both places, so the next launch - and every
+        // other device signed in to the account - starts from a real choice instead of a default
+        // that used to be Edge. This is what stops a wiped phone from silently losing the PC voice.
+        this.engineModeSource = 'default';
+      }
     }
-    if (['auto', 'kokoro', 'edge'].indexOf(mode) !== -1) this.engineMode = mode;
+    try { localStorage.setItem(this.engineStorageKey, this.engineMode); } catch (e) {}
+    if (this.engineModeSource !== 'account') this.persistEngineSetting('tts_engine', this.engineMode);
     let kv = '';
     try { kv = localStorage.getItem('byob_kokoro_voice') || ''; } catch (e) {}
     if (!kv) {
@@ -1148,6 +1174,7 @@ const TTSEngine = {
     if (mode === this.engineMode) { this.updateEngineUI(); return; }
     this.engineMode = mode;
     this._kokoroColdUntil = 0;
+    this.engineModeSource = 'device';
     try { localStorage.setItem(this.engineStorageKey, mode); } catch (e) {}
     this.persistEngineSetting('tts_engine', mode);
     this._engineCheckedAt = 0;
@@ -1167,7 +1194,11 @@ const TTSEngine = {
   },
 
   persistEngineSetting(key, value) {
-    if (!window.ReaderSettings) return;
+    // This used to give up when the settings object had not been built yet, which is exactly the
+    // moment the engine choice is first made on a fresh phone - so the choice reached the device's
+    // own storage and never his account, and a wiped device had nothing to restore from. Build the
+    // object rather than dropping the setting (2026-11-25).
+    if (!window.ReaderSettings) window.ReaderSettings = {};
     window.ReaderSettings[key] = value;
     try {
       if (typeof Storage !== 'undefined' && typeof Storage.setLocalSettings === 'function') {
@@ -1236,6 +1267,7 @@ const TTSEngine = {
           // session, which is what this did until 2026-11-25.
           this.kokoro = null;
           this.engineProbeState = 'unknown';
+          this.engineProbeNote = 'this app is not signed in to your account yet';
           this.scheduleEngineRetry();
           this.updateEngineUI();
           return null;
@@ -1250,8 +1282,13 @@ const TTSEngine = {
           // The build is sent so the server can say which app a phone is running when the voice
           // goes missing. Without it a stale copy of the app and a real fault look identical from
           // here, and that cost two nights of guessing (2026-11-25).
+          // The mode goes with the build for the same reason: a phone sitting in Edge mode and a
+          // phone that cannot reach the PC ask the same question otherwise, and telling them apart
+          // from here is the only way a later chat can read a failure without the phone in hand.
           res = await fetch(`/api/tts/engines?user_id=${encodeURIComponent(userId)}`
-            + `&build=${encodeURIComponent(this.runningBuild())}`, {
+            + `&build=${encodeURIComponent(this.runningBuild())}`
+            + `&mode=${encodeURIComponent(this.engineMode)}`
+            + `&src=${encodeURIComponent(this.engineModeSource)}`, {
             signal: controller.signal,
             headers: token ? { 'X-Device-Token': token } : {}
           });
@@ -1273,11 +1310,14 @@ const TTSEngine = {
             rtf: k.realtime_factor || 0
           };
           if (wasDown) this._kokoroPrefetched.clear();
+          this.engineProbeNote = '';
         } else {
           this.kokoro = null;
+          this.engineProbeNote = 'the server says your PC has not checked in';
         }
       } catch (e) {
         this.kokoro = null;
+        this.engineProbeNote = 'the server did not answer (' + ((e && e.name) || 'error') + ')';
       }
       // "The server never answered" and "the server says the PC is not there" look the same on
       // screen otherwise, and only one of them is the PC's fault.
@@ -1343,8 +1383,32 @@ const TTSEngine = {
     } catch (e) {}
   },
 
+  // One line he can read on the phone with nobody to ask: which build of the app is running, which
+  // engine it settled on, and - when it is not the PC - why. Three nights of this bug were spent
+  // guessing at a screen that only ever said "using Edge" (2026-11-25).
+  engineWhyText() {
+    const build = this.runningBuild() || 'unknown';
+    // What the next paragraph will be fetched from, not what the last one came from: at launch
+    // nothing has played yet, and a line that said "Edge" before it had tried the PC would read
+    // like the fault he was reporting.
+    const using = this.engineForNextFetch() === 'kokoro' ? 'your PC (Kokoro)' : 'Edge';
+    const head = `Build ${build} · using ${using}`;
+    if (this.kokoroUsable() && this.engineMode !== 'edge') {
+      return `${head} · your PC is up`;
+    }
+    let why;
+    if (this.engineMode === 'edge') {
+      why = 'Edge is the chosen mode, so your PC is never asked - pick Auto to use it';
+    } else if (Date.now() <= this._kokoroColdUntil) {
+      why = 'your PC failed a moment ago, trying it again shortly';
+    } else {
+      why = this.engineProbeNote || 'still asking the server about your PC';
+    }
+    return `${head} · ${why}`;
+  },
+
   engineStatusText() {
-    if (this.engineMode === 'edge') return 'Edge voices';
+    if (this.engineMode === 'edge') return 'Edge voices (your PC is not asked in this mode)';
     const live = this.kokoroUsable();
     if (live) {
       return this.engineMode === 'kokoro' ? 'Your PC is speaking' : 'Auto: your PC is speaking';
@@ -1384,6 +1448,9 @@ const TTSEngine = {
         el.textContent = 'Kokoro runs on your PC. It starts by itself when the PC is on.';
       }
     });
+    document.querySelectorAll('[data-engine-why]').forEach(el => {
+      el.textContent = this.engineWhyText();
+    });
     // Narrator pickers only matter when Kokoro can be used (#kokoroVoiceRow plus any [data-kokoro-row])
     const kokoroRows = new Set(document.querySelectorAll('[data-kokoro-row]'));
     const kokoroRow = document.getElementById('kokoroVoiceRow');
@@ -1398,6 +1465,7 @@ const TTSEngine = {
   markKokoroDown(why) {
     this._kokoroColdUntil = Date.now() + this.KOKORO_COLD_MS;
     this.engineActive = 'edge';
+    this.engineProbeNote = `your PC failed on a paragraph (${why})`;
     this.logEvent(`PC voice unavailable (${why}), using Edge`);
     this.updateEngineUI();
     // Ask the server again soon: the PC may have come back with a new address.

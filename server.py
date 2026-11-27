@@ -1003,6 +1003,12 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
             info = kokoro_get(asked_for)
             kokoro_note(asked_for, "asked",
                         build=query.get("build", [""])[0][:12],
+                        # Which engine the app had settled on, and whether that came from the
+                        # device, the account or the built-in default. A phone sitting in Edge mode
+                        # never uses the PC however healthy it is, and until 2026-11-25 that looked
+                        # identical from here to a phone that could not reach it.
+                        mode=query.get("mode", [""])[0][:8],
+                        mode_from=query.get("src", [""])[0][:8],
                         answer="up" if info else "no PC",
                         age=(info or {}).get("age_seconds"),
                         agent=(self.headers.get("User-Agent") or "")[:80])
@@ -1062,6 +1068,13 @@ class NovelReaderHandler(http.server.SimpleHTTPRequestHandler):
                 },
                 "stale_after_seconds": KOKORO_STALE_SECONDS,
                 "diary": [e for e in _KOKORO_DIARY if e.get("user") == user_id[:24]],
+                # Asks that came in under some other account id, with only the first eight
+                # characters of it. The diary used to be filtered to the owner alone, so the one
+                # fault it could never show was the one where the phone had drifted to a different
+                # account - the exact case it was built to catch (2026-11-25). The id is a hash of
+                # the sync key, not the key, and eight characters is enough to tell two apart.
+                "others": [dict(e, user=(e.get("user") or "")[:8] + "...")
+                           for e in _KOKORO_DIARY if e.get("user") != user_id[:24]][-40:],
             })
             return
 

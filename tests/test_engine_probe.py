@@ -68,6 +68,72 @@ class EngineProbeTests(unittest.TestCase):
         self.assertEqual(later["status"], "Your PC is speaking")
 
 
+@unittest.skipIf(NODE is None, "node is not installed on this machine")
+class FreshPhoneTests(unittest.TestCase):
+    """A phone with nothing saved must still reach the PC. This is the bug of 2026-11-22 to 25.
+
+    The engine choice lived only in the one device's own storage, the fallback was the account's
+    settings - which never carried it - and the built-in default was Edge. In Edge mode the app does
+    not ask about the PC at all. So any phone that lost its local storage (a re-added home-screen
+    icon, iOS clearing a site it had not opened in a week) came back on Edge and stayed there, with
+    a healthy PC behind it, and the screen said "Edge voices" rather than anything about a fault.
+    Three chats verified the fix on simulated phones that had 'kokoro' seeded into their fake
+    storage first, so none of them ever walked this path.
+    """
+
+    def setUp(self):
+        self.moment = run("fresh-phone")[0]
+
+    def test_nothing_saved_still_reaches_the_pc(self):
+        self.assertEqual(self.moment["mode"], "auto", "a phone with nothing saved fell back to Edge")
+        self.assertEqual(self.moment["modeSource"], "default")
+        self.assertTrue(self.moment["usable"], "the PC was up and the app did not use it")
+        self.assertEqual(self.moment["engineForNextFetch"], "kokoro")
+        self.assertEqual(self.moment["status"], "Auto: your PC is speaking")
+
+    def test_the_choice_is_written_down_in_both_places(self):
+        """Once is enough: the next launch, and every other device, must start from a real choice."""
+        self.assertEqual(self.moment["storedOnDevice"], "auto")
+        self.assertIn("auto", self.moment["pushedToAccount"],
+                      "the engine choice never reached his account, so a wiped phone loses it again")
+
+    def test_the_app_tells_the_server_which_mode_it_is_in(self):
+        """Without this, a phone in Edge mode and a phone that cannot reach the PC look the same."""
+        self.assertIn("mode=auto", self.moment["probeUrl"])
+        self.assertIn("src=default", self.moment["probeUrl"])
+        self.assertIn("build=", self.moment["probeUrl"])
+
+    def test_the_readable_line_names_the_build_and_the_engine(self):
+        why = self.moment["why"]
+        self.assertIn("Build ", why)
+        self.assertIn("your PC (Kokoro)", why)
+        self.assertIn("your PC is up", why)
+
+
+class EngineWhyLineTests(unittest.TestCase):
+    """The one line he can read on the phone when there is nobody to ask."""
+
+    def setUp(self):
+        here = os.path.dirname(os.path.abspath(__file__))
+        with open(os.path.join(here, "..", "public", "js", "tts.js"), encoding="utf-8") as fh:
+            self.tts = fh.read()
+        with open(os.path.join(here, "..", "public", "index.html"), encoding="utf-8") as fh:
+            self.html = fh.read()
+
+    def test_every_engine_panel_shows_it(self):
+        # Settings, the audiobook player and the quick sheet all carry the engine switch; a failure
+        # he can only read in one of them is a failure he will not find.
+        self.assertGreaterEqual(self.html.count("data-engine-why"), 3)
+
+    def test_edge_mode_says_the_pc_is_not_being_asked(self):
+        self.assertIn("Edge is the chosen mode", self.tts)
+        self.assertIn("engineWhyText()", self.tts)
+
+    def test_the_default_mode_is_auto(self):
+        self.assertIn("engineMode: 'auto'", self.tts)
+        self.assertNotIn("engineMode: 'edge'", self.tts)
+
+
 class EngineProbeSourceTests(unittest.TestCase):
     """Guards on the two numbers that caused it, for the day node is missing."""
 
